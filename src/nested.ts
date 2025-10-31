@@ -314,7 +314,7 @@ interface NestedQueryBuilder<
 	>;
 
 	// TODO: Make { [_ in K]: NestedO |null } for left joins.
-	// joinOne()
+	// joinOne() (or joinFirst())
 }
 
 type QueryFactory<DBObject, QueryDB, QueryTB extends keyof QueryDB, QueryO> = (
