@@ -9,66 +9,6 @@ import { createHydratable, type Hydratable } from "./hydratable.ts";
 // Interfaces.
 ////////////////////////////////////////////////////////////////////
 
-// /**
-//  * A query builder that applies your mappers to the returned rows, but does not
-//  * support nested joins, because no `keyBy` was passed to {@link hydrated}.
-//  *
-//  * @template QueryDB The `DB` generic for the *entire* select query, including
-//  * parent queries.  Passed as `k.SelectQueryBuilder<QueryDB, ...>`
-//  * @template QueryTB The `TB` generic for the *entire* select query, including
-//  * parent queries.  Passed as `k.SelectQueryBuilder<..., QueryTB, ...>`
-//  * @template QueryRow The `O` generic for the *entire* select query, including
-//  * parent queries.  Passed as `k.SelectQueryBuilder<..., QueryRow>`.  This is
-//  * the row shape returned by `query.execute()`.
-//  * @template LocalRow The unprefixed row shape that `query.execute()` *would*
-//  * return if this was the topmost query, ignoring parent queries.
-//  * @template HydratedRow The final, local output shape of each row, after maps
-//  * have been applied.  Ignores parent queries.
-//  */
-// interface MappableQueryBuilder<
-// 	QueryDB,
-// 	QueryTB extends keyof QueryDB,
-// 	QueryRow,
-// 	LocalRow,
-// 	HydratedRow,
-// > extends k.Compilable,
-// 		k.OperationNodeSource {
-// 	/**
-// 	 * @internal This is is a fake method that does nothing and is only for
-// 	 * testing types.  The callback will never actually be called.
-// 	 */
-// 	_generics(
-// 		cb: (args: {
-// 			QueryDB: QueryDB;
-// 			QueryTB: QueryTB;
-// 			QueryRow: QueryRow;
-// 			LocalRow: LocalRow;
-// 			HydratedRow: HydratedRow;
-// 		}) => void,
-// 	): this;
-
-// 	map<MapperOutput, MapperOmitted extends PropertyKey>(
-// 		mapper: Mapper<LocalRow, MapperOutput, MapperOmitted>,
-// 	): MappableQueryBuilder<
-// 		QueryDB,
-// 		QueryTB,
-// 		QueryRow,
-// 		LocalRow,
-// 		MappedOutput<HydratedRow, MapperOutput, MapperOmitted>
-// 	>;
-// 	map<MapperOutput, MapperOmitted extends PropertyKey>(
-// 		mb: (
-// 			mapper: Mapper<LocalRow, HydratedRow, never>,
-// 		) => Mapper<LocalRow, MapperOutput, MapperOmitted>,
-// 	): MappableQueryBuilder<
-// 		QueryDB,
-// 		QueryTB,
-// 		QueryRow,
-// 		LocalRow,
-// 		MappedOutput<HydratedRow, MapperOutput, MapperOmitted>
-// 	>;
-// }
-
 /**
  * A query builder that supports both mapping and nested joins.
  *
