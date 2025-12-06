@@ -25,7 +25,7 @@ type InferExtras<Input, E extends Extras<Input>> = {
 	[K in keyof E]: ReturnType<E[K]>;
 };
 
-type CollectionMode = "many" | "one" | "oneOrThrow";
+export type CollectionMode = "many" | "one" | "oneOrThrow";
 
 interface Collection<ChildInput, ChildOutput> {
 	/**
@@ -109,7 +109,34 @@ class Hydratable<Input, Output> {
 		}) as any;
 	}
 
-	#withCollection<K extends PropertyKey, ChildOutput>(
+	has<K extends string, P extends string, ChildOutput>(
+		mode: "many",
+		key: K,
+		prefix: P,
+		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
+	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
+	has<K extends string, P extends string, ChildOutput>(
+		mode: "one",
+		key: K,
+		prefix: P,
+		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
+	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
+	has<K extends string, P extends string, ChildOutput>(
+		mode: "oneOrThrow",
+		key: K,
+		prefix: P,
+		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
+	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
+	has<K extends string, P extends string, ChildOutput>(
+		mode: CollectionMode,
+		key: K,
+		prefix: P,
+		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
+	): Hydratable<
+		Input,
+		Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>
+	>;
+	has<K extends string, ChildOutput>(
 		mode: CollectionMode,
 		key: K,
 		prefix: string,
@@ -135,28 +162,28 @@ class Hydratable<Input, Output> {
 		}) as any;
 	}
 
-	hasMany<K extends PropertyKey, P extends string, ChildOutput>(
+	hasMany<K extends string, P extends string, ChildOutput>(
 		key: K,
 		prefix: P,
 		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput[] }>> {
-		return this.#withCollection("many", key, prefix, hydratable);
+		return this.has("many", key, prefix, hydratable) as any;
 	}
 
-	hasOne<K extends PropertyKey, P extends string, ChildOutput>(
+	hasOne<K extends string, P extends string, ChildOutput>(
 		key: K,
 		prefix: P,
 		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput | null }>> {
-		return this.#withCollection("one", key, prefix, hydratable);
+		return this.has("one", key, prefix, hydratable) as any;
 	}
 
-	hasOneOrThrow<K extends PropertyKey, P extends string, ChildOutput>(
+	hasOneOrThrow<K extends string, P extends string, ChildOutput>(
 		key: K,
 		prefix: P,
 		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput }>> {
-		return this.#withCollection("oneOrThrow", key, prefix, hydratable);
+		return this.has("oneOrThrow", key, prefix, hydratable) as any;
 	}
 
 	//

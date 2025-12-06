@@ -7,7 +7,11 @@ import {
 } from "./helpers/prefixes.ts";
 import { prefixSelectArg } from "./helpers/select-renamer.ts";
 import type { Extend, KeyBy } from "./helpers/utils.ts";
-import { createHydratable, type Hydratable } from "./hydratable.ts";
+import {
+	type CollectionMode,
+	createHydratable,
+	type Hydratable,
+} from "./hydratable.ts";
 
 ////////////////////////////////////////////////////////////////////
 // Interfaces.
@@ -28,6 +32,8 @@ import { createHydratable, type Hydratable } from "./hydratable.ts";
  * return if this was the topmost query, ignoring parent queries.
  * @template HydratedRow The final, local output shape of each row, after joins
  * have been applied.  Ignores parent queries.
+ * @template IsNullable Whether the hydrated row resulting from this join should
+ * be nullable in its parent.
  */
 interface NestableQueryBuilder<
 	Prefix extends string,
@@ -36,6 +42,7 @@ interface NestableQueryBuilder<
 	QueryRow,
 	LocalRow,
 	HydratedRow,
+	IsNullable extends boolean,
 > {
 	/**
 	 * @internal This is is a fake method that does nothing and is only for
@@ -80,7 +87,8 @@ interface NestableQueryBuilder<
 		// generally do not expect modifications to the row shape here anyway.
 		LocalRow,
 		// TODO: This extension might be wrong!
-		Extend<NewQueryRow, HydratedRow>
+		Extend<NewQueryRow, HydratedRow>,
+		IsNullable
 	>;
 
 	/**
@@ -131,6 +139,7 @@ interface NestableQueryBuilder<
 				QueryRow,
 				{}, // LocalRow is empty within the nesting.
 				{}, // HydratedRow is empty within the nesting.
+				false,
 				QueryDB,
 				false
 			>,
@@ -140,7 +149,8 @@ interface NestableQueryBuilder<
 			JoinedQueryTB,
 			JoinedQueryRow,
 			NestedLocalRow,
-			NestedHydratedRow
+			NestedHydratedRow,
+			false
 		>,
 		keyBy: KeyBy<NestedHydratedRow>,
 	): NestableQueryBuilder<
@@ -149,11 +159,58 @@ interface NestableQueryBuilder<
 		JoinedQueryTB,
 		JoinedQueryRow,
 		LocalRow & ApplyPrefixes<MakePrefix<Prefix, K>, NestedLocalRow>,
-		Extend<HydratedRow, { [_ in K]: NestedHydratedRow[] }>
+		Extend<HydratedRow, { [_ in K]: NestedHydratedRow[] }>,
+		IsNullable
 	>;
 
-	// TODO: Make { [_ in K]: NestedO | null } for left joins.
-	// joinOne() (or joinFirst())
+	joinOne<
+		K extends string,
+		JoinedQueryDB,
+		JoinedQueryTB extends keyof JoinedQueryDB,
+		JoinedQueryRow,
+		NestedLocalRow,
+		NestedHydratedRow,
+		IsChildNullable extends boolean,
+	>(
+		key: K,
+		jb: (
+			nb: NestedJoinBuilder<
+				MakePrefix<Prefix, NoInfer<K>>,
+				QueryDB,
+				QueryTB,
+				QueryRow,
+				{}, // LocalRow is empty within the nesting.
+				{}, // HydratedRow is empty within the nesting.
+				false,
+				QueryDB,
+				false
+			>,
+		) => NestableQueryBuilder<
+			MakePrefix<Prefix, NoInfer<K>>,
+			JoinedQueryDB,
+			JoinedQueryTB,
+			JoinedQueryRow,
+			NestedLocalRow,
+			NestedHydratedRow,
+			IsChildNullable
+		>,
+		keyBy: KeyBy<NestedHydratedRow>,
+	): NestableQueryBuilder<
+		Prefix,
+		JoinedQueryDB,
+		JoinedQueryTB,
+		JoinedQueryRow,
+		LocalRow & ApplyPrefixes<MakePrefix<Prefix, K>, NestedLocalRow>,
+		Extend<
+			HydratedRow,
+			{
+				[_ in K]: IsChildNullable extends true
+					? NestedHydratedRow | null
+					: NestedHydratedRow;
+			}
+		>,
+		IsNullable
+	>;
 }
 
 /**
@@ -165,6 +222,7 @@ interface NestableQueryBuilder<
  * @template QueryRow See {@link NestableQueryBuilder}.
  * @template LocalRow See {@link NestableQueryBuilder}.
  * @template HydratedRow See {@link NestableQueryBuilder}.
+ * @template IsNullable See {@link NestableQueryBuilder}.
  * @template NestedDB A `DB` generic for the select query that suppresses
  * nullability of left joins so that the type of nested objects is correctly
  * non-nullable.
@@ -178,6 +236,7 @@ interface NestedJoinBuilder<
 	QueryRow,
 	LocalRow,
 	HydratedRow,
+	IsNullable extends boolean,
 	NestedDB,
 	HasJoin extends boolean,
 > extends NestableQueryBuilder<
@@ -186,7 +245,8 @@ interface NestedJoinBuilder<
 		QueryTB,
 		QueryRow,
 		LocalRow,
-		HydratedRow
+		HydratedRow,
+		IsNullable
 	> {
 	/**
 	 * @internal This is is a fake method that does nothing and is only for
@@ -229,6 +289,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 	innerJoin<
@@ -244,6 +305,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 
@@ -268,6 +330,7 @@ interface NestedJoinBuilder<
 		LocalRow,
 		HydratedRow,
 		HasJoin,
+		IsNullable,
 		TE
 	>;
 	leftJoin<
@@ -284,6 +347,7 @@ interface NestedJoinBuilder<
 		LocalRow,
 		HydratedRow,
 		HasJoin,
+		IsNullable,
 		TE
 	>;
 
@@ -305,6 +369,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 	crossJoin<
@@ -320,6 +385,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 
@@ -341,6 +407,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 	innerJoinLateral<
@@ -356,6 +423,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 
@@ -378,6 +446,7 @@ interface NestedJoinBuilder<
 		LocalRow,
 		HydratedRow,
 		HasJoin,
+		IsNullable,
 		TE
 	>;
 	leftJoinLateral<
@@ -394,6 +463,7 @@ interface NestedJoinBuilder<
 		LocalRow,
 		HydratedRow,
 		HasJoin,
+		IsNullable,
 		TE
 	>;
 
@@ -415,6 +485,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 	crossJoinLateral<
@@ -430,6 +501,7 @@ interface NestedJoinBuilder<
 		QueryRow,
 		LocalRow,
 		HydratedRow,
+		IsNullable,
 		TE
 	>;
 
@@ -449,6 +521,7 @@ interface NestedJoinBuilder<
 		QueryRow & ApplyPrefixes<Prefix, k.Selection<QueryDB, QueryTB, SE>>,
 		LocalRow & k.Selection<NestedDB, QueryTB & keyof NestedDB, SE>,
 		HydratedRow & k.Selection<NestedDB, QueryTB & keyof NestedDB, SE>,
+		IsNullable,
 		NestedDB,
 		HasJoin
 	>;
@@ -461,6 +534,7 @@ interface NestedJoinBuilder<
 		QueryRow & ApplyPrefixes<Prefix, k.CallbackSelection<QueryDB, QueryTB, CB>>,
 		LocalRow & k.CallbackSelection<NestedDB, QueryTB & keyof NestedDB, CB>,
 		HydratedRow & k.CallbackSelection<NestedDB, QueryTB & keyof NestedDB, CB>,
+		IsNullable,
 		NestedDB,
 		HasJoin
 	>;
@@ -473,6 +547,7 @@ interface NestedJoinBuilder<
 		QueryRow & ApplyPrefixes<Prefix, k.Selection<QueryDB, QueryTB, SE>>,
 		LocalRow & k.Selection<NestedDB, QueryTB & keyof NestedDB, SE>,
 		HydratedRow & k.Selection<NestedDB, QueryTB & keyof NestedDB, SE>,
+		IsNullable,
 		NestedDB,
 		HasJoin
 	>;
@@ -489,6 +564,7 @@ type NestedJoinBuilderWithInnerJoin<
 	QueryRow,
 	LocalRow,
 	HydratedRow,
+	IsNullable extends boolean,
 	TE extends k.TableExpression<QueryDB, QueryTB>,
 > = k.SelectQueryBuilderWithInnerJoin<
 	QueryDB,
@@ -503,6 +579,7 @@ type NestedJoinBuilderWithInnerJoin<
 			JoinedRow,
 			LocalRow,
 			HydratedRow,
+			IsNullable,
 			JoinedDB,
 			true
 		>
@@ -516,6 +593,7 @@ type NestedJoinBuilderWithLeftJoin<
 	LocalRow,
 	HydratedRow,
 	AlreadyHadJoin extends boolean,
+	_IsNullable extends boolean,
 	TE extends k.TableExpression<QueryDB, QueryTB>,
 > = k.SelectQueryBuilderWithLeftJoin<
 	QueryDB,
@@ -530,8 +608,9 @@ type NestedJoinBuilderWithLeftJoin<
 			JoinedRow,
 			LocalRow,
 			HydratedRow,
-			// If the nested join builder does not have a join yet, we can treat the join as an inner join
-			// when considered from inside the nested join.
+			true, // Left joins always produce nullable rows.
+			// If the nested join builder does not have a join yet, we can treat the
+			// join as an inner join when considered from inside the nested join.
 			AlreadyHadJoin extends true
 				? JoinedDB
 				: InferDB<
@@ -547,7 +626,9 @@ type NestedJoinBuilderWithLeftJoin<
 
 type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
 
+// biome-ignore lint/correctness/noUnusedVariables: For completeness.
 type AnyNestableQueryBuilder = NestableQueryBuilder<
+	any,
 	any,
 	any,
 	any,
@@ -556,6 +637,7 @@ type AnyNestableQueryBuilder = NestableQueryBuilder<
 	any
 >;
 type AnyNestedJoinBuilder = NestedJoinBuilder<
+	any,
 	any,
 	any,
 	any,
@@ -679,7 +761,8 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 		return this.#hydrate(result);
 	}
 
-	joinMany(
+	#addJoin(
+		mode: CollectionMode,
 		key: string,
 		jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl,
 		keyBy: any,
@@ -697,13 +780,30 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 
 			qb: outputNb.#props.qb,
 
-			hydratable: this.#props.hydratable.hasMany(
+			hydratable: this.#props.hydratable.has(
+				mode,
 				key,
 				// Hydratables do their own job of handling nested prefixes.
 				makePrefix("", key),
 				outputNb.#props.hydratable,
 			),
 		});
+	}
+
+	joinMany(
+		key: string,
+		jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl,
+		keyBy: any,
+	) {
+		return this.#addJoin("many", key, jb, keyBy);
+	}
+
+	joinOne(
+		key: string,
+		jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl,
+		keyBy: any,
+	): any {
+		return this.#addJoin("one", key, jb, keyBy);
 	}
 
 	//
@@ -762,7 +862,15 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 export function hydrated<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	keyBy: KeyBy<QueryRow>,
-): NestableQueryBuilder<"", QueryDB, QueryTB, QueryRow, QueryRow, QueryRow>;
+): NestableQueryBuilder<
+	"",
+	QueryDB,
+	QueryTB,
+	QueryRow,
+	QueryRow,
+	QueryRow,
+	false
+>;
 export function hydrated(
 	qb: k.SelectQueryBuilder<any, any, any>,
 	keyBy?: any,
