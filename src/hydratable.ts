@@ -1,4 +1,3 @@
-/** biome-ignore-all lint/suspicious/noExplicitAny: Many generics afoot. */
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
