@@ -1,4 +1,8 @@
 import * as k from "kysely";
+import {
+	UnexpectedComplexAliasError,
+	UnexpectedSelectAllError,
+} from "./errors.ts";
 import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
 import { assertNever } from "./utils.ts";
 
@@ -55,40 +59,44 @@ function prefixSelectionNode(
 	selectionNode: k.SelectionNode,
 	prefix: string,
 ): PrefixedAliasedExpression<any, any, any> {
+	const name = extractSelectionName(selectionNode);
+
+	const nodeToPrefix = k.AliasNode.is(selectionNode.selection)
+		? selectionNode.selection.node
+		: selectionNode;
+
+	return new PrefixedAliasedExpression(nodeToPrefix, prefix, name);
+}
+
+function extractSelectionName(selectionNode: k.SelectionNode): string {
 	const { selection } = selectionNode;
 
 	if (k.ColumnNode.is(selection)) {
-		return new PrefixedAliasedExpression(
-			selection,
-			prefix,
-			selection.column.name,
-		);
+		return selection.column.name;
 	}
 
 	if (k.ReferenceNode.is(selection)) {
 		const { column } = selection;
 
 		if (k.SelectAllNode.is(column)) {
-			throw new Error("selectAll not supported in nested relational queries");
+			throw new UnexpectedSelectAllError();
 		}
 
-		return new PrefixedAliasedExpression(selection, prefix, column.column.name);
+		return column.column.name;
 	}
 
 	if (k.AliasNode.is(selection)) {
 		const alias = selection.alias;
 
 		if (!k.IdentifierNode.is(alias)) {
-			throw new Error(
-				"Complex aliases not supported in nested relational queries (expected IdentifierNode)",
-			);
+			throw new UnexpectedComplexAliasError();
 		}
 
-		return new PrefixedAliasedExpression(selection.node, prefix, alias.name);
+		return alias.name;
 	}
 
 	if (k.SelectAllNode.is(selection)) {
-		throw new Error("selectAll not supported in nested relational queries");
+		throw new UnexpectedSelectAllError();
 	}
 
 	assertNever(selection);

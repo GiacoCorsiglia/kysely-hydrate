@@ -1,8 +1,12 @@
 import * as k from "kysely";
-
-import { type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
+import {
+	type ApplyPrefixes,
+	hasAnyPrefix,
+	type MakePrefix,
+	makePrefix,
+} from "./helpers/prefixes.ts";
 import { prefixSelectArg } from "./helpers/select-renamer.ts";
-import type { ApplyPrefixes, Extend, KeyBy } from "./helpers/utils.ts";
+import type { Extend, KeyBy } from "./helpers/utils.ts";
 import { createHydratable, type Hydratable } from "./hydratable.ts";
 
 ////////////////////////////////////////////////////////////////////
@@ -22,7 +26,7 @@ import { createHydratable, type Hydratable } from "./hydratable.ts";
  * the row shape returned by `query.execute()`.
  * @template LocalRow The unprefixed row shape that `query.execute()` *would*
  * return if this was the topmost query, ignoring parent queries.
- * @template HydratedRow The final, local output shape of each row, after maps
+ * @template HydratedRow The final, local output shape of each row, after joins
  * have been applied.  Ignores parent queries.
  */
 interface NestableQueryBuilder<
@@ -49,18 +53,19 @@ interface NestableQueryBuilder<
 	): this;
 
 	/**
-	 * Allows you to modify the underlying select query.  Useful for adding `where` clauses.
+	 * Allows you to modify the underlying select query.  Useful for adding
+	 * `where` clauses.  Adding additional SELECTs here is discouraged.
 	 *
 	 * ### Examples
 	 *
 	 * ```ts
-	 * mappedQuery.modify((qb) => qb.where("is_active", "=", "true"))
+	 * nestableQuery.modify((qb) => qb.where("isActive", "=", "true"))
 	 * ```
 	 */
 	modify<
 		NewQueryDB,
 		NewQueryTB extends keyof NewQueryDB,
-		// Enforce that you only expand the output shape.  Otherwise mappers will fail!
+		// Enforce that you only expand the output shape.  Otherwise joins will fail!
 		NewQueryRow extends QueryRow,
 	>(
 		modifier: (
@@ -155,11 +160,16 @@ interface NestableQueryBuilder<
  * A builder for nested joins that is itself also nestable.
  *
  * @template Prefix See {@link NestableQueryBuilder}.
- * @template QueryDB See {@link MappableQueryBuilder}.
- * @template QueryTB See {@link MappableQueryBuilder}.
- * @template QueryRow See {@link MappableQueryBuilder}.
- * @template LocalRow See {@link MappableQueryBuilder}.
- * @template HydratedRow See {@link MappableQueryBuilder}.
+ * @template QueryDB See {@link NestableQueryBuilder}.
+ * @template QueryTB See {@link NestableQueryBuilder}.
+ * @template QueryRow See {@link NestableQueryBuilder}.
+ * @template LocalRow See {@link NestableQueryBuilder}.
+ * @template HydratedRow See {@link NestableQueryBuilder}.
+ * @template NestedDB A `DB` generic for the select query that suppresses
+ * nullability of left joins so that the type of nested objects is correctly
+ * non-nullable.
+ * @template HasJoin Preserves whether this join builder has already had a join
+ * added, which affects the nullability of this relation when adding more joins.
  */
 interface NestedJoinBuilder<
 	Prefix extends string,
@@ -426,8 +436,9 @@ interface NestedJoinBuilder<
 	/**
 	 * Adds a select statement to the query.
 	 *
-	 * Like Kysely's {@link k.SelectQueryBuilder.select} method, but aliases (or re-aliases) selected columns by prefixing them
-	 * with the join key specified when the NestedJoinBuilder was instantiated.
+	 * Like Kysely's {@link k.SelectQueryBuilder.select} method, but aliases (or
+	 * re-aliases) selected columns by prefixing them with the join key specified
+	 * when the NestedJoinBuilder was instantiated.
 	 */
 	select<SE extends k.SelectExpression<QueryDB, QueryTB>>(
 		selections: ReadonlyArray<SE>,
@@ -535,6 +546,7 @@ type NestedJoinBuilderWithLeftJoin<
 ////////////////////////////////////////////////////////////////////
 
 type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
+
 type AnyNestableQueryBuilder = NestableQueryBuilder<
 	any,
 	any,
@@ -563,7 +575,6 @@ interface NestedJoinBuilderProps {
 /**
  * This is a shared implementation of the entire inheritance chain of builders:
  *
- * - {@link MappableQueryBuilder}
  * - {@link NestableQueryBuilder}
  * - {@link NestedJoinBuilder}
  *
@@ -609,15 +620,6 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 		return this;
 	}
 
-	// map(mb: AnyMapper | ((mb: Mapper<any, any, never>) => AnyMapper)): any {
-	// 	const theMapper = mb instanceof Function ? mb(mapper()) : mb;
-	// 	const mappers = this.#props.mappers?.concat(theMapper) ?? [theMapper];
-	// 	return new NestedJoinBuilderImpl({
-	// 		...this.#props,
-	// 		mappers,
-	// 	});
-	// }
-
 	modify(modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder): any {
 		return new NestedJoinBuilderImpl({
 			...this.#props,
@@ -629,18 +631,41 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 		return this.#props.qb;
 	}
 
+	#hydrate(rows: object[]): object[];
+	#hydrate(rows: object | undefined): object | undefined;
+	#hydrate(rows: object | object[] | undefined): object | object[] | undefined {
+		const isArray = Array.isArray(rows);
+		const firstRow = isArray ? rows[0] : rows;
+
+		if (firstRow === undefined) {
+			return isArray ? [] : undefined;
+		}
+
+		// This dance is necessary to ensure the hydrated result actually includes
+		// the selected columns from the top-level select.
+		const fields: Record<string, true> = Object.fromEntries(
+			Object.keys(firstRow)
+				// To determine if the key is from the top-level selection versus a
+				// nested selection, we simply check if it includes the prefix separator.
+				.filter((key) => !hasAnyPrefix(key))
+				.map((key) => [key, true as const]),
+		);
+
+		const hydratableWithSelection = this.#props.hydratable.fields(fields);
+
+		return hydratableWithSelection.hydrate(rows);
+	}
+
 	async execute(): Promise<any[]> {
 		const rows = await this.#props.qb.execute();
 
-		return this.#props.hydratable.hydrate(rows);
+		return this.#hydrate(rows);
 	}
 
 	async executeTakeFirst(): Promise<any | undefined> {
 		const result = await this.#props.qb.executeTakeFirst();
 
-		return result === undefined
-			? undefined
-			: this.#props.hydratable.hydrate(result);
+		return result === undefined ? undefined : this.#hydrate(result);
 	}
 
 	async executeTakeFirstOrThrow(
@@ -651,14 +676,14 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 		const result =
 			await this.#props.qb.executeTakeFirstOrThrow(errorConstructor);
 
-		return this.#props.hydratable.hydrate(result);
+		return this.#hydrate(result);
 	}
 
 	joinMany(
 		key: string,
 		jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl,
 		keyBy: any,
-	): any {
+	) {
 		const inputNb = new NestedJoinBuilderImpl({
 			qb: this.#props.qb,
 			prefix: makePrefix(this.#props.prefix, key),
@@ -674,7 +699,7 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 
 			hydratable: this.#props.hydratable.hasMany(
 				key,
-				// Hydratables do their own job of handling nested prefixes...I think this will work?
+				// Hydratables do their own job of handling nested prefixes.
 				makePrefix("", key),
 				outputNb.#props.hydratable,
 			),
@@ -685,7 +710,7 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 	// NestedJoinBuilder methods.
 	//
 
-	select(selection: k.SelectArg<any, any, any>): any {
+	select(selection: k.SelectArg<any, any, any>) {
 		const prefixedSelections = prefixSelectArg(this.#props.prefix, selection);
 
 		return new NestedJoinBuilderImpl({
@@ -734,9 +759,6 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 // Constructor.
 ////////////////////////////////////////////////////////////////////
 
-// export function hydrated<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
-// 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
-// ): MappableQueryBuilder<QueryDB, QueryTB, QueryRow, QueryRow, QueryRow>;
 export function hydrated<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	keyBy: KeyBy<QueryRow>,

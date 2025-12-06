@@ -86,11 +86,11 @@ export async function seed(db: SQLite.Database) {
 
 	// Insert sample posts with predictable titles and contents (no dates)
 	db.exec(`INSERT INTO posts (user_id, title, content) VALUES
-    (1, 'Post 1', 'Content for post 1'),
+    (2, 'Post 1', 'Content for post 1'),
     (2, 'Post 2', 'Content for post 2'),
     (3, 'Post 3', 'Content for post 3'),
     (4, 'Post 4', 'Content for post 4'),
-    (1, 'Post 5', 'Content for post 5'),
+    (2, 'Post 5', 'Content for post 5'),
     (5, 'Post 6', 'Content for post 6'),
     (6, 'Post 7', 'Content for post 7'),
     (7, 'Post 8', 'Content for post 8'),
@@ -116,8 +116,6 @@ export async function seed(db: SQLite.Database) {
     (9, 10, 'Comment 9 on post 9'),
     (10, 1, 'Comment 10 on post 10'),
     (11, 2, 'Comment 11 on post 11'),
-    (3, 4, 'Comment 12 on post 3'),
-    (13, 5, 'Comment 13 on post 13'),
     (14, 6, 'Comment 14 on post 14'),
     (15, 7, 'Comment 15 on post 15');
   `);

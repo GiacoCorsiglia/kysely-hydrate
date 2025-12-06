@@ -41,7 +41,7 @@ test("queryBuilder", async () => {
 		"id",
 	);
 
-	console.log(
-		util.inspect(await query.execute(), { depth: null, colors: true }),
-	);
+	const result = await query.execute();
+
+	console.log(util.inspect(result, { depth: null, colors: true }));
 });

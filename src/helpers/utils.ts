@@ -1,3 +1,5 @@
+import { UnexpectedCaseError } from "./errors.ts";
+
 export type Prettify<T> = {
 	[K in keyof T]: T[K];
 } & {};
@@ -25,12 +27,8 @@ export type AddOrOverride<T, K extends PropertyKey, V> = Flatten<
 
 export type KeyBy<T> = (keyof T & string) | readonly (keyof T & string)[];
 
-export type ApplyPrefixes<Prefix extends string, T> = {
-	[K in keyof T & string as `${Prefix}${K}`]: T[K];
-};
-
 export function assertNever(arg: never): never {
-	throw new Error(`Unreachable case reached: ${arg}`);
+	throw new UnexpectedCaseError(`Unexpected case: ${JSON.stringify(arg)}`);
 }
 
 export function isIterable<T>(input: unknown): input is Iterable<T> {

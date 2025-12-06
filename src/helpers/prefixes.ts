@@ -1,5 +1,5 @@
 type SEP = typeof SEP;
-const SEP = "__";
+const SEP = "$$";
 
 export type MakePrefix<
 	ParentPrefix extends string,
@@ -19,6 +19,13 @@ export function makePrefix<ParentPrefix extends string, Prefix extends string>(
 	key: Prefix,
 ): MakePrefix<ParentPrefix, Prefix> {
 	return `${prefix}${key}${SEP}`;
+}
+
+/**
+ * Indicates whether a string has any prefixes from `makePrefix`applied to it.
+ */
+export function hasAnyPrefix(string: string): boolean {
+	return string.includes(SEP);
 }
 
 export type ApplyPrefix<
@@ -52,7 +59,7 @@ export function removePrefix<Prefix extends string, Key extends string>(
 	return key.slice(prefix.length) as RemovePrefix<Prefix, Key>;
 }
 
-export function isPrefixed<Prefix extends string, Key extends string>(
+export function hasPrefix<Prefix extends string, Key extends string>(
 	prefix: Prefix,
 	key: Key,
 	// @ts-expect-error Force allow this return type.
@@ -70,6 +77,13 @@ export function getPrefixedValue<P extends string, T, K extends string>(
 ): unknown {
 	return input[applyPrefix(prefix, key) as keyof T];
 }
+
+/**
+ * Applies a prefix to all keys in a type.
+ */
+export type ApplyPrefixes<Prefix extends string, T> = {
+	[K in keyof T & string as `${Prefix}${K}`]: T[K];
+};
 
 /**
  * Extracts from type `T` only the properties that are prefixed with `P`, and removes the prefix
@@ -102,7 +116,7 @@ export function createdPrefixedAccessor<P extends string, T extends object>(
 			const ownKeys = Reflect.ownKeys(target);
 			const result: string[] = [];
 			for (const key of ownKeys) {
-				if (typeof key === "string" && isPrefixed(prefix, key)) {
+				if (typeof key === "string" && hasPrefix(prefix, key)) {
 					result.push(removePrefix(prefix, key));
 				}
 			}
