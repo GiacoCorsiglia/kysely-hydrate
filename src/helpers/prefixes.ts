@@ -44,7 +44,7 @@ export function applyPrefix<Prefix extends string, Key extends string>(
 	prefix: Prefix,
 	key: Key,
 ): ApplyPrefix<Prefix, Key> {
-	return `${prefix}${key}`;
+	return prefix === "" ? (key as ApplyPrefix<Prefix, Key>) : `${prefix}${key}`;
 }
 
 type RemovePrefix<
@@ -96,6 +96,11 @@ export function createdPrefixedAccessor<P extends string, T extends object>(
 	prefix: P,
 	input: T,
 ): SelectAndStripPrefix<P, T> {
+	// In this case, we don't need to apply any prefixing.
+	if (prefix === "") {
+		return input as SelectAndStripPrefix<P, T>;
+	}
+
 	return new Proxy(input, {
 		get(target, key) {
 			return getPrefixedValue(prefix, target, key as string);

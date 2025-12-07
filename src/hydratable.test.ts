@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 import { createHydratable, hydrate } from "./hydratable.ts";
 
-test("hydratable", () => {
+test("hydratable", async () => {
 	type Selection = {
 		id: number;
 		name: string;
@@ -58,7 +58,7 @@ test("hydratable", () => {
 				),
 		);
 
-	assert.deepEqual(hydrate(rows, hydratable), [
+	assert.deepEqual(await hydrate(rows, hydratable), [
 		{
 			id: 1,
 			name: "Alice",

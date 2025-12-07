@@ -13,3 +13,12 @@ export class UnexpectedComplexAliasError extends KyselyHydrateError {
 }
 
 export class UnexpectedCaseError extends KyselyHydrateError {}
+
+/**
+ * Error thrown when a collection mode expects one item but none is found.
+ */
+export class ExpectedOneItemError extends KyselyHydrateError {
+	constructor(key: string) {
+		super(`Expected one item, but got none for key ${key}`);
+	}
+}

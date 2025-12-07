@@ -39,16 +39,20 @@ export function isIterable<T>(input: unknown): input is Iterable<T> {
 	);
 }
 
-// export type IsNullable<T, K extends KeyBy<T>> = K extends keyof T
-// 	? null extends T[K]
-// 		? true
-// 		: false
-// 	: K extends readonly (keyof T)[]
-// 		? true extends {
-// 				[P in K[number]]: null extends T[P] ? true : false;
-// 			}[K[number]]
-// 			? true
-// 			: false
-// 		: false;
-
-// type blah = IsNullable<{ a: number; b: string | null; c: false }, "a">;
+/**
+ * Adds properties from an object to a Map, cloning the Map first for immutability.
+ * If the map is undefined, creates a new Map.
+ */
+export function addObjectToMap<K extends string, V>(
+	map: Map<K, V> | undefined,
+	obj: Record<string, V | undefined>,
+): Map<K, V> {
+	const clone = new Map(map);
+	for (const key of Object.keys(obj)) {
+		const value = obj[key];
+		if (value !== undefined) {
+			clone.set(key as K, value);
+		}
+	}
+	return clone;
+}
