@@ -39,26 +39,31 @@ test("queryBuilder", async () => {
 	const _bar = foo.execute();
 
 	const query = hydrated(db.selectFrom("users").select(["users.id", "users.email"]), "id")
-		// .joinMany(
-		// 	"posts",
+		.joinMany(
+			"posts",
 
-		// 	({ leftJoin }) =>
-		// 		leftJoin("posts", "posts.user_id", "users.id")
-		// 			.select(["posts.id", "posts.title"])
+			({ leftJoin }) =>
+				leftJoin("posts as p", "p.user_id", "users.id")
+					.select(["p.id", "p.title"])
 
-		// 			.joinMany(
-		// 				"comments",
+					.joinMany(
+						"comments",
 
-		// 				({ leftJoin }) =>
-		// 					leftJoin("comments", "comments.id", "posts.id").select([
-		// 						"comments.id",
-		// 					]),
+						({ leftJoin }) => leftJoin("comments", "comments.id", "p.id").select(["comments.id"]),
 
-		// 				"id",
-		// 			),
+						"id",
+					)
+					.attachMany(
+						"fetchedComments",
+						(_inputs) => [
+							{ id: 1, postId: 1, content: "Comment 1" },
+							{ id: 2, postId: 1, content: "Comment 2" },
+						],
+						"postId",
+					),
 
-		// 	"id",
-		// )
+			"id",
+		)
 		.joinOne(
 			"latestPost",
 			({ leftJoinLateral }) =>
@@ -73,6 +78,14 @@ test("queryBuilder", async () => {
 					(join) => join.onTrue(),
 				).select(["latestPosts.id", "latestPosts.title"]),
 			"id",
+		)
+		.attachMany(
+			"fetchedPosts",
+			(_inputs) => [
+				{ id: 1, userId: 1, title: "Post 1" },
+				{ id: 2, userId: 1, title: "Post 2" },
+			],
+			"userId",
 		);
 
 	const result = await query.execute();

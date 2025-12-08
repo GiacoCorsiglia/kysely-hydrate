@@ -74,7 +74,7 @@ interface Collection<ChildInput, ChildOutput> {
  * Async function that fetches and hydrates data to attach. Called exactly once with
  * all parent inputs to avoid N+1 queries. Should return already-hydrated data.
  */
-type FetchFn<ParentInput, AttachedOutput> = (
+export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
 ) => Iterable<AttachedOutput> | Promise<Iterable<AttachedOutput>>;
 
