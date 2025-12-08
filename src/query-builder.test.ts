@@ -36,7 +36,7 @@ test("queryBuilder", async () => {
 		.leftJoin("posts", "posts.user_id", "users.id")
 		.select(["posts.id as postId", "posts.title as postTitle"]);
 
-	const _bar = foo.execute();
+	const _bar = await foo.execute();
 
 	const query = hydrated(db.selectFrom("users").select(["users.id", "users.email"]), "id")
 		.joinMany(
