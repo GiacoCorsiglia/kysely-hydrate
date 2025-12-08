@@ -1,11 +1,38 @@
 {
   "name": "kysely-hydrate",
-  "module": "src/index.ts",
+  "version": "0.1.0",
+  "description": "Explicit ORM-style queries with Kysely",
+  "license": "MIT",
+  "homepage": "https://github.com/GiacoCorsiglia/kysely-hydrate#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GiacoCorsiglia/kysely-hydrate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GiacoCorsiglia/kysely-hydrate/issues"
+  },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
   },
-  "license": "MIT",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "test": "node --test",
+    "typecheck": "tsgo",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "peerDependencies": {
     "kysely": "^0.28"
   },
@@ -16,12 +43,7 @@
     "better-sqlite3": "^12.4.1",
     "kysely": "^0.28.7",
     "oxfmt": "^0.16.0",
-    "oxlint": "^1.31.0"
-  },
-  "scripts": {
-    "test": "node --test",
-    "typecheck": "npx tsgo",
-    "lint": "npx oxlint",
-    "format": "npx oxfmt"
+    "oxlint": "^1.31.0",
+    "tsdown": "^0.17.1"
   }
 }
