@@ -1,10 +1,9 @@
 name: Release
 
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 permissions:
   id-token: write # Required for OIDC.
@@ -12,6 +11,11 @@ permissions:
 
 jobs:
   release:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'refs/tags/v')
+
+    name: Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
