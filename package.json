@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Explicit ORM-style queries with Kysely",
   "license": "MIT",
+  "author": {
+    "name": "Giaco Corsiglia",
+    "url": "https://giacocorsiglia.com"
+  },
   "homepage": "https://github.com/GiacoCorsiglia/kysely-hydrate#readme",
   "repository": {
     "type": "git",
