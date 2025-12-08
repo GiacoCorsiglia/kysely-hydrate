@@ -28,6 +28,7 @@
   ],
   "scripts": {
     "build": "tsdown",
+    "release": "./scripts/release.sh",
     "test": "node --test",
     "typecheck": "tsgo",
     "lint": "oxlint",
