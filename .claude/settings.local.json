@@ -3,8 +3,9 @@
     "allow": [
       "Bash(cat:*)",
       "Bash(npm run:*)",
-      "Bash(bunx tsc:*)",
-      "Bash(bun test:*)"
+      "Bash(npm test)",
+      "Bash(npm test:*)",
+      "Bash(node --test:*)"
     ],
     "deny": [],
     "ask": []
