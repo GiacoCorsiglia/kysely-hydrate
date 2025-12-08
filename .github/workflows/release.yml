@@ -7,7 +7,7 @@ on:
 
 permissions:
   id-token: write # Required for OIDC.
-  contents: read
+  contents: write # Required for release notes.
 
 jobs:
   release:
@@ -19,11 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-node@v6
         with:
           node-version-file: 'package.json'
           cache: "npm"
+
       - run: npm ci
       # TODO: Check the package.
       - run: npm run build
       - run: npm publish --access public
+
+      - run: npx changelogithub@14
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
