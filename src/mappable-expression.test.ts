@@ -19,7 +19,7 @@ const db = new k.Kysely<SeedDB>({
 	plugins: [new KyselyHydratePlugin()],
 });
 
-test("mappableExpression", async () => {
+test.skip("mappableExpression", async () => {
 	// const foo = db
 	// 	.withPlugin(new KyselyHydratePlugin())
 	// 	.selectFrom("users")

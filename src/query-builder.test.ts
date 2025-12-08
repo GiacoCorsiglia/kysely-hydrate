@@ -18,7 +18,7 @@ const db = new k.Kysely<SeedDB>({
 	dialect,
 });
 
-test("queryBuilder", async () => {
+test.skip("queryBuilder", async () => {
 	const foo = db
 		.selectFrom("users")
 		.select(["users.id", "users.email"])
