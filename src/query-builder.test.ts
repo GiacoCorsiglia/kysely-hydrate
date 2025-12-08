@@ -60,6 +60,7 @@ test("queryBuilder", async () => {
 							{ id: 2, postId: 1, content: "Comment 2" },
 						],
 						"postId",
+						"id",
 					),
 
 			"id",
@@ -86,6 +87,7 @@ test("queryBuilder", async () => {
 				{ id: 2, userId: 1, title: "Post 2" },
 			],
 			"userId",
+			"id",
 		);
 
 	const result = await query.execute();
