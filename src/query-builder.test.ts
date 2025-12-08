@@ -59,8 +59,7 @@ test("queryBuilder", async () => {
 							{ id: 1, postId: 1, content: "Comment 1" },
 							{ id: 2, postId: 1, content: "Comment 2" },
 						],
-						"postId",
-						"id",
+						{ keyBy: "postId", compareTo: "id" },
 					),
 
 			"id",
@@ -86,8 +85,7 @@ test("queryBuilder", async () => {
 				{ id: 1, userId: 1, title: "Post 1" },
 				{ id: 2, userId: 1, title: "Post 2" },
 			],
-			"userId",
-			"id",
+			{ keyBy: "userId" },
 		);
 
 	const result = await query.execute();

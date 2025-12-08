@@ -9,6 +9,7 @@ import {
 import { prefixSelectArg } from "./helpers/select-renamer.ts";
 import { type Extend, type KeyBy } from "./helpers/utils.ts";
 import {
+	type AttachedKeysArg,
 	type CollectionMode,
 	type FetchFn,
 	createHydratable,
@@ -213,8 +214,7 @@ interface NestableQueryBuilder<
 	attachMany<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<LocalRow, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<LocalRow>,
+		keys: AttachedKeysArg<LocalRow, AttachedOutput>,
 	): NestableQueryBuilder<
 		Prefix,
 		QueryDB,
@@ -228,8 +228,7 @@ interface NestableQueryBuilder<
 	attachOne<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<LocalRow, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<LocalRow>,
+		keys: AttachedKeysArg<LocalRow, AttachedOutput>,
 	): NestableQueryBuilder<
 		Prefix,
 		QueryDB,
@@ -243,8 +242,7 @@ interface NestableQueryBuilder<
 	attachOneOrThrow<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<LocalRow, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<LocalRow>,
+		keys: AttachedKeysArg<LocalRow, AttachedOutput>,
 	): NestableQueryBuilder<
 		Prefix,
 		QueryDB,
@@ -822,30 +820,24 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 		mode: CollectionMode,
 		key: string,
 		fetchFn: FetchFn<any, any>,
-		keyBy: KeyBy<any>,
-		matchBy: KeyBy<any>,
+		keys: AttachedKeysArg<any, any>,
 	) {
 		return new NestedJoinBuilderImpl({
 			...this.#props,
-			hydratable: this.#props.hydratable.attach(mode, key, fetchFn, keyBy, matchBy),
+			hydratable: this.#props.hydratable.attach(mode, key, fetchFn, keys),
 		});
 	}
 
-	attachMany(key: string, fetchFn: FetchFn<any, any>, keyBy: KeyBy<any>, matchBy: KeyBy<any>) {
-		return this.#addAttach("many", key, fetchFn, keyBy, matchBy);
+	attachMany(key: string, fetchFn: FetchFn<any, any>, keys: AttachedKeysArg<any, any>) {
+		return this.#addAttach("many", key, fetchFn, keys);
 	}
 
-	attachOne(key: string, fetchFn: FetchFn<any, any>, keyBy: KeyBy<any>, matchBy: KeyBy<any>) {
-		return this.#addAttach("one", key, fetchFn, keyBy, matchBy);
+	attachOne(key: string, fetchFn: FetchFn<any, any>, keys: AttachedKeysArg<any, any>) {
+		return this.#addAttach("one", key, fetchFn, keys);
 	}
 
-	attachOneOrThrow(
-		key: string,
-		fetchFn: FetchFn<any, any>,
-		keyBy: KeyBy<any>,
-		matchBy: KeyBy<any>,
-	) {
-		return this.#addAttach("oneOrThrow", key, fetchFn, keyBy, matchBy);
+	attachOneOrThrow(key: string, fetchFn: FetchFn<any, any>, keys: AttachedKeysArg<any, any>) {
+		return this.#addAttach("oneOrThrow", key, fetchFn, keys);
 	}
 
 	//

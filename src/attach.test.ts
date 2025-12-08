@@ -87,7 +87,7 @@ test("attachMany: fetches and attaches multiple related entities", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, email: true })
-		.attachMany("posts", mockFetchPosts, "userId");
+		.attachMany("posts", mockFetchPosts, { keyBy: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -116,7 +116,7 @@ test("attachOne: fetches and attaches a single related entity", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, email: true })
-		.attachOne("latestPost", mockFetchPosts, "userId");
+		.attachOne("latestPost", mockFetchPosts, { keyBy: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -137,7 +137,7 @@ test("attachOne: returns null when no match found", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, email: true })
-		.attachOne("latestPost", mockFetchPosts, "userId");
+		.attachOne("latestPost", mockFetchPosts, { keyBy: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -204,7 +204,7 @@ test("nested attachMany: fetches data at multiple levels exactly once per level"
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, email: true })
-		.attachMany("posts", mockFetchPostsWithComments, "userId");
+		.attachMany("posts", mockFetchPostsWithComments, { keyBy: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -277,7 +277,10 @@ test("attachMany with composite keys", async () => {
 
 	const hydratable = createHydratable<CompositeKeyEntity>(["key1", "key2"])
 		.fields({ key1: true, key2: true, value: true })
-		.attachMany("related", fetchRelated, ["relatedKey1", "relatedKey2"]);
+		.attachMany("related", fetchRelated, {
+			keyBy: ["relatedKey1", "relatedKey2"],
+			compareTo: ["key1", "key2"],
+		});
 
 	const result = await hydrate(entities, hydratable);
 
@@ -293,7 +296,7 @@ test("attachMany with no matching entities returns empty array", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, email: true })
-		.attachMany("posts", mockFetchPosts, "userId");
+		.attachMany("posts", mockFetchPosts, { keyBy: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -330,7 +333,7 @@ test("mixing has and attach collections", async () => {
 	const hydratable = createHydratable<UserWithProfile>("id")
 		.fields({ id: true, email: true })
 		.hasOne("profile", "profile$$", (h) => h("name").fields({ name: true, age: true }))
-		.attachMany("posts", mockFetchPosts, "userId");
+		.attachMany("posts", mockFetchPosts, { keyBy: "userId" });
 
 	const result = await hydrate(users, hydratable);
 

@@ -79,6 +79,21 @@ export type FetchFn<ParentInput, AttachedOutput> = (
 ) => Iterable<AttachedOutput> | Promise<Iterable<AttachedOutput>>;
 
 /**
+ * Input argument for configuring the keys to use for matching attached data to parents.
+ */
+export interface AttachedKeysArg<ParentInput, AttachedOutput> {
+	/**
+	 * The key(s) on the attached child output to use for matching to parents.
+	 */
+	readonly keyBy: KeyBy<AttachedOutput>;
+	/**
+	 * The key(s) on the parent input to compare with the attached child output's
+	 * key.  If not provided, the parent's keyBy will be used.
+	 */
+	readonly compareTo?: KeyBy<ParentInput> | undefined;
+}
+
+/**
  * Configuration for an attached collection.
  */
 interface AttachedCollection<ParentInput, AttachedOutput> {
@@ -99,7 +114,7 @@ interface AttachedCollection<ParentInput, AttachedOutput> {
 	/**
 	 * The key(s) on the parent input to compare with the attached child output's key.
 	 */
-	readonly matchBy: KeyBy<ParentInput>;
+	readonly compareTo: KeyBy<ParentInput>;
 }
 
 /**
@@ -361,36 +376,31 @@ class Hydratable<Input, Output> {
 		mode: "many",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input>,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "one",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input>,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input>,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input>,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input>,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, any> {
 		return new Hydratable({
 			...this.#props,
@@ -398,8 +408,8 @@ class Hydratable<Input, Output> {
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
-				keyBy,
-				matchBy,
+				keyBy: keys.keyBy,
+				compareTo: keys.compareTo ?? this.#props.keyBy,
 			} satisfies AttachedCollection<Input, AttachedOutput>),
 		}) as any;
 	}
@@ -416,10 +426,9 @@ class Hydratable<Input, Output> {
 	attachMany<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input> = this.#props.keyBy,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>> {
-		return this.attach("many", key, fetchFn, keyBy, matchBy) as any;
+		return this.attach("many", key, fetchFn, keys) as any;
 	}
 
 	/**
@@ -434,10 +443,9 @@ class Hydratable<Input, Output> {
 	attachOne<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input> = this.#props.keyBy,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>> {
-		return this.attach("one", key, fetchFn, keyBy, matchBy) as any;
+		return this.attach("one", key, fetchFn, keys) as any;
 	}
 
 	/**
@@ -453,10 +461,9 @@ class Hydratable<Input, Output> {
 	attachOneOrThrow<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
-		keyBy: KeyBy<AttachedOutput>,
-		matchBy: KeyBy<Input> = this.#props.keyBy,
+		keys: AttachedKeysArg<Input, AttachedOutput>,
 	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput }>> {
-		return this.attach("oneOrThrow", key, fetchFn, keyBy, matchBy) as any;
+		return this.attach("oneOrThrow", key, fetchFn, keys) as any;
 	}
 
 	//
@@ -578,7 +585,7 @@ class Hydratable<Input, Output> {
 		if (attachedCollections) {
 			for (const [key, collection] of attachedCollections) {
 				// Get the match value from this input using the matchBy.
-				const inputKey = getKey(prefix, input, collection.matchBy);
+				const inputKey = getKey(prefix, input, collection.compareTo);
 
 				// Use prefixed key to look up in the map
 				const mapKey = prefix ? applyPrefix(prefix, key) : key;
