@@ -735,7 +735,7 @@ const KEY_SEPARATOR = "::";
  * Gets the key for an entity from the input.
  *
  * Expected to return values that are good for use as a key in a Map, but not
- * guaranteed to do so depending on the input object
+ * guaranteed to do so depending on the input object.
  */
 function getKey(prefix: string, input: unknown, keyBy: string | readonly string[]): unknown {
 	if (typeof keyBy !== "object") {
