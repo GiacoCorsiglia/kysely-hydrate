@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import util from "node:util";
+
 import SQLite from "better-sqlite3";
 import * as k from "kysely";
+
 import { hydrated } from "./query-builder.ts";
-import { type SeedDB, seed } from "./seed.ts";
+import { seed, type SeedDB } from "./seed.ts";
 
 const sqlite = new SQLite(":memory:");
 await seed(sqlite);
@@ -30,19 +32,13 @@ test("queryBuilder", async () => {
 					.as("latestPost"),
 			(join) => join.onTrue(),
 		)
-		.select([
-			"latestPost.id as latestPostId",
-			"latestPost.title as latestPostTitle",
-		])
+		.select(["latestPost.id as latestPostId", "latestPost.title as latestPostTitle"])
 		.leftJoin("posts", "posts.user_id", "users.id")
 		.select(["posts.id as postId", "posts.title as postTitle"]);
 
-	const bar = foo.execute();
+	const _bar = foo.execute();
 
-	const query = hydrated(
-		db.selectFrom("users").select(["users.id", "users.email"]),
-		"id",
-	)
+	const query = hydrated(db.selectFrom("users").select(["users.id", "users.email"]), "id")
 		// .joinMany(
 		// 	"posts",
 

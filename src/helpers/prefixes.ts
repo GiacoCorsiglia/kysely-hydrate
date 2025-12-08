@@ -28,10 +28,7 @@ export function hasAnyPrefix(string: string): boolean {
 	return string.includes(SEP);
 }
 
-export type ApplyPrefix<
-	Prefix extends string,
-	Key extends string = "",
-> = `${Prefix}${Key}`;
+export type ApplyPrefix<Prefix extends string, Key extends string = ""> = `${Prefix}${Key}`;
 
 /**
  * Applies a prefix to a key.
@@ -111,10 +108,7 @@ export function createdPrefixedAccessor<P extends string, T extends object>(
 		},
 
 		getOwnPropertyDescriptor(target, key) {
-			return Reflect.getOwnPropertyDescriptor(
-				target,
-				applyPrefix(prefix, key as string),
-			);
+			return Reflect.getOwnPropertyDescriptor(target, applyPrefix(prefix, key as string));
 		},
 
 		ownKeys(target) {

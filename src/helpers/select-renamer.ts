@@ -1,8 +1,6 @@
 import * as k from "kysely";
-import {
-	UnexpectedComplexAliasError,
-	UnexpectedSelectAllError,
-} from "./errors.ts";
+
+import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./errors.ts";
 import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
 import { assertNever } from "./utils.ts";
 
@@ -29,11 +27,7 @@ export function prefixSelectArg(
 		prefixSelectionNode(selectionNode, prefix),
 	);
 
-	return (prefixedSelections ?? []) satisfies k.SelectArg<
-		any,
-		any,
-		k.SelectExpression<any, any>
-	>;
+	return (prefixedSelections ?? []) satisfies k.SelectArg<any, any, k.SelectExpression<any, any>>;
 }
 
 class PrefixedAliasedExpression<
@@ -43,11 +37,7 @@ class PrefixedAliasedExpression<
 > extends k.AliasedExpressionWrapper<T, ApplyPrefix<Prefix, OriginalName>> {
 	readonly originalName: string;
 
-	constructor(
-		node: k.OperationNode,
-		prefix: Prefix,
-		originalName: OriginalName,
-	) {
+	constructor(node: k.OperationNode, prefix: Prefix, originalName: OriginalName) {
 		const alias = applyPrefix(prefix, originalName);
 		// We have to gin up a new expression.
 		super(new k.ExpressionWrapper(node), alias);

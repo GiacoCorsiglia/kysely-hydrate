@@ -1,4 +1,5 @@
 import * as k from "kysely";
+
 import { UnexpectedComplexAliasError } from "./helpers/errors.ts";
 
 export function map<Input, Output>(
@@ -12,10 +13,7 @@ class MappedExpression<Input, Output> implements k.AliasableExpression<Output> {
 	#inner: k.AliasableExpression<Input>;
 	#mapFn: (input: Input) => Output;
 
-	constructor(
-		inner: k.AliasableExpression<Input>,
-		mapFn: (input: Input) => Output,
-	) {
+	constructor(inner: k.AliasableExpression<Input>, mapFn: (input: Input) => Output) {
 		this.#inner = inner;
 		this.#mapFn = mapFn;
 	}
@@ -116,9 +114,7 @@ class KyselyHydrateTransformer extends k.OperationNodeTransformer {
 	// 	return super.transformAlias(node);
 	// }
 
-	protected override transformSelection(
-		node: k.SelectionNode,
-	): k.SelectionNode {
+	protected override transformSelection(node: k.SelectionNode): k.SelectionNode {
 		// NOTE: We must not call `super.transformSelection` here, because it will
 		// clone the node, thus meaning we won't be able to find it in the weak map.
 

@@ -1,4 +1,5 @@
 import * as k from "kysely";
+
 import {
 	type ApplyPrefixes,
 	hasAnyPrefix,
@@ -6,12 +7,8 @@ import {
 	makePrefix,
 } from "./helpers/prefixes.ts";
 import { prefixSelectArg } from "./helpers/select-renamer.ts";
-import type { Extend, KeyBy } from "./helpers/utils.ts";
-import {
-	type CollectionMode,
-	createHydratable,
-	type Hydratable,
-} from "./hydratable.ts";
+import { type Extend, type KeyBy } from "./helpers/utils.ts";
+import { type CollectionMode, createHydratable, type Hydratable } from "./hydratable.ts";
 
 ////////////////////////////////////////////////////////////////////
 // Interfaces.
@@ -117,9 +114,7 @@ interface NestableQueryBuilder<
 	 * provide a custom error class, or callback to throw a different error.
 	 */
 	executeTakeFirstOrThrow(
-		errorConstructor?:
-			| k.NoResultErrorConstructor
-			| ((node: k.QueryNode) => Error),
+		errorConstructor?: k.NoResultErrorConstructor | ((node: k.QueryNode) => Error),
 	): Promise<k.Simplify<HydratedRow>>;
 
 	joinMany<
@@ -204,9 +199,7 @@ interface NestableQueryBuilder<
 		Extend<
 			HydratedRow,
 			{
-				[_ in K]: IsChildNullable extends true
-					? NestedHydratedRow | null
-					: NestedHydratedRow;
+				[_ in K]: IsChildNullable extends true ? NestedHydratedRow | null : NestedHydratedRow;
 			}
 		>,
 		IsNullable
@@ -240,14 +233,14 @@ interface NestedJoinBuilder<
 	NestedDB,
 	HasJoin extends boolean,
 > extends NestableQueryBuilder<
-		Prefix,
-		QueryDB,
-		QueryTB,
-		QueryRow,
-		LocalRow,
-		HydratedRow,
-		IsNullable
-	> {
+	Prefix,
+	QueryDB,
+	QueryTB,
+	QueryRow,
+	LocalRow,
+	HydratedRow,
+	IsNullable
+> {
 	/**
 	 * @internal This is is a fake method that does nothing and is only for
 	 * testing types.  The callback will never actually be called.
@@ -566,24 +559,24 @@ type NestedJoinBuilderWithInnerJoin<
 	HydratedRow,
 	IsNullable extends boolean,
 	TE extends k.TableExpression<QueryDB, QueryTB>,
-> = k.SelectQueryBuilderWithInnerJoin<
-	QueryDB,
-	QueryTB,
-	QueryRow,
-	TE
-> extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
-	? NestedJoinBuilder<
-			Prefix,
-			JoinedDB,
-			JoinedTB,
-			JoinedRow,
-			LocalRow,
-			HydratedRow,
-			IsNullable,
-			JoinedDB,
-			true
-		>
-	: never;
+> =
+	k.SelectQueryBuilderWithInnerJoin<QueryDB, QueryTB, QueryRow, TE> extends k.SelectQueryBuilder<
+		infer JoinedDB,
+		infer JoinedTB,
+		infer JoinedRow
+	>
+		? NestedJoinBuilder<
+				Prefix,
+				JoinedDB,
+				JoinedTB,
+				JoinedRow,
+				LocalRow,
+				HydratedRow,
+				IsNullable,
+				JoinedDB,
+				true
+			>
+		: never;
 
 type NestedJoinBuilderWithLeftJoin<
 	Prefix extends string,
@@ -595,30 +588,28 @@ type NestedJoinBuilderWithLeftJoin<
 	AlreadyHadJoin extends boolean,
 	_IsNullable extends boolean,
 	TE extends k.TableExpression<QueryDB, QueryTB>,
-> = k.SelectQueryBuilderWithLeftJoin<
-	QueryDB,
-	QueryTB,
-	QueryRow,
-	TE
-> extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
-	? NestedJoinBuilder<
-			Prefix,
-			JoinedDB,
-			JoinedTB,
-			JoinedRow,
-			LocalRow,
-			HydratedRow,
-			true, // Left joins always produce nullable rows.
-			// If the nested join builder does not have a join yet, we can treat the
-			// join as an inner join when considered from inside the nested join.
-			AlreadyHadJoin extends true
-				? JoinedDB
-				: InferDB<
-						k.SelectQueryBuilderWithInnerJoin<QueryDB, QueryTB, QueryRow, TE>
-					>,
-			true
-		>
-	: never;
+> =
+	k.SelectQueryBuilderWithLeftJoin<QueryDB, QueryTB, QueryRow, TE> extends k.SelectQueryBuilder<
+		infer JoinedDB,
+		infer JoinedTB,
+		infer JoinedRow
+	>
+		? NestedJoinBuilder<
+				Prefix,
+				JoinedDB,
+				JoinedTB,
+				JoinedRow,
+				LocalRow,
+				HydratedRow,
+				true, // Left joins always produce nullable rows.
+				// If the nested join builder does not have a join yet, we can treat the
+				// join as an inner join when considered from inside the nested join.
+				AlreadyHadJoin extends true
+					? JoinedDB
+					: InferDB<k.SelectQueryBuilderWithInnerJoin<QueryDB, QueryTB, QueryRow, TE>>,
+				true
+			>
+		: never;
 
 ////////////////////////////////////////////////////////////////////
 // Implementation.
@@ -626,27 +617,9 @@ type NestedJoinBuilderWithLeftJoin<
 
 type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
 
-// biome-ignore lint/correctness/noUnusedVariables: For completeness.
-type AnyNestableQueryBuilder = NestableQueryBuilder<
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any
->;
-type AnyNestedJoinBuilder = NestedJoinBuilder<
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any
->;
+// oxlint-disable-next-line no-unused-vars
+type AnyNestableQueryBuilder = NestableQueryBuilder<any, any, any, any, any, any, any>;
+type AnyNestedJoinBuilder = NestedJoinBuilder<any, any, any, any, any, any, any, any, any>;
 
 interface NestedJoinBuilderProps {
 	readonly qb: AnySelectQueryBuilder;
@@ -751,12 +724,9 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 	}
 
 	async executeTakeFirstOrThrow(
-		errorConstructor:
-			| k.NoResultErrorConstructor
-			| ((node: k.QueryNode) => Error) = k.NoResultError,
+		errorConstructor: k.NoResultErrorConstructor | ((node: k.QueryNode) => Error) = k.NoResultError,
 	): Promise<any> {
-		const result =
-			await this.#props.qb.executeTakeFirstOrThrow(errorConstructor);
+		const result = await this.#props.qb.executeTakeFirstOrThrow(errorConstructor);
 
 		return this.#hydrate(result);
 	}
@@ -790,19 +760,11 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 		});
 	}
 
-	joinMany(
-		key: string,
-		jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl,
-		keyBy: any,
-	) {
+	joinMany(key: string, jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl, keyBy: any) {
 		return this.#addJoin("many", key, jb, keyBy);
 	}
 
-	joinOne(
-		key: string,
-		jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl,
-		keyBy: any,
-	): any {
+	joinOne(key: string, jb: (nb: AnyNestedJoinBuilder) => NestedJoinBuilderImpl, keyBy: any): any {
 		return this.#addJoin("one", key, jb, keyBy);
 	}
 
@@ -821,10 +783,7 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 
 			hydratable: this.#props.hydratable.fields(
 				Object.fromEntries(
-					prefixedSelections.map((selection) => [
-						selection.originalName,
-						true as const,
-					]),
+					prefixedSelections.map((selection) => [selection.originalName, true as const]),
 				),
 			),
 		});
@@ -862,19 +821,8 @@ class NestedJoinBuilderImpl implements AnyNestedJoinBuilder {
 export function hydrated<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	keyBy: KeyBy<QueryRow>,
-): NestableQueryBuilder<
-	"",
-	QueryDB,
-	QueryTB,
-	QueryRow,
-	QueryRow,
-	QueryRow,
-	false
->;
-export function hydrated(
-	qb: k.SelectQueryBuilder<any, any, any>,
-	keyBy?: any,
-): any {
+): NestableQueryBuilder<"", QueryDB, QueryTB, QueryRow, QueryRow, QueryRow, false>;
+export function hydrated(qb: k.SelectQueryBuilder<any, any, any>, keyBy?: any): any {
 	return new NestedJoinBuilderImpl({
 		qb,
 		prefix: "",

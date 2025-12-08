@@ -5,12 +5,7 @@ import {
 	getPrefixedValue,
 	type SelectAndStripPrefix,
 } from "./helpers/prefixes.ts";
-import {
-	addObjectToMap,
-	type Extend,
-	isIterable,
-	type KeyBy,
-} from "./helpers/utils.ts";
+import { addObjectToMap, type Extend, isIterable, type KeyBy } from "./helpers/utils.ts";
 
 /**
  * Configuration for fields to include in the hydrated output.
@@ -272,10 +267,7 @@ class Hydratable<Input, Output> {
 		key: K,
 		prefix: P,
 		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<
-		Input,
-		Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>
-	>;
+	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>>;
 	has<K extends string, ChildOutput>(
 		mode: CollectionMode,
 		key: K,
@@ -288,10 +280,7 @@ class Hydratable<Input, Output> {
 			collections: new Map(this.#props.collections).set(key, {
 				prefix,
 				mode,
-				hydratable:
-					typeof hydratable === "function"
-						? hydratable(createHydratable)
-						: hydratable,
+				hydratable: typeof hydratable === "function" ? hydratable(createHydratable) : hydratable,
 			} satisfies Collection<any, ChildOutput>),
 		}) as any;
 	}
@@ -385,10 +374,7 @@ class Hydratable<Input, Output> {
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		matchKey: KeyBy<AttachedOutput>,
-	): Hydratable<
-		Input,
-		Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>
-	>;
+	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
@@ -497,18 +483,16 @@ class Hydratable<Input, Output> {
 
 				// Create fetch promise
 				fetchPromises.push(
-					Promise.resolve(attachedCollection.fetchFn(inputArray)).then(
-						(attachedOutputs) => {
-							// Group fetched rows by their match key
-							const grouped = groupByKey(
-								"", // Always unprefixed.
-								attachedOutputs,
-								attachedCollection.matchKey,
-							);
+					Promise.resolve(attachedCollection.fetchFn(inputArray)).then((attachedOutputs) => {
+						// Group fetched rows by their match key
+						const grouped = groupByKey(
+							"", // Always unprefixed.
+							attachedOutputs,
+							attachedCollection.matchKey,
+						);
 
-							attachedDataMap.set(mapKey, grouped);
-						},
-					),
+						attachedDataMap.set(mapKey, grouped);
+					}),
 				);
 			}
 		}
@@ -568,11 +552,7 @@ class Hydratable<Input, Output> {
 					attachedDataMap,
 				);
 
-				entity[key] = applyCollectionMode(
-					collectionOutputs,
-					collection.mode,
-					key,
-				);
+				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
 		}
 
@@ -622,9 +602,7 @@ class Hydratable<Input, Output> {
 					continue;
 				}
 
-				const entity = this.#hydrateOne(prefix, attachedDataMap, input, [
-					input,
-				]);
+				const entity = this.#hydrateOne(prefix, attachedDataMap, input, [input]);
 				result.push(entity);
 			}
 
@@ -635,15 +613,8 @@ class Hydratable<Input, Output> {
 		for (const groupRows of grouped.values()) {
 			// We assume the first row is representative of the group, at least for
 			// the top-level entity (not nested collections).
-			//
-			// biome-ignore lint/style/noNonNullAssertion: One row exists or the group would not exist.
 			const firstRow = groupRows[0]!;
-			const entity = this.#hydrateOne(
-				prefix,
-				attachedDataMap,
-				firstRow,
-				groupRows,
-			);
+			const entity = this.#hydrateOne(prefix, attachedDataMap, firstRow, groupRows);
 			result.push(entity);
 		}
 
@@ -694,9 +665,8 @@ class Hydratable<Input, Output> {
  *
  * @param keyBy - The key(s) to group by for this entity.
  */
-export const createHydratable = <T = {}>(
-	keyBy: KeyBy<NoInfer<T>>,
-): Hydratable<T, {}> => new Hydratable({ keyBy });
+export const createHydratable = <T = {}>(keyBy: KeyBy<NoInfer<T>>): Hydratable<T, {}> =>
+	new Hydratable({ keyBy });
 
 /**
  * Hydrates an entity or collection of entities into a denormalized structure
@@ -723,10 +693,7 @@ export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydratable: HydratableArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
-	hydratable =
-		typeof hydratable === "function"
-			? hydratable(createHydratable)
-			: hydratable;
+	hydratable = typeof hydratable === "function" ? hydratable(createHydratable) : hydratable;
 
 	return hydratable.hydrate(input);
 }
@@ -770,11 +737,7 @@ const KEY_SEPARATOR = "::";
  * Expected to return values that are good for use as a key in a Map, but not
  * guaranteed to do so depending on the input object
  */
-function getKey(
-	prefix: string,
-	input: unknown,
-	keyBy: string | readonly string[],
-): unknown {
+function getKey(prefix: string, input: unknown, keyBy: string | readonly string[]): unknown {
 	if (typeof keyBy !== "object") {
 		return getPrefixedValue(prefix, input, keyBy);
 	}

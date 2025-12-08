@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import util from "node:util";
+
 import SQLite from "better-sqlite3";
 import * as k from "kysely";
+
 import { KyselyHydratePlugin, map } from "./mappable-expression.ts";
 import { type SeedDB, seed } from "./seed.ts";
 
@@ -25,24 +27,19 @@ test("mappableExpression", async () => {
 	// 		map(eb.ref("users.id"), (id) => (id * 100).toString()).as("bigId"),
 	// 	]);
 
-	const update = db
+	const _update = db
 		.updateTable("users")
 		.set({
 			email: "updated@example.com",
 		})
 		.where("id", "=", 1)
-		.returning((eb) => [
-			map(eb.ref("users.id"), (id) => (id * 100).toString()).as("bigId"),
-		]);
+		.returning((eb) => [map(eb.ref("users.id"), (id) => (id * 100).toString()).as("bigId")]);
 
 	const fb = db
 		.with("newUsers", (qb) =>
 			qb
-				.with()
 				.selectFrom("users")
-				.select((eb) => [
-					map(eb.ref("users.id"), (id) => (id * 100).toString()).as("bigId"),
-				]),
+				.select((eb) => [map(eb.ref("users.id"), (id) => (id * 100).toString()).as("bigId")]),
 		)
 		.selectFrom("newUsers")
 		.select("bigId");

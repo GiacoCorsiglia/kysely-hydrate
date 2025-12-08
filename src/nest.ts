@@ -1,8 +1,7 @@
-/** biome-ignore-all lint/suspicious/noExplicitAny: Magic afoot. */
-/** biome-ignore-all lint/complexity/noBannedTypes: Magic afoot. */
 import type * as k from "kysely";
 import { jsonArrayFrom } from "kysely/helpers/postgres";
-import type { Prettify } from "./helpers";
+
+import { type Prettify } from "./helpers/utils.ts";
 
 /**
  * Like {@link k.SelectExpression} but excludes the possibility of aliasing or a
@@ -21,14 +20,9 @@ interface CompleteSelector<DB, TB extends keyof DB, T> {
 	hydrate: Hydrator<T>;
 }
 
-type Selector<DB, TB extends keyof DB, T> =
-	| Hydrator<T>
-	| CompleteSelector<DB, TB, T>;
+type Selector<DB, TB extends keyof DB, T> = Hydrator<T> | CompleteSelector<DB, TB, T>;
 
-type Selection<DB, TB extends keyof DB> = Record<
-	string,
-	Selector<DB, TB, unknown>
->;
+type Selection<DB, TB extends keyof DB> = Record<string, Selector<DB, TB, unknown>>;
 
 type InferSelectorOutput<T> = T extends Selector<any, any, infer U> ? U : never;
 
@@ -55,9 +49,11 @@ class NestBuilder<DB, TB extends keyof DB> {
 ////////////////////////////////////////////////////////////////////
 
 export type { NestExpression };
-class NestExpression<DB, TB extends keyof DB, S extends Selection<DB, TB>>
-	implements k.AliasableExpression<Prettify<InferSelectionOutput<S>>>
-{
+class NestExpression<
+	DB,
+	TB extends keyof DB,
+	S extends Selection<DB, TB>,
+> implements k.AliasableExpression<Prettify<InferSelectionOutput<S>>> {
 	#expression: k.AliasableExpression<InferSelectionOutput<S>>;
 	#selection: S;
 
@@ -78,9 +74,7 @@ class NestExpression<DB, TB extends keyof DB, S extends Selection<DB, TB>>
 			}),
 		);
 
-		this.#expression = jsonArrayFrom(subquery) as k.AliasableExpression<
-			InferSelectionOutput<S>
-		>;
+		this.#expression = jsonArrayFrom(subquery) as k.AliasableExpression<InferSelectionOutput<S>>;
 	}
 
 	get selection() {
@@ -91,9 +85,7 @@ class NestExpression<DB, TB extends keyof DB, S extends Selection<DB, TB>>
 		return undefined;
 	}
 
-	as<A extends string>(
-		alias: A | k.Expression<unknown>,
-	): AliasedNestExpression<DB, TB, S, A> {
+	as<A extends string>(alias: A | k.Expression<unknown>): AliasedNestExpression<DB, TB, S, A> {
 		return new AliasedNestExpression(this, alias);
 	}
 
@@ -111,15 +103,11 @@ class AliasedNestExpression<
 	TB extends keyof DB,
 	S extends Selection<DB, TB>,
 	A extends string = never,
-> implements k.AliasedExpression<Prettify<InferSelectionOutput<S>>, A>
-{
+> implements k.AliasedExpression<Prettify<InferSelectionOutput<S>>, A> {
 	readonly nestExpression: NestExpression<DB, TB, S>;
 	#alias: A | k.Expression<unknown>;
 
-	constructor(
-		nestExpression: NestExpression<DB, TB, S>,
-		alias: A | k.Expression<unknown>,
-	) {
+	constructor(nestExpression: NestExpression<DB, TB, S>, alias: A | k.Expression<unknown>) {
 		this.nestExpression = nestExpression;
 		this.#alias = alias;
 	}
@@ -133,9 +121,7 @@ class AliasedNestExpression<
 	}
 
 	toOperationNode(): k.AliasNode {
-		return this.nestExpression.underlyingExpression
-			.as(this.#alias as any)
-			.toOperationNode();
+		return this.nestExpression.underlyingExpression.as(this.#alias as any).toOperationNode();
 	}
 }
 
@@ -143,15 +129,11 @@ class AliasedNestExpression<
 // Constructor.
 ////////////////////////////////////////////////////////////////////
 
-export function nestMany<DB, TB extends keyof DB>(
-	qb: k.SelectQueryBuilder<DB, TB, {}>,
-) {
+export function nestMany<DB, TB extends keyof DB>(qb: k.SelectQueryBuilder<DB, TB, {}>) {
 	return new NestBuilder(qb);
 }
 
-export function isNestExpression(
-	obj: unknown,
-): obj is NestExpression<any, any, any> {
+export function isNestExpression(obj: unknown): obj is NestExpression<any, any, any> {
 	return !!obj && obj instanceof NestExpression;
 }
 
@@ -183,7 +165,7 @@ interface MyDb {
 
 declare const myDb: k.Kysely<MyDb>;
 
-const nested = myDb.selectFrom("posts").select((eb) => [
+const _nested = myDb.selectFrom("posts").select((eb) => [
 	"posts.id",
 	nestMany(eb.selectFrom("authors").limit(1))
 		.select({

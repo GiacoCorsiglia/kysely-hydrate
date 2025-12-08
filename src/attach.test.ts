@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { test } from "node:test";
+
 import { createHydratable, hydrate } from "./hydratable.ts";
 
 // Test types
@@ -57,9 +58,7 @@ const mockFetchPosts = async (users: User[]): Promise<HydratedPost[]> => {
 	) as Promise<HydratedPost[]>;
 };
 
-const mockFetchComments = async (
-	posts: HydratedPost[],
-): Promise<HydratedComment[]> => {
+const mockFetchComments = async (posts: HydratedPost[]): Promise<HydratedComment[]> => {
 	commentFetchCount++;
 	const postIds = posts.map((p) => p.id);
 
@@ -211,11 +210,7 @@ test("nested attachMany: fetches data at multiple levels exactly once per level"
 
 	// Verify each fetch was called exactly once
 	assert.strictEqual(postFetchCount, 1, "Posts should be fetched exactly once");
-	assert.strictEqual(
-		commentFetchCount,
-		1,
-		"Comments should be fetched exactly once",
-	);
+	assert.strictEqual(commentFetchCount, 1, "Comments should be fetched exactly once");
 
 	// Verify structure
 	assert.strictEqual(result.length, 2);
@@ -224,28 +219,16 @@ test("nested attachMany: fetches data at multiple levels exactly once per level"
 	assert.strictEqual(result[0]?.posts.length, 2);
 	// Post 1 has 2 comments
 	assert.strictEqual(result[0]?.posts[0]?.comments.length, 2);
-	assert.strictEqual(
-		result[0]?.posts[0]?.comments[0]?.content,
-		"Comment 1 on Post 1",
-	);
-	assert.strictEqual(
-		result[0]?.posts[0]?.comments[1]?.content,
-		"Comment 2 on Post 1",
-	);
+	assert.strictEqual(result[0]?.posts[0]?.comments[0]?.content, "Comment 1 on Post 1");
+	assert.strictEqual(result[0]?.posts[0]?.comments[1]?.content, "Comment 2 on Post 1");
 	// Post 2 has 1 comment
 	assert.strictEqual(result[0]?.posts[1]?.comments.length, 1);
-	assert.strictEqual(
-		result[0]?.posts[1]?.comments[0]?.content,
-		"Comment 1 on Post 2",
-	);
+	assert.strictEqual(result[0]?.posts[1]?.comments[0]?.content, "Comment 1 on Post 2");
 
 	// User 2 has 1 post with 1 comment
 	assert.strictEqual(result[1]?.posts.length, 1);
 	assert.strictEqual(result[1]?.posts[0]?.comments.length, 1);
-	assert.strictEqual(
-		result[1]?.posts[0]?.comments[0]?.content,
-		"Comment 1 on Post 3",
-	);
+	assert.strictEqual(result[1]?.posts[0]?.comments[0]?.content, "Comment 1 on Post 3");
 });
 
 test("attachMany with composite keys", async () => {
@@ -267,9 +250,7 @@ test("attachMany with composite keys", async () => {
 		data: string;
 	}
 
-	const fetchRelated = async (
-		entities: CompositeKeyEntity[],
-	): Promise<HydratedRelatedEntity[]> => {
+	const fetchRelated = async (entities: CompositeKeyEntity[]): Promise<HydratedRelatedEntity[]> => {
 		// Simulate fetching based on composite keys
 		const keys = entities.map((e) => `${e.key1}:${e.key2}`);
 		const rawRelated: RelatedEntity[] = [
@@ -348,9 +329,7 @@ test("mixing has and attach collections", async () => {
 
 	const hydratable = createHydratable<UserWithProfile>("id")
 		.fields({ id: true, email: true })
-		.hasOne("profile", "profile$$", (h) =>
-			h("name").fields({ name: true, age: true }),
-		)
+		.hasOne("profile", "profile$$", (h) => h("name").fields({ name: true, age: true }))
 		.attachMany("posts", mockFetchPosts, "userId");
 
 	const result = await hydrate(users, hydratable);
