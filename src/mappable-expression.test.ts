@@ -1,23 +1,10 @@
 import { test } from "node:test";
 import util from "node:util";
 
-import SQLite from "better-sqlite3";
-import * as k from "kysely";
-
+import { db as testDb } from "./__tests__/sqlite.ts";
 import { KyselyHydratePlugin, map } from "./mappable-expression.ts";
-import { type SeedDB, seed } from "./seed.ts";
 
-const sqlite = new SQLite(":memory:");
-await seed(sqlite);
-
-const dialect = new k.SqliteDialect({
-	database: sqlite,
-});
-
-const db = new k.Kysely<SeedDB>({
-	dialect,
-	plugins: [new KyselyHydratePlugin()],
-});
+const db = testDb.withPlugin(new KyselyHydratePlugin());
 
 test.skip("mappableExpression", async () => {
 	// const foo = db
