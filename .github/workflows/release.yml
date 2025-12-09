@@ -10,17 +10,36 @@ permissions:
   contents: write # Required for release notes.
 
 jobs:
-  release:
-    if: >
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'refs/tags/v')
+  check-tag:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      is-valid-tag: ${{ steps.check.outputs.is-valid-tag }}
+    steps:
+      - uses: actions/checkout@v6
 
+      - name: Check if tag matches v* pattern
+        id: check
+        run: |
+          TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || echo "")
+          if [[ -n "$TAG" ]] && [[ "$TAG" =~ ^v ]]; then
+            echo "is-valid-tag=true" >> $GITHUB_OUTPUT
+            echo "Valid tag: $TAG"
+          else
+            echo "is-valid-tag=false" >> $GITHUB_OUTPUT
+            echo "Not a v* tag, skipping release"
+          fi
+
+  release:
+    needs: check-tag
+    if: needs.check-tag.outputs.is-valid-tag == 'true'
     name: Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: actions/setup-node@v6
         with:
