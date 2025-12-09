@@ -212,7 +212,7 @@ interface HydratableQueryBuilder<
 		/* QueryTB:     */ JoinedQueryTB,
 		/* QueryRow:    */ JoinedQueryRow,
 		/* LocalDB:     */ NestedLocalDB,
-		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<Prefix, K>, NestedLocalRow>,
+		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<"", K>, NestedLocalRow>,
 		/* HydratedRow: */ Extend<HydratedRow, { [_ in K]: NestedHydratedRow[] }>,
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
@@ -295,7 +295,7 @@ interface HydratableQueryBuilder<
 		/* QueryTB:     */ JoinedQueryTB,
 		/* QueryRow:    */ JoinedQueryRow,
 		/* LocalDB:     */ NestedLocalDB,
-		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<Prefix, K>, NestedLocalRow>,
+		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<"", K>, NestedLocalRow>,
 		/* HydratedRow: */ Extend<
 			HydratedRow,
 			{ [_ in K]: IsChildNullable extends true ? NestedHydratedRow | null : NestedHydratedRow }
@@ -352,7 +352,7 @@ interface HydratableQueryBuilder<
 		/* QueryTB:     */ JoinedQueryTB,
 		/* QueryRow:    */ JoinedQueryRow,
 		/* LocalDB:     */ NestedLocalDB,
-		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<Prefix, K>, NestedLocalRow>,
+		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<"", K>, NestedLocalRow>,
 		/* HydratedRow: */ Extend<HydratedRow, { [_ in K]: NestedHydratedRow }>,
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
@@ -563,31 +563,8 @@ interface HydratableQueryBuilder<
 	 * Just like {@link innerJoin}, but adds a `cross join` instead of an `inner
 	 * join`.
 	 */
-	crossJoin<
-		TE extends k.TableExpression<QueryDB, QueryTB>,
-		K1 extends k.JoinReferenceExpression<QueryDB, QueryTB, TE>,
-		K2 extends k.JoinReferenceExpression<QueryDB, QueryTB, TE>,
-	>(
+	crossJoin<TE extends k.TableExpression<QueryDB, QueryTB>>(
 		table: TE,
-		k1: K1,
-		k2: K2,
-	): HydratableQueryBuilderWithInnerJoin<
-		Prefix,
-		QueryDB,
-		QueryTB,
-		QueryRow,
-		LocalDB,
-		LocalRow,
-		HydratedRow,
-		IsNullable,
-		TE
-	>;
-	crossJoin<
-		TE extends k.TableExpression<QueryDB, QueryTB>,
-		FN extends k.JoinCallbackExpression<QueryDB, QueryTB, TE>,
-	>(
-		table: TE,
-		callback: FN,
 	): HydratableQueryBuilderWithInnerJoin<
 		Prefix,
 		QueryDB,
@@ -688,31 +665,8 @@ interface HydratableQueryBuilder<
 	 * Just like {@link innerJoin} but adds a `cross join lateral` instead of an
 	 * `inner join`.
 	 */
-	crossJoinLateral<
-		TE extends k.TableExpression<QueryDB, QueryTB>,
-		K1 extends k.JoinReferenceExpression<QueryDB, QueryTB, TE>,
-		K2 extends k.JoinReferenceExpression<QueryDB, QueryTB, TE>,
-	>(
+	crossJoinLateral<TE extends k.TableExpression<QueryDB, QueryTB>>(
 		table: TE,
-		k1: K1,
-		k2: K2,
-	): HydratableQueryBuilderWithInnerJoin<
-		Prefix,
-		QueryDB,
-		QueryTB,
-		QueryRow,
-		LocalDB,
-		LocalRow,
-		HydratedRow,
-		IsNullable,
-		TE
-	>;
-	crossJoinLateral<
-		TE extends k.TableExpression<QueryDB, QueryTB>,
-		FN extends k.JoinCallbackExpression<QueryDB, QueryTB, TE>,
-	>(
-		table: TE,
-		callback: FN,
 	): HydratableQueryBuilderWithInnerJoin<
 		Prefix,
 		QueryDB,
