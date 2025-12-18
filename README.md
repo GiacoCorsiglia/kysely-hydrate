@@ -23,20 +23,20 @@ objects—similar to what you'd get from an ORM.
 ## Query Builder API
 
 Chainable query builder that wraps Kysely's `SelectQueryBuilder` with
-`joinMany()` and `joinOne()` methods:
+`hasMany()` and `hasOne()` methods:
 
 ```typescript
 import { hydrated } from "kysely-hydrate";
 
 const result = await hydrated(db.selectFrom("users").select(["users.id", "users.email"]), "id")
-  .joinMany(
+  .hasMany(
     "posts",
     ({ leftJoin }) =>
       leftJoin("posts", "posts.user_id", "users.id")
         .select(["posts.id", "posts.title"]),
     "id"
   )
-  .joinOne(
+  .hasOne(
     "profile",
     ({ leftJoin }) =>
       leftJoin("profiles", "profiles.user_id", "users.id")
