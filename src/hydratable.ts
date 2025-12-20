@@ -85,12 +85,12 @@ export interface AttachedKeysArg<ParentInput, AttachedOutput> {
 	/**
 	 * The key(s) on the attached child output to use for matching to parents.
 	 */
-	readonly keyBy: KeyBy<AttachedOutput>;
+	readonly childKey: KeyBy<AttachedOutput>;
 	/**
 	 * The key(s) on the parent input to compare with the attached child output's
 	 * key.  If not provided, the parent's keyBy will be used.
 	 */
-	readonly compareTo?: KeyBy<ParentInput> | undefined;
+	readonly parentKey?: KeyBy<ParentInput> | undefined;
 }
 
 /**
@@ -110,11 +110,11 @@ interface AttachedCollection<ParentInput, AttachedOutput> {
 	/**
 	 * The key(s) on the attached child output to use for matching to parents.
 	 */
-	readonly keyBy: KeyBy<AttachedOutput>;
+	readonly childKey: KeyBy<AttachedOutput>;
 	/**
 	 * The key(s) on the parent input to compare with the attached child output's key.
 	 */
-	readonly compareTo: KeyBy<ParentInput>;
+	readonly parentKey: KeyBy<ParentInput>;
 }
 
 /**
@@ -366,9 +366,9 @@ class Hydratable<Input, Output> {
 	 * @param key - The property name for the collection in the output.
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
 	 *   Called with all parent inputs and should return already-hydrated data.
-	 * @param keyBy - The key(s) on the attached output to use for matching to the
+	 * @param keys.childKey - The key(s) on the attached output to use for matching to the
 	 *   parent input
-	 * @param matchBy - The key(s) on the parent input to compare with the
+	 * @param keys.parentKey - The key(s) on the parent input to compare with the
 	 *   attached child's key.
 	 * @returns A new Hydratable with the attached collection added.
 	 */
@@ -408,8 +408,8 @@ class Hydratable<Input, Output> {
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
-				keyBy: keys.keyBy,
-				compareTo: keys.compareTo ?? this.#props.keyBy,
+				childKey: keys.childKey,
+				parentKey: keys.parentKey ?? this.#props.keyBy,
 			} satisfies AttachedCollection<Input, AttachedOutput>),
 		}) as any;
 	}
@@ -419,8 +419,8 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param key - The property name for the collection in the output.
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
-	 * @param keyBy - The key(s) on the attached output to use for matching to parents.
-	 * @param matchBy - The key(s) on the parent input to compare with the child's key.
+	 * @param keys.childKey - The key(s) on the attached output to use for matching to parents.
+	 * @param keys.parentKey - The key(s) on the parent input to compare with the child's key.
 	 * @returns A new Hydratable with the attached collection added.
 	 */
 	attachMany<K extends string, AttachedOutput>(
@@ -436,8 +436,8 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param key - The property name for the entity in the output.
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
-	 * @param keyBy - The key(s) on the attached output to use for matching to parents.
-	 * @param matchBy - The key(s) on the parent input to compare with the child's key.
+	 * @param keys.childKey - The key(s) on the attached output to use for matching to parents.
+	 * @param keys.ParentKey - The key(s) on the parent input to compare with the child's key.
 	 * @returns A new Hydratable with the attached entity added.
 	 */
 	attachOne<K extends string, AttachedOutput>(
@@ -454,8 +454,8 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param key - The property name for the entity in the output
 	 * @param fetchFn - A function that fetches and hydrates the attached data
-	 * @param keyBy - The key(s) on the attached output to use for matching to parents
-	 * @param matchBy - The key(s) on the parent input to compare with the child's key.
+	 * @param keys.childKey - The key(s) on the attached output to use for matching to parents
+	 * @param keys.parentKey - The key(s) on the parent input to compare with the child's key.
 	 * @returns A new Hydratable with the attached entity added
 	 */
 	attachOneOrThrow<K extends string, AttachedOutput>(
@@ -513,7 +513,7 @@ class Hydratable<Input, Output> {
 						const grouped = groupByKey(
 							"", // Always unprefixed.
 							attachedOutputs,
-							attachedCollection.keyBy,
+							attachedCollection.childKey,
 						);
 
 						attachedDataMap.set(mapKey, grouped);
@@ -585,7 +585,7 @@ class Hydratable<Input, Output> {
 		if (attachedCollections) {
 			for (const [key, collection] of attachedCollections) {
 				// Get the match value from this input using the matchBy.
-				const inputKey = getKey(prefix, input, collection.compareTo);
+				const inputKey = getKey(prefix, input, collection.parentKey);
 
 				// Use prefixed key to look up in the map
 				const mapKey = prefix ? applyPrefix(prefix, key) : key;

@@ -386,7 +386,7 @@ test("attachMany: fetches and matches related entities", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -445,14 +445,14 @@ test("attachMany: calls fetchFn once", async () => {
 			title: string;
 		}>("id")
 			.fields({ id: true, userId: true, title: true })
-			.attachMany("comments", fetchComments, { keyBy: "postId", compareTo: "id" });
+			.attachMany("comments", fetchComments, { childKey: "postId", parentKey: "id" });
 
 		return await hydrate(posts, postHydratable);
 	};
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -477,7 +477,7 @@ test("attachMany: returns empty array when no matches", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -494,7 +494,7 @@ test("attachMany: uses compareTo for custom matching keys", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "authorId", compareTo: "id" });
+		.attachMany("posts", fetchPosts, { childKey: "authorId", parentKey: "id" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -529,8 +529,8 @@ test("attachMany: works with composite keys", async () => {
 	const hydratable = createHydratable<Entity>(["key1", "key2"])
 		.fields({ key1: true, key2: true, value: true })
 		.attachMany("related", fetchRelated, {
-			keyBy: ["relKey1", "relKey2"],
-			compareTo: ["key1", "key2"],
+			childKey: ["relKey1", "relKey2"],
+			parentKey: ["key1", "key2"],
 		});
 
 	const result = await hydrate(entities, hydratable);
@@ -553,7 +553,7 @@ test("attachOne: returns first match or null", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachOne("latestPost", fetchPosts, { keyBy: "userId" });
+		.attachOne("latestPost", fetchPosts, { childKey: "userId" });
 
 	const withMatch = await hydrate(usersWithMatch, hydratable);
 	assert.deepStrictEqual(withMatch[0]?.latestPost, {
@@ -600,8 +600,8 @@ test("attachOne: works at nested level", async () => {
 		}>("id")
 			.fields({ id: true, userId: true, title: true })
 			.attachOne("latestComment", fetchComments, {
-				keyBy: "postId",
-				compareTo: "id",
+				childKey: "postId",
+				parentKey: "id",
 			});
 
 		return await hydrate(posts, postHydratable);
@@ -609,7 +609,7 @@ test("attachOne: works at nested level", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -626,7 +626,7 @@ test("attachOneOrThrow: returns entity when exists", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachOneOrThrow("requiredPost", fetchPosts, { keyBy: "userId" });
+		.attachOneOrThrow("requiredPost", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -646,7 +646,7 @@ test("attachOneOrThrow: throws when no match exists", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachOneOrThrow("requiredPost", fetchPosts, { keyBy: "userId" });
+		.attachOneOrThrow("requiredPost", fetchPosts, { childKey: "userId" });
 
 	await assert.rejects(async () => {
 		await hydrate(users, hydratable);
@@ -670,8 +670,8 @@ test("attachOneOrThrow: works at nested level", async () => {
 		}>("id")
 			.fields({ id: true, userId: true, title: true })
 			.attachOneOrThrow("author", fetchAuthor, {
-				keyBy: "postId",
-				compareTo: "id",
+				childKey: "postId",
+				parentKey: "id",
 			});
 
 		return await hydrate(posts, postHydratable);
@@ -679,7 +679,7 @@ test("attachOneOrThrow: works at nested level", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -707,8 +707,8 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 		}>("id")
 			.fields({ id: true, userId: true, title: true })
 			.attachOneOrThrow("requiredAuthor", fetchAuthor, {
-				keyBy: "postId",
-				compareTo: "id",
+				childKey: "postId",
+				parentKey: "id",
 			});
 
 		return await hydrate(posts, postHydratable);
@@ -716,7 +716,7 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 
 	const hydratable = createHydratable<User>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	await assert.rejects(async () => {
 		await hydrate(users, hydratable);
@@ -823,7 +823,7 @@ test("mixing has and attach collections", async () => {
 	const hydratable = createHydratable<UserWithProfile>("id")
 		.fields({ id: true, name: true })
 		.hasOne("profile", "profile$$", (h) => h("bio").fields({ bio: true }))
-		.attachMany("posts", fetchPosts, { keyBy: "userId" });
+		.attachMany("posts", fetchPosts, { childKey: "userId" });
 
 	const result = await hydrate(users, hydratable);
 
@@ -884,11 +884,11 @@ test("complex nesting: has and attach at multiple levels", async () => {
 				.fields({ id: true, title: true })
 				.hasMany("comments", "comments$$", (h) =>
 					h("id").fields({ id: true, content: true }).attachOne("author", fetchAuthors, {
-						keyBy: "commentId",
-						compareTo: "id",
+						childKey: "commentId",
+						parentKey: "id",
 					}),
 				)
-				.attachMany("tags", fetchTags, { keyBy: "postId", compareTo: "id" }),
+				.attachMany("tags", fetchTags, { childKey: "postId", parentKey: "id" }),
 		);
 
 	const result = await hydrate(rows, hydratable);
