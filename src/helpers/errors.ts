@@ -22,3 +22,57 @@ export class ExpectedOneItemError extends KyselyHydrateError {
 		super(`Expected one item, but got none for key ${key}`);
 	}
 }
+
+/**
+ * Error thrown when wildcard selections (SELECT * or table.*) are encountered in lineage tracing.
+ */
+export class WildcardSelectionError extends KyselyHydrateError {
+	constructor() {
+		super("Wildcard selections are not supported");
+	}
+}
+
+/**
+ * Error thrown when an unexpected selection type is encountered during lineage tracing.
+ */
+export class UnexpectedSelectionTypeError extends KyselyHydrateError {
+	constructor(kind: string) {
+		super(`Unexpected selection type: ${kind}`);
+	}
+}
+
+/**
+ * Error thrown when a column reference is ambiguous (exists in multiple tables).
+ */
+export class AmbiguousColumnReferenceError extends KyselyHydrateError {
+	constructor(columnName: string) {
+		super(`Ambiguous column reference: ${columnName}`);
+	}
+}
+
+/**
+ * Error thrown when an unsupported alias node type is encountered.
+ */
+export class UnsupportedAliasNodeTypeError extends KyselyHydrateError {
+	constructor(kind: string) {
+		super(`Unsupported alias node type ${kind}`);
+	}
+}
+
+/**
+ * Error thrown when an unsupported table alias node type is encountered.
+ */
+export class UnsupportedTableAliasNodeTypeError extends KyselyHydrateError {
+	constructor(kind: string) {
+		super(`Unsupported table alias node type ${kind}`);
+	}
+}
+
+/**
+ * Error thrown when an unsupported operation node type is encountered.
+ */
+export class UnsupportedNodeTypeError extends KyselyHydrateError {
+	constructor(kind: string) {
+		super(`Unsupported node type: ${kind}`);
+	}
+}

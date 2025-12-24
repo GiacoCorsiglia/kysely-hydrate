@@ -1,5 +1,14 @@
 import * as k from "kysely";
 
+import {
+	AmbiguousColumnReferenceError,
+	UnsupportedAliasNodeTypeError,
+	UnsupportedNodeTypeError,
+	UnsupportedTableAliasNodeTypeError,
+	UnexpectedSelectionTypeError,
+	WildcardSelectionError,
+} from "./errors.ts";
+
 type Provenance =
 	| { type: "COLUMN"; table: string; column: string }
 	| { type: "DERIVED" }
@@ -92,7 +101,7 @@ function traceSelection(
 
 	// Check for wildcard selections
 	if (k.SelectAllNode.is(actualSelection)) {
-		throw new Error("Wildcard selections are not supported");
+		throw new WildcardSelectionError();
 	}
 
 	if (k.AliasNode.is(actualSelection)) {
@@ -113,7 +122,7 @@ function traceSelection(
 		const ref = actualSelection;
 		// Check if this is a table.* wildcard
 		if (k.SelectAllNode.is(ref.column)) {
-			throw new Error("Wildcard selections are not supported");
+			throw new WildcardSelectionError();
 		}
 
 		const columnName = ref.column.column.name;
@@ -121,7 +130,7 @@ function traceSelection(
 		return [columnName, provenance];
 	}
 
-	throw new Error(`Unexpected selection type: ${actualSelection.kind}`);
+	throw new UnexpectedSelectionTypeError(actualSelection.kind);
 }
 
 function traceNode(
@@ -143,7 +152,7 @@ function traceNode(
 		}
 
 		if (k.SelectAllNode.is(ref.column)) {
-			throw new Error("Wildcard selections are not supported");
+			throw new WildcardSelectionError();
 		}
 
 		const columnName = ref.column.column.name;
@@ -194,7 +203,7 @@ function resolveColumn(
 	}
 
 	if (candidates.length > 1) {
-		throw new Error(`Ambiguous column reference: ${columnName}`);
+		throw new AmbiguousColumnReferenceError(columnName);
 	}
 
 	return { type: "UNRESOLVED" };
@@ -239,7 +248,7 @@ function traceSelections(
 	const result = new Map<string, Provenance>();
 	for (const selection of selections) {
 		if (selection.selection.kind === "SelectAllNode") {
-			throw new Error("Wildcard selections are not supported");
+			throw new WildcardSelectionError();
 		}
 		const [outputKey, provenance] = traceSelection(selection, localScope, context);
 		result.set(outputKey, provenance);
@@ -299,11 +308,11 @@ const traceUpdateQuery: Tracer<"UpdateQueryNode"> = (node, context) => {
 			localScope.set(tableName, { kind: "TABLE", node: table });
 		} else if (k.AliasNode.is(table)) {
 			if (!k.IdentifierNode.is(table.alias)) {
-				throw new Error(`Unsupported alias node type ${table.alias.kind}`);
+				throw new UnsupportedAliasNodeTypeError(table.alias.kind);
 			}
 			const alias = table.alias.name;
 			if (!k.TableNode.is(table.node)) {
-				throw new Error(`Unsupported table alias node type ${table.node.kind}`);
+				throw new UnsupportedTableAliasNodeTypeError(table.node.kind);
 			}
 			localScope.set(alias, { kind: "TABLE", node: table.node });
 		}
@@ -359,7 +368,7 @@ const tracers: {
 export function traceLineage(node: k.RootOperationNode): Map<string, Provenance> {
 	const tracer = tracers[node.kind];
 	if (!tracer) {
-		throw new Error(`Unsupported node type: ${node.kind}`);
+		throw new UnsupportedNodeTypeError(node.kind);
 	}
 
 	const context: GlobalContext = {

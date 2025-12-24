@@ -4,14 +4,8 @@ import { test } from "node:test";
 import * as k from "kysely";
 
 import { db } from "../__tests__/sqlite.ts";
+import { AmbiguousColumnReferenceError, WildcardSelectionError } from "./errors.ts";
 import { traceLineage } from "./scope-resolver.ts";
-
-type Provenance =
-	| { type: "COLUMN"; table: string; column: string }
-	| { type: "DERIVED" }
-	| { type: "UNRESOLVED" };
-
-type LineageResult = Map<string, Provenance>;
 
 function getQueryNode(query: k.SelectQueryBuilder<any, any, any>): k.SelectQueryNode {
 	return query.toOperationNode() as k.SelectQueryNode;
@@ -127,7 +121,7 @@ test("join: unqualified column throws when ambiguous", () => {
 
 	assert.throws(
 		() => traceLineage(node),
-		{ message: /ambiguous/i },
+		AmbiguousColumnReferenceError,
 		"Should throw on ambiguous column reference",
 	);
 });
@@ -274,7 +268,7 @@ test("error: wildcard throws error", () => {
 
 	assert.throws(
 		() => traceLineage(node),
-		{ message: /wildcard/i },
+		WildcardSelectionError,
 		"Should throw on wildcard selection",
 	);
 });
@@ -286,11 +280,7 @@ test("error: table wildcard throws error", () => {
 		.selectAll("users");
 	const node = getQueryNode(query);
 
-	assert.throws(
-		() => traceLineage(node),
-		{ message: /wildcard/i },
-		"Should throw on table wildcard",
-	);
+	assert.throws(() => traceLineage(node), WildcardSelectionError, "Should throw on table wildcard");
 });
 
 // RETURNING clauses
@@ -498,7 +488,10 @@ test("subquery: subquery in where clause does not affect lineage", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node);
 
-	assert.deepStrictEqual(result, new Map([["title", { type: "COLUMN", table: "posts", column: "title" }]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([["title", { type: "COLUMN", table: "posts", column: "title" }]]),
+	);
 });
 
 // UPDATE with aliased table
@@ -511,7 +504,10 @@ test("update: update with aliased table", () => {
 	const node = query.toOperationNode() as k.UpdateQueryNode;
 	const result = traceLineage(node);
 
-	assert.deepStrictEqual(result, new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]),
+	);
 });
 
 // DELETE with FROM/USING
@@ -525,7 +521,10 @@ test("delete: delete with from clause", () => {
 	const node = query.toOperationNode() as k.DeleteQueryNode;
 	const result = traceLineage(node);
 
-	assert.deepStrictEqual(result, new Map([["id", { type: "COLUMN", table: "posts", column: "id" }]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([["id", { type: "COLUMN", table: "posts", column: "id" }]]),
+	);
 });
 
 // Mixed DERIVED and COLUMN in expression
@@ -835,7 +834,10 @@ test("cte: cte shadowing real table", () => {
 	const result = traceLineage(node);
 
 	// Should resolve to posts.id because CTE shadows the real users table
-	assert.deepStrictEqual(result, new Map([["id", { type: "COLUMN", table: "posts", column: "id" }]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([["id", { type: "COLUMN", table: "posts", column: "id" }]]),
+	);
 });
 
 test("cte: deeply nested cte chain", () => {
@@ -848,7 +850,10 @@ test("cte: deeply nested cte chain", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node);
 
-	assert.deepStrictEqual(result, new Map([["c", { type: "COLUMN", table: "users", column: "id" }]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([["c", { type: "COLUMN", table: "users", column: "id" }]]),
+	);
 });
 
 test("cte: cte with derived column breaks lineage", () => {
