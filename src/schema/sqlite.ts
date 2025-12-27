@@ -226,3 +226,62 @@ export class SQLiteNumericBigInt extends SQLiteColumnType<
 export function numericBigInt(): SQLiteNumericBigInt {
 	return new SQLiteNumericBigInt();
 }
+
+interface SQLiteCustomTypeConfig<SelectType, DriverType = string, JsonType = string> {
+	sqlType: string;
+	fromDriver: (input: DriverType) => SelectType;
+	fromJson?: (input: JsonType) => SelectType;
+}
+
+export class SQLiteCustomType<
+	SelectType,
+	InsertType,
+	UpdateType,
+	DriverType,
+	JsonType,
+> extends SQLiteColumnType<SelectType, InsertType, UpdateType, DriverType, JsonType> {
+	readonly config: SQLiteCustomTypeConfig<SelectType, DriverType, JsonType>;
+
+	constructor(config: SQLiteCustomTypeConfig<SelectType, DriverType, JsonType>) {
+		super();
+		this.config = config;
+	}
+
+	get sqlType(): string {
+		return this.config.sqlType;
+	}
+
+	fromDriver(input: DriverType): SelectType {
+		return this.config.fromDriver(input);
+	}
+
+	fromJson(input: JsonType): SelectType {
+		return this.config.fromJson?.(input) ?? super.fromDriver(input as unknown as DriverType);
+	}
+
+	$insertedAs<NewInsertType>(): SQLiteCustomType<
+		SelectType,
+		NewInsertType,
+		UpdateType,
+		DriverType,
+		JsonType
+	> {
+		return this as any;
+	}
+
+	$updatedAs<NewUpdateType>(): SQLiteCustomType<
+		SelectType,
+		InsertType,
+		NewUpdateType,
+		DriverType,
+		JsonType
+	> {
+		return this as any;
+	}
+}
+
+export function customType<SelectType, DriverType = string, JsonType = DriverType>(
+	config: SQLiteCustomTypeConfig<SelectType, DriverType, JsonType>,
+): SQLiteCustomType<SelectType, SelectType, SelectType, DriverType, JsonType> {
+	return new SQLiteCustomType(config);
+}

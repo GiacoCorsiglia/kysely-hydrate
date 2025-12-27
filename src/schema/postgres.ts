@@ -518,3 +518,64 @@ export class PgArray<SelectType, InsertType, UpdateType, DriverType, JsonType> e
 		return input.map((v) => this.baseColumn.fromJson(v));
 	}
 }
+
+// Custom type.
+
+interface PgCustomTypeConfig<SelectType, DriverType = string, JsonType = string> {
+	sqlType: string;
+	fromDriver: (input: DriverType) => SelectType;
+	fromJson?: (input: JsonType) => SelectType;
+}
+
+export class PgCustomType<
+	SelectType,
+	InsertType,
+	UpdateType,
+	DriverType,
+	JsonType,
+> extends PgColumnType<SelectType, InsertType, UpdateType, DriverType, JsonType> {
+	readonly config: PgCustomTypeConfig<SelectType, DriverType, JsonType>;
+
+	constructor(config: PgCustomTypeConfig<SelectType, DriverType, JsonType>) {
+		super();
+		this.config = config;
+	}
+
+	get sqlType(): string {
+		return this.config.sqlType;
+	}
+
+	fromDriver(input: DriverType): SelectType {
+		return this.config.fromDriver(input);
+	}
+
+	fromJson(input: JsonType): SelectType {
+		return this.config.fromJson?.(input) ?? super.fromDriver(input as unknown as DriverType);
+	}
+
+	$insertedAs<NewInsertType>(): PgCustomType<
+		SelectType,
+		NewInsertType,
+		UpdateType,
+		DriverType,
+		JsonType
+	> {
+		return this as any;
+	}
+
+	$updatedAs<NewUpdateType>(): PgCustomType<
+		SelectType,
+		InsertType,
+		NewUpdateType,
+		DriverType,
+		JsonType
+	> {
+		return this as any;
+	}
+}
+
+export function customType<SelectType, DriverType = string, JsonType = DriverType>(
+	config: PgCustomTypeConfig<SelectType, DriverType, JsonType>,
+): PgCustomType<SelectType, SelectType, SelectType, DriverType, JsonType> {
+	return new PgCustomType(config);
+}
