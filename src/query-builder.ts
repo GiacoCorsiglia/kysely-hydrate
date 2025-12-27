@@ -1068,7 +1068,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
  * @param keyBy - The key(s) to uniquely identify rows in the query result.
  * @returns A new HydratableQueryBuilder that supports nested joins and hydration.
  */
-export function hydrated<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
+export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	keyBy: KeyBy<QueryRow>,
 ): HydratableQueryBuilder<

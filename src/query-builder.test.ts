@@ -3,14 +3,14 @@ import { test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { ExpectedOneItemError } from "./helpers/errors.ts";
-import { hydrated } from "./query-builder.ts";
+import { hydrateQuery } from "./query-builder.ts";
 
 //
 // Basic Query Execution
 //
 
 test("execute: returns underlying query results", async () => {
-	const users = await hydrated(
+	const users = await hydrateQuery(
 		db.selectFrom("users").select(["users.id", "users.username"]),
 		"id",
 	).execute();
@@ -21,14 +21,14 @@ test("execute: returns underlying query results", async () => {
 });
 
 test("executeTakeFirst: returns first result or undefined", async () => {
-	const user = await hydrated(
+	const user = await hydrateQuery(
 		db.selectFrom("users").select(["users.id", "users.username"]).where("users.id", "=", 1),
 		"id",
 	).executeTakeFirst();
 
 	assert.deepStrictEqual(user, { id: 1, username: "alice" });
 
-	const noUser = await hydrated(
+	const noUser = await hydrateQuery(
 		db.selectFrom("users").select(["users.id", "users.username"]).where("users.id", "=", 999),
 		"id",
 	).executeTakeFirst();
@@ -37,7 +37,7 @@ test("executeTakeFirst: returns first result or undefined", async () => {
 });
 
 test("executeTakeFirstOrThrow: returns first result or throws", async () => {
-	const user = await hydrated(
+	const user = await hydrateQuery(
 		db.selectFrom("users").select(["users.id", "users.username"]).where("users.id", "=", 1),
 		"id",
 	).executeTakeFirstOrThrow();
@@ -45,7 +45,7 @@ test("executeTakeFirstOrThrow: returns first result or throws", async () => {
 	assert.deepStrictEqual(user, { id: 1, username: "alice" });
 
 	await assert.rejects(async () => {
-		await hydrated(
+		await hydrateQuery(
 			db.selectFrom("users").select(["users.id", "users.username"]).where("users.id", "=", 999),
 			"id",
 		).executeTakeFirstOrThrow();
@@ -57,7 +57,10 @@ test("executeTakeFirstOrThrow: returns first result or throws", async () => {
 //
 
 test("modify: allows modifying underlying query", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "<", 3))
 		.execute();
 
@@ -71,7 +74,10 @@ test("modify: allows modifying underlying query", async () => {
 //
 
 test("hasMany: creates nested array via left join", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.hasMany(
 			"posts",
@@ -88,7 +94,7 @@ test("hasMany: creates nested array via left join", async () => {
 });
 
 test("hasMany: produces correctly prefixed columns in raw query", async () => {
-	const builder = hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const builder = hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.hasMany(
 			"posts",
@@ -108,7 +114,10 @@ test("hasMany: produces correctly prefixed columns in raw query", async () => {
 });
 
 test("hasMany: returns empty array when no matches", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 1)) // Alice has no posts
 		.hasMany(
 			"posts",
@@ -122,7 +131,10 @@ test("hasMany: returns empty array when no matches", async () => {
 });
 
 test("hasMany: handles multiple nesting levels", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.hasMany(
 			"posts",
@@ -152,7 +164,7 @@ test("hasMany: handles multiple nesting levels", async () => {
 });
 
 test("hasMany: multiple nesting produces doubly-prefixed columns", async () => {
-	const builder = hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const builder = hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.hasMany(
 			"posts",
@@ -190,7 +202,10 @@ test("hasMany: multiple nesting produces doubly-prefixed columns", async () => {
 //
 
 test("hasOne: creates nullable nested object via left join", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "<=", 2))
 		.hasOne(
 			"profile",
@@ -209,7 +224,7 @@ test("hasOne: creates nullable nested object via left join", async () => {
 });
 
 test("hasOne: creates non-nullable nested object via inner join", async () => {
-	const posts = await hydrated(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
+	const posts = await hydrateQuery(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
 		.modify((qb) => qb.where("posts.id", "=", 1))
 		.hasOne(
 			"author",
@@ -223,7 +238,7 @@ test("hasOne: creates non-nullable nested object via inner join", async () => {
 });
 
 test("hasOne: produces correctly prefixed columns in raw query", async () => {
-	const builder = hydrated(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
+	const builder = hydrateQuery(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
 		.modify((qb) => qb.where("posts.id", "=", 1))
 		.hasOne(
 			"author",
@@ -249,7 +264,10 @@ test("hasOne: returns null when no match with left join", async () => {
 		.returningAll()
 		.executeTakeFirstOrThrow();
 
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", result.id))
 		.hasOne(
 			"latestPost",
@@ -270,7 +288,10 @@ test("hasOne: returns null when no match with left join", async () => {
 //
 
 test("hasOneOrThrow: returns nested object when exists", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 1))
 		.hasOneOrThrow(
 			"profile",
@@ -294,7 +315,7 @@ test("hasOneOrThrow: throws when nested object missing", async () => {
 		.executeTakeFirst();
 
 	await assert.rejects(async () => {
-		await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 			.modify((qb) => qb.where("users.id", "=", result!.id))
 			.hasOneOrThrow(
 				"profile",
@@ -317,7 +338,10 @@ test("hasOneOrThrow: throws when nested object missing", async () => {
 //
 
 test("attachMany: fetches and attaches related entities", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.attachMany(
 			"posts",
@@ -340,7 +364,7 @@ test("attachMany: fetches and attaches related entities", async () => {
 test("attachMany: calls fetchFn exactly once", async () => {
 	let callCount = 0;
 
-	await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 		.modify((qb) => qb.where("users.id", "<=", 3))
 		.attachMany(
 			"posts",
@@ -361,7 +385,10 @@ test("attachMany: calls fetchFn exactly once", async () => {
 });
 
 test("attachMany: returns empty array when no matches", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 1)) // Alice has no posts
 		.attachMany(
 			"posts",
@@ -385,7 +412,10 @@ test("attachMany: returns empty array when no matches", async () => {
 //
 
 test("attachOne: returns first match or null", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "in", [1, 2]))
 		.attachOne(
 			"latestPost",
@@ -410,7 +440,10 @@ test("attachOne: returns first match or null", async () => {
 //
 
 test("attachOneOrThrow: returns entity when exists", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.attachOneOrThrow(
 			"requiredPost",
@@ -431,7 +464,7 @@ test("attachOneOrThrow: returns entity when exists", async () => {
 
 test("attachOneOrThrow: throws when no match exists", async () => {
 	await assert.rejects(async () => {
-		await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 			.modify((qb) => qb.where("users.id", "=", 1)) // Alice has no posts
 			.attachOneOrThrow(
 				"requiredPost",
@@ -456,7 +489,10 @@ test("attachOneOrThrow: throws when no match exists", async () => {
 test("complex nesting: hasMany with nested hasMany and attach", async () => {
 	let fetchCount = 0;
 
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.hasMany(
 			"posts",
@@ -503,7 +539,10 @@ test("complex nesting: hasMany with nested hasMany and attach", async () => {
 });
 
 test("mixing hasOne and hasMany", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 2))
 		.hasOne(
 			"profile",
@@ -531,7 +570,7 @@ test("mixing hasOne and hasMany", async () => {
 //
 
 test("innerJoin: adds inner join to query", async () => {
-	const posts = await hydrated(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
+	const posts = await hydrateQuery(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
 		.modify((qb) => qb.where("posts.id", "=", 1))
 		.innerJoin("users", "users.id", "posts.user_id")
 		.select(["users.username"])
@@ -541,7 +580,7 @@ test("innerJoin: adds inner join to query", async () => {
 });
 
 test("innerJoin with select: columns are not prefixed at top level", async () => {
-	const builder = hydrated(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
+	const builder = hydrateQuery(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
 		.modify((qb) => qb.where("posts.id", "=", 1))
 		.innerJoin("users", "users.id", "posts.user_id")
 		.select(["users.username"]);
@@ -557,7 +596,10 @@ test("innerJoin with select: columns are not prefixed at top level", async () =>
 });
 
 test("leftJoin: adds left join to query", async () => {
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.modify((qb) => qb.where("users.id", "=", 1))
 		.leftJoin("posts", "posts.user_id", "users.id")
 		.select(["posts.title"])
@@ -569,7 +611,7 @@ test("leftJoin: adds left join to query", async () => {
 });
 
 test("crossJoin: adds cross join to query", async () => {
-	const result = await hydrated(
+	const result = await hydrateQuery(
 		db.selectFrom("users").select(["users.id"]).where("users.id", "=", 1),
 		"id",
 	)
@@ -589,7 +631,10 @@ test("crossJoin: adds cross join to query", async () => {
 
 test.skip("innerJoinLateral: adds inner join lateral", async () => {
 	// SQLite does not support lateral joins
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.innerJoinLateral(
 			(db) =>
 				db
@@ -608,7 +653,10 @@ test.skip("innerJoinLateral: adds inner join lateral", async () => {
 
 test.skip("leftJoinLateral: adds left join lateral", async () => {
 	// SQLite does not support lateral joins
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.leftJoinLateral(
 			(db) =>
 				db
@@ -627,7 +675,10 @@ test.skip("leftJoinLateral: adds left join lateral", async () => {
 
 test.skip("crossJoinLateral: adds cross join lateral", async () => {
 	// SQLite does not support lateral joins
-	const users = await hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
 		.crossJoinLateral((db) =>
 			db
 				.selectFrom("posts")
@@ -648,7 +699,7 @@ test.skip("crossJoinLateral: adds cross join lateral", async () => {
 
 test("composite keys: works with composite keyBy", async () => {
 	// Create a view that uses composite keys
-	const result = await hydrated(
+	const result = await hydrateQuery(
 		db
 			.selectFrom("posts")
 			.select(["posts.id", "posts.user_id", "posts.title"])
@@ -671,7 +722,7 @@ test("composite keys: works with composite keyBy", async () => {
 });
 
 test("toQuery: returns underlying kysely query builder", async () => {
-	const builder = hydrated(db.selectFrom("users").select(["users.id", "users.username"]), "id");
+	const builder = hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]), "id");
 
 	const query = builder.toQuery();
 
