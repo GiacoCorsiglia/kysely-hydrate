@@ -1,6 +1,10 @@
-import { SomeColumnType } from "./column-type";
+import { type SomeColumnType } from "./column-type.ts";
+
+export type Database = Record<string, SomeTable>;
 
 type ColumnsRecord = Record<string, SomeColumnType>;
+
+export type SomeTable = Table<string, string, ColumnsRecord>;
 
 export interface Table<Schema extends string, Name extends string, Columns extends ColumnsRecord> {
 	readonly $schema: Schema;

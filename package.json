@@ -50,6 +50,7 @@
     "kysely": "^0.28.7",
     "oxfmt": "^0.16.0",
     "oxlint": "^1.31.0",
+    "postgres-array": "^3.0.4",
     "tsdown": "^0.17.1"
   }
 }

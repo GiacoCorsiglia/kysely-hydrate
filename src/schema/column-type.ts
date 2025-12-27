@@ -38,7 +38,9 @@ export abstract class ColumnType<
 		return new GeneratedAlways(this);
 	}
 
-	abstract fromDriver(input: DriverType): SelectType;
+	fromDriver(input: DriverType): SelectType {
+		return input as unknown as SelectType;
+	}
 
 	fromJson(input: JsonType): SelectType {
 		return this.fromDriver(input as unknown as DriverType);
