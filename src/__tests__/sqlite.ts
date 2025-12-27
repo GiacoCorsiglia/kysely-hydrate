@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import SQLite from "better-sqlite3";
 import * as k from "kysely";
 
-import { type SeedDB } from "./fixture.ts";
+import { type SeedDB, seedDb } from "./fixture.ts";
+
+export { seedDb };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

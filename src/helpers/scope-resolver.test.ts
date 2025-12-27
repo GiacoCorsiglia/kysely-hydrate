@@ -3,36 +3,51 @@ import { test } from "node:test";
 
 import * as k from "kysely";
 
-import { db } from "../__tests__/sqlite.ts";
-import { AmbiguousColumnReferenceError, WildcardSelectionError } from "./errors.ts";
-import { traceLineage } from "./scope-resolver.ts";
+import { db, seedDb } from "../__tests__/sqlite.ts";
+import { type SomeColumnType } from "../schema/column-type.ts";
+import { AmbiguousColumnReferenceError } from "./errors.ts";
+import { type Provenance, traceLineage } from "./scope-resolver.ts";
 
 function getQueryNode(query: k.SelectQueryBuilder<any, any, any>): k.SelectQueryNode {
 	return query.toOperationNode() as k.SelectQueryNode;
+}
+
+// Helper to create expected COLUMN provenance with columnType
+function col(
+	table: string,
+	column: string,
+): { type: "COLUMN"; table: string; column: string; columnType: SomeColumnType } {
+	const tableName = table.includes(".") ? table.split(".")[1]! : table;
+	const tableSchema = (seedDb as any)[tableName];
+	if (!tableSchema) {
+		throw new Error(`Table ${tableName} not found in seedDb`);
+	}
+	const columnType = tableSchema.$columns[column];
+	if (!columnType) {
+		throw new Error(`Column ${column} not found in table ${tableName}`);
+	}
+	return { type: "COLUMN", table, column, columnType };
 }
 
 // Basic single-table queries
 test("single table: unqualified column reference", () => {
 	const query = db.selectFrom("users").select("id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("users", "id")]]));
 });
 
 test("single table: multiple unqualified columns", () => {
 	const query = db.selectFrom("users").select(["id", "username"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 		]),
 	);
 });
@@ -40,58 +55,43 @@ test("single table: multiple unqualified columns", () => {
 test("single table: qualified column reference", () => {
 	const query = db.selectFrom("users").select("users.id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("users", "id")]]));
 });
 
 // Column aliases
 test("column alias: simple alias", () => {
 	const query = db.selectFrom("users").select("id as user_id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["user_id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["user_id", col("users", "id")]]));
 });
 
 test("column alias: qualified column with alias", () => {
 	const query = db.selectFrom("users").select("users.username as name");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["name", { type: "COLUMN", table: "users", column: "username" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["name", col("users", "username")]]));
 });
 
 // Table aliases
 test("table alias: unqualified column from aliased table", () => {
 	const query = db.selectFrom("users as u").select("id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("users", "id")]]));
 });
 
 test("table alias: qualified column using alias", () => {
 	const query = db.selectFrom("users as u").select("u.username");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["username", { type: "COLUMN", table: "users", column: "username" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["username", col("users", "username")]]));
 });
 
 // Joins
@@ -101,13 +101,13 @@ test("join: qualified columns from different tables", () => {
 		.innerJoin("posts", "posts.user_id", "users.id")
 		.select(["users.id", "posts.title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
+			["id", col("users", "id")],
+			["title", col("posts", "title")],
 		]),
 	);
 });
@@ -120,7 +120,7 @@ test("join: unqualified column throws when ambiguous", () => {
 	const node = getQueryNode(query);
 
 	assert.throws(
-		() => traceLineage(node),
+		() => traceLineage(node, seedDb),
 		AmbiguousColumnReferenceError,
 		"Should throw on ambiguous column reference",
 	);
@@ -135,19 +135,16 @@ test.skip("join: unqualified column succeeds when unique", () => {
 		.innerJoin("posts", "posts.user_id", "users.id")
 		.select("username"); // Only users has 'username'
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["username", { type: "COLUMN", table: "users", column: "username" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["username", col("users", "username")]]));
 });
 
 // Derived columns
 test("derived: function call returns DERIVED", () => {
 	const query = db.selectFrom("users").select(k.sql<string>`UPPER(username)`.as("upper_name"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED" }]]));
 });
@@ -155,7 +152,7 @@ test("derived: function call returns DERIVED", () => {
 test("derived: arithmetic expression returns DERIVED", () => {
 	const query = db.selectFrom("users").select(k.sql<number>`id * 2`.as("double_id"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["double_id", { type: "DERIVED" }]]));
 });
@@ -163,7 +160,7 @@ test("derived: arithmetic expression returns DERIVED", () => {
 test("derived: literal value returns DERIVED", () => {
 	const query = db.selectFrom("users").select(k.sql<string>`'constant'`.as("literal"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["literal", { type: "DERIVED" }]]));
 });
@@ -173,13 +170,13 @@ test("subquery: simple subquery", () => {
 	const subquery = db.selectFrom("users").select(["id", "username"]).as("u");
 	const query = db.selectFrom(subquery).select(["u.id", "u.username"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 		]),
 	);
 });
@@ -189,12 +186,9 @@ test("subquery: nested subqueries", () => {
 	const outer = db.selectFrom(inner).select("inner.user_id as uid").as("outer");
 	const query = db.selectFrom(outer).select("outer.uid");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["uid", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["uid", col("users", "id")]]));
 });
 
 test("subquery: derived column breaks lineage", () => {
@@ -204,7 +198,7 @@ test("subquery: derived column breaks lineage", () => {
 		.as("u");
 	const query = db.selectFrom(subquery).select("u.upper_name");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED" }]]));
 });
@@ -216,13 +210,13 @@ test("cte: simple cte", () => {
 		.selectFrom("user_cte")
 		.select(["user_cte.id", "user_cte.username"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 		]),
 	);
 });
@@ -235,13 +229,13 @@ test("cte: multiple ctes", () => {
 		.innerJoin("cte2", "cte2.post_id", "cte1.user_id")
 		.select(["cte1.user_id", "cte2.post_id"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["user_id", { type: "COLUMN", table: "users", column: "id" }],
-			["post_id", { type: "COLUMN", table: "posts", column: "id" }],
+			["user_id", col("users", "id")],
+			["post_id", col("posts", "id")],
 		]),
 	);
 });
@@ -253,34 +247,43 @@ test("cte: cte referencing another cte", () => {
 		.selectFrom("cte2")
 		.select("cte2.user_id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
+
+	assert.deepStrictEqual(result, new Map([["user_id", col("users", "id")]]));
+});
+
+// Wildcard expansion tests
+test("wildcard: selectAll() expands to all columns", () => {
+	const query = db.selectFrom("users").selectAll();
+	const node = getQueryNode(query);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
-		new Map([["user_id", { type: "COLUMN", table: "users", column: "id" }]]),
+		new Map([
+			["id", col("users", "id")],
+			["username", col("users", "username")],
+			["email", col("users", "email")],
+		]),
 	);
 });
 
-// Error cases
-test("error: wildcard throws error", () => {
-	const query = db.selectFrom("users").selectAll();
-	const node = getQueryNode(query);
-
-	assert.throws(
-		() => traceLineage(node),
-		WildcardSelectionError,
-		"Should throw on wildcard selection",
-	);
-});
-
-test("error: table wildcard throws error", () => {
+test("wildcard: selectAll('table') expands to table columns", () => {
 	const query = db
 		.selectFrom("users")
 		.innerJoin("posts", "posts.user_id", "users.id")
 		.selectAll("users");
 	const node = getQueryNode(query);
+	const result = traceLineage(node, seedDb);
 
-	assert.throws(() => traceLineage(node), WildcardSelectionError, "Should throw on table wildcard");
+	assert.deepStrictEqual(
+		result,
+		new Map([
+			["id", col("users", "id")],
+			["username", col("users", "username")],
+			["email", col("users", "email")],
+		]),
+	);
 });
 
 // RETURNING clauses
@@ -290,13 +293,13 @@ test("returning: insert with returning", () => {
 		.values({ username: "test", email: "test@example.com" })
 		.returning(["id", "username"]);
 	const node = query.toOperationNode() as k.InsertQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 		]),
 	);
 });
@@ -308,24 +311,21 @@ test("returning: update with returning", () => {
 		.where("id", "=", 1)
 		.returning("id");
 	const node = query.toOperationNode() as k.UpdateQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("users", "id")]]));
 });
 
 test("returning: delete with returning", () => {
 	const query = db.deleteFrom("users").where("id", "=", 1).returning(["id", "username"]);
 	const node = query.toOperationNode() as k.DeleteQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 		]),
 	);
 });
@@ -344,13 +344,13 @@ test("complex: cte with join and subquery", () => {
 		.innerJoin(subquery, "c.post_id", "user_posts.post_id")
 		.select(["user_posts.user_id", "user_posts.post_id"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["user_id", { type: "COLUMN", table: "users", column: "id" }],
-			["post_id", { type: "COLUMN", table: "posts", column: "id" }],
+			["user_id", col("users", "id")],
+			["post_id", col("posts", "id")],
 		]),
 	);
 });
@@ -359,24 +359,18 @@ test("complex: multiple aliasing levels", () => {
 	const subquery = db.selectFrom("users as u").select("u.id as user_id").as("subq");
 	const query = db.selectFrom(subquery).select("subq.user_id as final_id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["final_id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["final_id", col("users", "id")]]));
 });
 
 // Schema-qualified tables
 test("schema: table with schema qualifier", () => {
 	const query = db.selectFrom("public.users" as any).select("id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "public.users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("public.users", "id")]]));
 });
 
 // CASE expressions
@@ -385,7 +379,7 @@ test("case: simple case expression returns DERIVED", () => {
 		.selectFrom("users")
 		.select(k.sql<string>`CASE WHEN id > 10 THEN 'high' ELSE 'low' END`.as("category"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["category", { type: "DERIVED" }]]));
 });
@@ -394,7 +388,7 @@ test("case: simple case expression returns DERIVED", () => {
 test("coalesce: coalesce expression returns DERIVED", () => {
 	const query = db.selectFrom("users").select(k.sql<string>`COALESCE(username, email)`.as("name"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["name", { type: "DERIVED" }]]));
 });
@@ -403,7 +397,7 @@ test("coalesce: coalesce expression returns DERIVED", () => {
 test("aggregate: count(*) returns DERIVED", () => {
 	const query = db.selectFrom("users").select(k.sql<number>`COUNT(*)`.as("total"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["total", { type: "DERIVED" }]]));
 });
@@ -411,7 +405,7 @@ test("aggregate: count(*) returns DERIVED", () => {
 test("aggregate: count(column) returns DERIVED", () => {
 	const query = db.selectFrom("users").select(k.sql<number>`COUNT(id)`.as("user_count"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["user_count", { type: "DERIVED" }]]));
 });
@@ -419,7 +413,7 @@ test("aggregate: count(column) returns DERIVED", () => {
 test("aggregate: sum with column returns DERIVED", () => {
 	const query = db.selectFrom("posts").select(k.sql<number>`SUM(views)`.as("total_views"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["total_views", { type: "DERIVED" }]]));
 });
@@ -430,12 +424,12 @@ test("aggregate: grouped query with column and aggregate", () => {
 		.select(["user_id", k.sql<number>`COUNT(*)`.as("post_count")])
 		.groupBy("user_id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
-		new Map([
-			["user_id", { type: "COLUMN", table: "posts", column: "user_id" }],
+		new Map<string, Provenance>([
+			["user_id", col("posts", "user_id")],
 			["post_count", { type: "DERIVED" }],
 		]),
 	);
@@ -458,13 +452,13 @@ test("subquery: scalar subquery in select list", () => {
 					.as("author_name"),
 		]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	// Current behavior: scalar subquery returns DERIVED
 	assert.deepStrictEqual(
 		result,
-		new Map([
-			["id", { type: "COLUMN", table: "posts", column: "id" }],
+		new Map<string, Provenance>([
+			["id", col("posts", "id")],
 			["author_name", { type: "DERIVED" }],
 		]),
 	);
@@ -473,8 +467,8 @@ test("subquery: scalar subquery in select list", () => {
 	// assert.deepStrictEqual(
 	// 	result,
 	// 	new Map([
-	// 		["id", { type: "COLUMN", table: "posts", column: "id" }],
-	// 		["author_name", { type: "COLUMN", table: "users", column: "username" }],
+	// 		["id", col("posts", "id")],
+	// 		["author_name", col("users", "username")],
 	// 	]),
 	// );
 });
@@ -486,12 +480,9 @@ test("subquery: subquery in where clause does not affect lineage", () => {
 		.select("title")
 		.where("user_id", "in", (eb) => eb.selectFrom("users").select("id").where("id", ">", 0));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["title", { type: "COLUMN", table: "posts", column: "title" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["title", col("posts", "title")]]));
 });
 
 // UPDATE with aliased table
@@ -502,12 +493,9 @@ test("update: update with aliased table", () => {
 		.where("u.id", "=", 1)
 		.returning("u.id");
 	const node = query.toOperationNode() as k.UpdateQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("users", "id")]]));
 });
 
 // DELETE with FROM/USING
@@ -519,19 +507,16 @@ test("delete: delete with from clause", () => {
 		.where("users.id", "=", 1)
 		.returning("posts.id");
 	const node = query.toOperationNode() as k.DeleteQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "posts", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("posts", "id")]]));
 });
 
 // Mixed DERIVED and COLUMN in expression
 test("mixed: column with literal in expression", () => {
 	const query = db.selectFrom("users").select(k.sql<number>`id + 1`.as("next_id"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["next_id", { type: "DERIVED" }]]));
 });
@@ -541,13 +526,13 @@ test("mixed: multiple columns with derived in same select", () => {
 		.selectFrom("users")
 		.select(["id", "username", k.sql<string>`UPPER(email)`.as("upper_email")]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
-		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+		new Map<string, Provenance>([
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 			["upper_email", { type: "DERIVED" }],
 		]),
 	);
@@ -557,7 +542,7 @@ test("mixed: multiple columns with derived in same select", () => {
 test("unresolved: nonexistent table reference", () => {
 	const query = db.selectFrom("users").select("nonexistent.id" as any);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["id", { type: "UNRESOLVED" }]]));
 });
@@ -566,7 +551,7 @@ test("unresolved: column from no sources", () => {
 	// Create a query with no FROM clause by using raw SQL
 	const query = db.selectFrom(k.sql`(SELECT 1)`.as("empty")).select("nonexistent" as any);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	// This should be UNRESOLVED since there's no way to resolve it
 	assert.deepStrictEqual(result, new Map([["nonexistent", { type: "UNRESOLVED" }]]));
@@ -580,14 +565,14 @@ test("join: multiple joins with mixed table aliases", () => {
 		.innerJoin("comments", "comments.post_id", "p.id")
 		.select(["u.username", "p.title", "comments.content"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["username", { type: "COLUMN", table: "users", column: "username" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
-			["content", { type: "COLUMN", table: "comments", column: "content" }],
+			["username", col("users", "username")],
+			["title", col("posts", "title")],
+			["content", col("comments", "content")],
 		]),
 	);
 });
@@ -599,13 +584,13 @@ test("join: left join with nullable result", () => {
 		.leftJoin("posts", "posts.user_id", "users.id")
 		.select(["users.id", "posts.title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
+			["id", col("users", "id")],
+			["title", col("posts", "title")],
 		]),
 	);
 });
@@ -616,13 +601,13 @@ test("join: right join", () => {
 		.rightJoin("users", "users.id", "posts.user_id")
 		.select(["posts.title", "users.username"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+			["title", col("posts", "title")],
+			["username", col("users", "username")],
 		]),
 	);
 });
@@ -635,19 +620,19 @@ test("join: full outer join with ambiguous column", () => {
 		.fullJoin("posts", "posts.user_id", "users.id")
 		.select(["users.id", "posts.id"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	// Current behavior: resolves both without throwing
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["id", { type: "COLUMN", table: "posts", column: "id" }],
+			["id", col("users", "id")],
+			["id", col("posts", "id")],
 		]),
 	);
 
 	// Desired behavior (future): should throw on ambiguous unqualified 'id'
-	// assert.throws(() => traceLineage(node), { message: /ambiguous/i });
+	// assert.throws(() => traceLineage(node, seedDb), { message: /ambiguous/i });
 });
 
 // Self joins
@@ -657,13 +642,13 @@ test("join: self join with different aliases", () => {
 		.innerJoin("users as u2", "u2.id", "u1.manager_id" as any)
 		.select(["u1.username as employee", "u2.username as manager"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["employee", { type: "COLUMN", table: "users", column: "username" }],
-			["manager", { type: "COLUMN", table: "users", column: "username" }],
+			["employee", col("users", "username")],
+			["manager", col("users", "username")],
 		]),
 	);
 });
@@ -679,7 +664,7 @@ test.skip("join: cross join", () => {
 	const node = getQueryNode(query);
 
 	// This currently throws TypeError instead of handling the join
-	assert.throws(() => traceLineage(node), { message: /ambiguous/i });
+	assert.throws(() => traceLineage(node, seedDb), { message: /ambiguous/i });
 });
 
 // LATERAL joins
@@ -696,14 +681,14 @@ test("lateral: simple lateral join", () => {
 		)
 		.select(["users.username", "p.post_id", "p.title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["username", { type: "COLUMN", table: "users", column: "username" }],
-			["post_id", { type: "COLUMN", table: "posts", column: "id" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
+			["username", col("users", "username")],
+			["post_id", col("posts", "id")],
+			["title", col("posts", "title")],
 		]),
 	);
 });
@@ -724,13 +709,13 @@ test("lateral: lateral join with limit (top N per group)", () => {
 		)
 		.select(["users.username", "recent_posts.title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["username", { type: "COLUMN", table: "users", column: "username" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
+			["username", col("users", "username")],
+			["title", col("posts", "title")],
 		]),
 	);
 });
@@ -749,13 +734,13 @@ test("lateral: lateral join with aggregation", () => {
 		)
 		.select(["users.id", "users.username", "stats.post_count"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
-		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["username", { type: "COLUMN", table: "users", column: "username" }],
+		new Map<string, Provenance>([
+			["id", col("users", "id")],
+			["username", col("users", "username")],
 			["post_count", { type: "DERIVED" }],
 		]),
 	);
@@ -786,14 +771,14 @@ test("lateral: multiple lateral joins", () => {
 		)
 		.select(["users.username", "latest_post.post_id", "latest_comment.content"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["username", { type: "COLUMN", table: "users", column: "username" }],
-			["post_id", { type: "COLUMN", table: "posts", column: "id" }],
-			["content", { type: "COLUMN", table: "comments", column: "content" }],
+			["username", col("users", "username")],
+			["post_id", col("posts", "id")],
+			["content", col("comments", "content")],
 		]),
 	);
 });
@@ -813,12 +798,12 @@ test("lateral: lateral join with derived column", () => {
 		)
 		.select(["users.id", "transformed.upper_title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
-		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
+		new Map<string, Provenance>([
+			["id", col("users", "id")],
 			["upper_title", { type: "DERIVED" }],
 		]),
 	);
@@ -831,13 +816,10 @@ test("cte: cte shadowing real table", () => {
 		.selectFrom("users")
 		.select("users.id");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	// Should resolve to posts.id because CTE shadows the real users table
-	assert.deepStrictEqual(
-		result,
-		new Map([["id", { type: "COLUMN", table: "posts", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["id", col("posts", "id")]]));
 });
 
 test("cte: deeply nested cte chain", () => {
@@ -848,12 +830,9 @@ test("cte: deeply nested cte chain", () => {
 		.selectFrom("cte3")
 		.select("cte3.c");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(
-		result,
-		new Map([["c", { type: "COLUMN", table: "users", column: "id" }]]),
-	);
+	assert.deepStrictEqual(result, new Map([["c", col("users", "id")]]));
 });
 
 test("cte: cte with derived column breaks lineage", () => {
@@ -864,7 +843,7 @@ test("cte: cte with derived column breaks lineage", () => {
 		.selectFrom("derived_cte")
 		.select("derived_cte.upper_name");
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED" }]]));
 });
@@ -878,13 +857,13 @@ test("subquery: subquery containing join", () => {
 		.as("joined");
 	const query = db.selectFrom(subquery).select(["joined.user_id", "joined.title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["user_id", { type: "COLUMN", table: "users", column: "id" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
+			["user_id", col("users", "id")],
+			["title", col("posts", "title")],
 		]),
 	);
 });
@@ -896,13 +875,13 @@ test("returning: insert with aliased columns in returning", () => {
 		.values({ username: "test", email: "test@example.com" })
 		.returning(["id as user_id", "username as name"]);
 	const node = query.toOperationNode() as k.InsertQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["user_id", { type: "COLUMN", table: "users", column: "id" }],
-			["name", { type: "COLUMN", table: "users", column: "username" }],
+			["user_id", col("users", "id")],
+			["name", col("users", "username")],
 		]),
 	);
 });
@@ -914,7 +893,7 @@ test("returning: update with expression in returning", () => {
 		.where("id", "=", 1)
 		.returning(k.sql<string>`CONCAT(username, '@example.com')`.as("email"));
 	const node = query.toOperationNode() as k.UpdateQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["email", { type: "DERIVED" }]]));
 });
@@ -923,7 +902,7 @@ test("returning: update with expression in returning", () => {
 test("edge: query with no selections", () => {
 	const query = db.selectFrom("users");
 	const node = query.toOperationNode() as k.SelectQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map());
 });
@@ -931,7 +910,7 @@ test("edge: query with no selections", () => {
 test("edge: insert without returning", () => {
 	const query = db.insertInto("users").values({ username: "test", email: "test@example.com" });
 	const node = query.toOperationNode() as k.InsertQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map());
 });
@@ -939,7 +918,7 @@ test("edge: insert without returning", () => {
 test("edge: update without returning", () => {
 	const query = db.updateTable("users").set({ username: "updated" }).where("id", "=", 1);
 	const node = query.toOperationNode() as k.UpdateQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map());
 });
@@ -947,7 +926,7 @@ test("edge: update without returning", () => {
 test("edge: delete without returning", () => {
 	const query = db.deleteFrom("users").where("id", "=", 1);
 	const node = query.toOperationNode() as k.DeleteQueryNode;
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map());
 });
@@ -956,7 +935,7 @@ test("edge: delete without returning", () => {
 test("window: window function returns DERIVED", () => {
 	const query = db.selectFrom("posts").select(k.sql<number>`ROW_NUMBER() OVER ()`.as("row_num"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["row_num", { type: "DERIVED" }]]));
 });
@@ -966,7 +945,7 @@ test("window: window function with partition by", () => {
 		.selectFrom("posts")
 		.select(k.sql<number>`RANK() OVER (PARTITION BY user_id ORDER BY created_at)`.as("post_rank"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["post_rank", { type: "DERIVED" }]]));
 });
@@ -975,7 +954,7 @@ test("window: window function with partition by", () => {
 test("cast: explicit type cast", () => {
 	const query = db.selectFrom("users").select(k.sql<number>`CAST(id AS TEXT)`.as("id_str"));
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(result, new Map([["id_str", { type: "DERIVED" }]]));
 });
@@ -986,14 +965,14 @@ test("cast: explicit type cast", () => {
 test("from: multiple tables in from clause (implicit cross join)", () => {
 	const query = db.selectFrom(["users", "posts"]).select(["users.id", "posts.id"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	// Current behavior: resolves both qualified columns
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["id", { type: "COLUMN", table: "users", column: "id" }],
-			["id", { type: "COLUMN", table: "posts", column: "id" }],
+			["id", col("users", "id")],
+			["id", col("posts", "id")],
 		]),
 	);
 
@@ -1004,13 +983,13 @@ test("from: multiple tables in from clause (implicit cross join)", () => {
 test("from: multiple tables with qualified unique columns", () => {
 	const query = db.selectFrom(["users", "posts"]).select(["users.username", "posts.title"]);
 	const node = getQueryNode(query);
-	const result = traceLineage(node);
+	const result = traceLineage(node, seedDb);
 
 	assert.deepStrictEqual(
 		result,
 		new Map([
-			["username", { type: "COLUMN", table: "users", column: "username" }],
-			["title", { type: "COLUMN", table: "posts", column: "title" }],
+			["username", col("users", "username")],
+			["title", col("posts", "title")],
 		]),
 	);
 });

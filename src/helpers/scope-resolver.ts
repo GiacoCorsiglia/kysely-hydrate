@@ -1,5 +1,7 @@
 import * as k from "kysely";
 
+import { type SomeColumnType } from "../schema/column-type.ts";
+import { type Database } from "../schema/table.ts";
 import {
 	AmbiguousColumnReferenceError,
 	UnsupportedAliasNodeTypeError,
@@ -9,8 +11,8 @@ import {
 	WildcardSelectionError,
 } from "./errors.ts";
 
-type Provenance =
-	| { type: "COLUMN"; table: string; column: string }
+export type Provenance =
+	| { type: "COLUMN"; table: string; column: string; columnType: SomeColumnType }
 	| { type: "DERIVED" }
 	| { type: "UNRESOLVED" };
 
@@ -21,6 +23,7 @@ type SourceDefinition =
 
 type GlobalContext = {
 	ctes: Map<string, k.CommonTableExpressionNode>;
+	database: Database;
 };
 
 type LocalScope = Map<string, SourceDefinition>;
@@ -91,43 +94,123 @@ function addFromItemToScope(
 	}
 }
 
+function expandSelectAll(
+	tableAlias: string | undefined,
+	localScope: LocalScope,
+	context: GlobalContext,
+): Map<string, Provenance> {
+	const result = new Map<string, Provenance>();
+
+	if (tableAlias) {
+		// Qualified selectAll: expand columns from specific table
+		const source = localScope.get(tableAlias);
+		if (!source) {
+			return result;
+		}
+
+		if (source.kind === "TABLE") {
+			const tableName = extractTableName(source.node);
+			const tableSchema = context.database[tableName];
+			if (tableSchema) {
+				for (const [columnName, columnType] of Object.entries(tableSchema.$columns)) {
+					const schemableId = source.node.table;
+					const schema = schemableId.schema ? schemableId.schema.name : undefined;
+					const fullTableName = schema ? `${schema}.${tableName}` : tableName;
+					result.set(columnName, {
+						type: "COLUMN",
+						table: fullTableName,
+						column: columnName,
+						columnType,
+					});
+				}
+			}
+		} else if (source.kind === "SUBQUERY") {
+			const subResult = traceSelectQuery(source.node, context);
+			return subResult;
+		} else if (source.kind === "CTE") {
+			const cte = context.ctes.get(source.name);
+			if (cte && cte.expression) {
+				const subResult = traceSelectQuery(cte.expression as k.SelectQueryNode, context);
+				return subResult;
+			}
+		}
+	} else {
+		// Unqualified selectAll: expand columns from all tables in scope
+		for (const source of localScope.values()) {
+			if (source.kind === "TABLE") {
+				const tableName = extractTableName(source.node);
+				const tableSchema = context.database[tableName];
+				if (tableSchema) {
+					for (const [columnName, columnType] of Object.entries(tableSchema.$columns)) {
+						const schemableId = source.node.table;
+						const schema = schemableId.schema ? schemableId.schema.name : undefined;
+						const fullTableName = schema ? `${schema}.${tableName}` : tableName;
+						result.set(columnName, {
+							type: "COLUMN",
+							table: fullTableName,
+							column: columnName,
+							columnType,
+						});
+					}
+				}
+			} else if (source.kind === "SUBQUERY") {
+				const subResult = traceSelectQuery(source.node, context);
+				for (const [key, provenance] of subResult.entries()) {
+					result.set(key, provenance);
+				}
+			} else if (source.kind === "CTE") {
+				const cte = context.ctes.get(source.name);
+				if (cte && cte.expression) {
+					const subResult = traceSelectQuery(cte.expression as k.SelectQueryNode, context);
+					for (const [key, provenance] of subResult.entries()) {
+						result.set(key, provenance);
+					}
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
 function traceSelection(
 	selection: k.SelectionNode,
 	localScope: LocalScope,
 	context: GlobalContext,
-): [string, Provenance] {
+): Map<string, Provenance> {
 	// Unwrap SelectionNode to get the actual selection
 	const actualSelection = (selection as any).selection as k.OperationNode;
 
-	// Check for wildcard selections
+	// Check for wildcard selections - now we expand them
 	if (k.SelectAllNode.is(actualSelection)) {
-		throw new WildcardSelectionError();
+		return expandSelectAll(undefined, localScope, context);
 	}
 
 	if (k.AliasNode.is(actualSelection)) {
 		const aliasNode = actualSelection as k.AliasNode;
 		const outputKey = (aliasNode.alias as k.IdentifierNode).name;
 		const provenance = traceNode(aliasNode.node, localScope, context);
-		return [outputKey, provenance];
+		return new Map([[outputKey, provenance]]);
 	}
 
 	if (k.ColumnNode.is(actualSelection)) {
 		const col = actualSelection;
 		const columnName = col.column.name;
 		const provenance = traceNode(actualSelection, localScope, context);
-		return [columnName, provenance];
+		return new Map([[columnName, provenance]]);
 	}
 
 	if (k.ReferenceNode.is(actualSelection)) {
 		const ref = actualSelection;
 		// Check if this is a table.* wildcard
 		if (k.SelectAllNode.is(ref.column)) {
-			throw new WildcardSelectionError();
+			const tableAlias = ref.table ? extractTableName(ref.table) : undefined;
+			return expandSelectAll(tableAlias, localScope, context);
 		}
 
 		const columnName = ref.column.column.name;
 		const provenance = traceNode(actualSelection, localScope, context);
-		return [columnName, provenance];
+		return new Map([[columnName, provenance]]);
 	}
 
 	throw new UnexpectedSelectionTypeError(actualSelection.kind);
@@ -220,7 +303,19 @@ function traceFromSource(
 		const schema = schemableId.schema ? schemableId.schema.name : undefined;
 		const tableName = extractTableName(table);
 		const fullTableName = schema ? `${schema}.${tableName}` : tableName;
-		return { type: "COLUMN", table: fullTableName, column: columnName };
+
+		// Look up the column type from the database schema
+		const tableSchema = context.database[tableName];
+		if (!tableSchema) {
+			return { type: "UNRESOLVED" };
+		}
+
+		const columnType = tableSchema.$columns[columnName];
+		if (!columnType) {
+			return { type: "UNRESOLVED" };
+		}
+
+		return { type: "COLUMN", table: fullTableName, column: columnName, columnType };
 	}
 
 	if (source.kind === "SUBQUERY") {
@@ -247,11 +342,10 @@ function traceSelections(
 ): Map<string, Provenance> {
 	const result = new Map<string, Provenance>();
 	for (const selection of selections) {
-		if (selection.selection.kind === "SelectAllNode") {
-			throw new WildcardSelectionError();
+		const selectionResults = traceSelection(selection, localScope, context);
+		for (const [outputKey, provenance] of selectionResults.entries()) {
+			result.set(outputKey, provenance);
 		}
-		const [outputKey, provenance] = traceSelection(selection, localScope, context);
-		result.set(outputKey, provenance);
 	}
 	return result;
 }
@@ -365,7 +459,10 @@ const tracers: {
 	RefreshMaterializedViewNode: noopTracer,
 };
 
-export function traceLineage(node: k.RootOperationNode): Map<string, Provenance> {
+export function traceLineage(
+	node: k.RootOperationNode,
+	database: Database,
+): Map<string, Provenance> {
 	const tracer = tracers[node.kind];
 	if (!tracer) {
 		throw new UnsupportedNodeTypeError(node.kind);
@@ -373,6 +470,7 @@ export function traceLineage(node: k.RootOperationNode): Map<string, Provenance>
 
 	const context: GlobalContext = {
 		ctes: new Map(),
+		database,
 	};
 
 	return tracer(node as never, context);
