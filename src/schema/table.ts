@@ -1,7 +1,5 @@
 import { type SomeColumnType } from "./column-type.ts";
 
-export type Database = Record<string, SomeTable>;
-
 type ColumnsRecord = Record<string, SomeColumnType>;
 
 export type SomeTable = Table<string, string, ColumnsRecord>;
@@ -22,4 +20,19 @@ export function createTable<
 		$name: name,
 		$columns: columns,
 	};
+}
+
+export type Database = Record<string, SomeTable>;
+
+type DatabaseFromTables<Schema extends string, Tables extends Record<string, ColumnsRecord>> = {
+	[Name in keyof Tables & string]: Table<Schema, Name, Tables[Name]>;
+};
+
+export function createDatabase<Schema extends string, Tables extends Record<string, ColumnsRecord>>(
+	schema: string,
+	tables: Tables,
+): DatabaseFromTables<Schema, Tables> {
+	return Object.fromEntries(
+		Object.entries(tables).map(([name, columns]) => [name, createTable(schema, name, columns)]),
+	) as DatabaseFromTables<Schema, Tables>;
 }

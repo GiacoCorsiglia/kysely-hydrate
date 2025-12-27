@@ -1,6 +1,6 @@
 import { ColumnType } from "./column-type.ts";
 
-abstract class SQLiteColumnType<
+export abstract class SQLiteColumnType<
 	SelectType,
 	InsertType,
 	UpdateType,
@@ -8,12 +8,11 @@ abstract class SQLiteColumnType<
 	JsonType,
 > extends ColumnType<SelectType, InsertType, UpdateType, DriverType, JsonType> {
 	readonly dialect = "sqlite";
-	abstract readonly sqlType: string;
 }
 
 // Integer-based types
 
-class SQLiteInteger extends SQLiteColumnType<number, number, number, number, number> {
+export class SQLiteInteger extends SQLiteColumnType<number, number, number, number, number> {
 	readonly sqlType = "integer";
 }
 
@@ -25,7 +24,13 @@ export interface SQLiteTimestampConfig {
 	mode?: "timestamp" | "timestamp_ms";
 }
 
-class SQLiteTimestamp extends SQLiteColumnType<Date, Date | number, Date | number, number, number> {
+export class SQLiteTimestamp extends SQLiteColumnType<
+	Date,
+	Date | number,
+	Date | number,
+	number,
+	number
+> {
 	readonly sqlType = "integer";
 	readonly mode: "timestamp" | "timestamp_ms";
 
@@ -46,7 +51,7 @@ export function timestamp(config?: SQLiteTimestampConfig): SQLiteTimestamp {
 	return new SQLiteTimestamp(config);
 }
 
-class SQLiteBoolean extends SQLiteColumnType<boolean, boolean, boolean, number, number> {
+export class SQLiteBoolean extends SQLiteColumnType<boolean, boolean, boolean, number, number> {
 	readonly sqlType = "integer";
 
 	fromDriver(input: number): boolean {
@@ -60,7 +65,7 @@ export function boolean(): SQLiteBoolean {
 
 // Real type
 
-class SQLiteReal extends SQLiteColumnType<number, number, number, number, number> {
+export class SQLiteReal extends SQLiteColumnType<number, number, number, number, number> {
 	readonly sqlType = "real";
 }
 
@@ -70,7 +75,7 @@ export function real(): SQLiteReal {
 
 // Text-based types
 
-class SQLiteText extends SQLiteColumnType<string, string, string, string, string> {
+export class SQLiteText extends SQLiteColumnType<string, string, string, string, string> {
 	readonly sqlType = "text";
 }
 
@@ -78,7 +83,7 @@ export function text(): SQLiteText {
 	return new SQLiteText();
 }
 
-class SQLiteTextJson<T = unknown> extends SQLiteColumnType<T, T, T, string, string> {
+export class SQLiteTextJson<T = unknown> extends SQLiteColumnType<T, T, T, string, string> {
 	readonly sqlType = "text";
 
 	fromDriver(input: string): T {
@@ -92,7 +97,7 @@ export function json<T = unknown>(): SQLiteTextJson<T> {
 
 // Blob-based types
 
-class SQLiteBlob extends SQLiteColumnType<
+export class SQLiteBlob extends SQLiteColumnType<
 	Buffer,
 	Buffer | Uint8Array,
 	Buffer | Uint8Array,
@@ -118,7 +123,7 @@ export function blob(): SQLiteBlob {
 	return new SQLiteBlob();
 }
 
-class SQLiteBlobBigInt extends SQLiteColumnType<
+export class SQLiteBlobBigInt extends SQLiteColumnType<
 	bigint,
 	bigint | number | string,
 	bigint | number | string,
@@ -145,7 +150,7 @@ export function blobBigInt(): SQLiteBlobBigInt {
 	return new SQLiteBlobBigInt();
 }
 
-class SQLiteBlobJson<T = unknown> extends SQLiteColumnType<T, T, T, Buffer, string> {
+export class SQLiteBlobJson<T = unknown> extends SQLiteColumnType<T, T, T, Buffer, string> {
 	readonly sqlType = "blob";
 
 	fromDriver(input: Buffer): T {
@@ -168,7 +173,7 @@ export function blobJson<T = unknown>(): SQLiteBlobJson<T> {
 
 // Numeric types
 
-class SQLiteNumeric extends SQLiteColumnType<
+export class SQLiteNumeric extends SQLiteColumnType<
 	string,
 	string | number,
 	string | number,
@@ -189,7 +194,7 @@ export function numeric(): SQLiteNumeric {
 	return new SQLiteNumeric();
 }
 
-class SQLiteNumericNumber extends SQLiteColumnType<number, number, number, string, number> {
+export class SQLiteNumericNumber extends SQLiteColumnType<number, number, number, string, number> {
 	readonly sqlType = "numeric";
 
 	fromDriver(input: string): number {
@@ -204,7 +209,7 @@ export function numericNumber(): SQLiteNumericNumber {
 	return new SQLiteNumericNumber();
 }
 
-class SQLiteNumericBigInt extends SQLiteColumnType<
+export class SQLiteNumericBigInt extends SQLiteColumnType<
 	bigint,
 	bigint | number | string,
 	bigint | number | string,

@@ -1,5 +1,8 @@
 import { type Generated } from "kysely";
 
+import { integer, text } from "../schema/sqlite.ts";
+import { createDatabase } from "../schema/table.ts";
+
 export interface User {
 	id: Generated<number>;
 	username: string;
@@ -34,3 +37,29 @@ export interface SeedDB {
 	comments: Comment;
 	profiles: Profile;
 }
+
+export const seedDb = createDatabase("public", {
+	users: {
+		id: integer().generated(),
+		username: text(),
+		email: text(),
+	},
+	posts: {
+		id: integer().generated(),
+		user_id: integer(),
+		title: text(),
+		content: text(),
+	},
+	comments: {
+		id: integer().generated(),
+		post_id: integer(),
+		user_id: integer(),
+		content: text(),
+	},
+	profiles: {
+		id: integer().generated(),
+		user_id: integer(),
+		bio: text().nullable(),
+		avatar_url: text().nullable(),
+	},
+});

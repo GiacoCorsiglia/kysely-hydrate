@@ -47,7 +47,7 @@ export abstract class ColumnType<
 	}
 }
 
-class Nullable<T extends SomeColumnType> extends ColumnType<
+export class Nullable<T extends SomeColumnType> extends ColumnType<
 	T["__select__"] | null,
 	T["__insert__"] | null | undefined,
 	T["__update__"] | null,
@@ -83,7 +83,7 @@ class Nullable<T extends SomeColumnType> extends ColumnType<
 	}
 }
 
-class Generated<T extends SomeColumnType>
+export class Generated<T extends SomeColumnType>
 	extends ColumnType<
 		T["__select__"],
 		T["__insert__"] | undefined,
@@ -114,7 +114,7 @@ class Generated<T extends SomeColumnType>
 	}
 }
 
-class GeneratedAlways<T extends SomeColumnType>
+export class GeneratedAlways<T extends SomeColumnType>
 	extends ColumnType<T["__select__"], never, never, T["__driverType__"], T["__jsonType__"]>
 	implements k.GeneratedAlways<T["__select__"]>
 {
@@ -139,7 +139,7 @@ class GeneratedAlways<T extends SomeColumnType>
 	}
 }
 
-class Never extends ColumnType<never, never, never, never, never> {
+export class Never extends ColumnType<never, never, never, never, never> {
 	readonly dialect: string;
 	readonly sqlType: string;
 

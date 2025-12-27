@@ -2,7 +2,7 @@ import { parse as parsePgArray } from "postgres-array";
 
 import { ColumnType } from "./column-type.ts";
 
-abstract class PgColumnType<
+export abstract class PgColumnType<
 	SelectType,
 	InsertType,
 	UpdateType,
@@ -19,7 +19,7 @@ abstract class PgColumnType<
 
 // Numeric types
 
-class PgBigInt extends PgColumnType<
+export class PgBigInt extends PgColumnType<
 	bigint,
 	bigint | number | string,
 	bigint | number | string,
@@ -37,7 +37,7 @@ export function bigint(): PgBigInt {
 	return new PgBigInt();
 }
 
-class PgBigSerial extends PgColumnType<
+export class PgBigSerial extends PgColumnType<
 	bigint,
 	bigint | number | string | undefined,
 	bigint | number | string,
@@ -55,7 +55,7 @@ export function bigserial(): PgBigSerial {
 	return new PgBigSerial();
 }
 
-class PgInteger extends PgColumnType<number, number, number, number, number> {
+export class PgInteger extends PgColumnType<number, number, number, number, number> {
 	readonly sqlType = "integer";
 }
 
@@ -63,7 +63,7 @@ export function integer(): PgInteger {
 	return new PgInteger();
 }
 
-class PgSerial extends PgColumnType<number, number | undefined, number, number, number> {
+export class PgSerial extends PgColumnType<number, number | undefined, number, number, number> {
 	readonly sqlType = "serial";
 }
 
@@ -71,7 +71,7 @@ export function serial(): PgSerial {
 	return new PgSerial();
 }
 
-class PgSmallInt extends PgColumnType<number, number, number, number, number> {
+export class PgSmallInt extends PgColumnType<number, number, number, number, number> {
 	readonly sqlType = "smallint";
 }
 
@@ -79,7 +79,13 @@ export function smallint(): PgSmallInt {
 	return new PgSmallInt();
 }
 
-class PgSmallSerial extends PgColumnType<number, number | undefined, number, number, number> {
+export class PgSmallSerial extends PgColumnType<
+	number,
+	number | undefined,
+	number,
+	number,
+	number
+> {
 	readonly sqlType = "smallserial";
 }
 
@@ -87,7 +93,7 @@ export function smallserial(): PgSmallSerial {
 	return new PgSmallSerial();
 }
 
-class PgReal extends PgColumnType<number, number, number, number, number> {
+export class PgReal extends PgColumnType<number, number, number, number, number> {
 	readonly sqlType = "real";
 }
 
@@ -95,7 +101,7 @@ export function real(): PgReal {
 	return new PgReal();
 }
 
-class PgDoublePrecision extends PgColumnType<number, number, number, number, number> {
+export class PgDoublePrecision extends PgColumnType<number, number, number, number, number> {
 	readonly sqlType = "double precision";
 }
 
@@ -108,7 +114,13 @@ export interface PgNumericConfig {
 	scale?: number;
 }
 
-class PgNumeric extends PgColumnType<string, string | number, string | number, string, string> {
+export class PgNumeric extends PgColumnType<
+	string,
+	string | number,
+	string | number,
+	string,
+	string
+> {
 	readonly precision: number | undefined;
 	readonly scale: number | undefined;
 
@@ -137,7 +149,7 @@ export const decimal = numeric;
 
 // Boolean type
 
-class PgBoolean extends PgColumnType<boolean, boolean, boolean, boolean, boolean> {
+export class PgBoolean extends PgColumnType<boolean, boolean, boolean, boolean, boolean> {
 	readonly sqlType = "boolean";
 }
 
@@ -147,7 +159,7 @@ export function boolean(): PgBoolean {
 
 // String types
 
-class PgText extends PgColumnType<string, string, string, string, string> {
+export class PgText extends PgColumnType<string, string, string, string, string> {
 	readonly sqlType = "text";
 }
 
@@ -159,7 +171,7 @@ export interface PgVarcharConfig {
 	length?: number;
 }
 
-class PgVarchar extends PgColumnType<string, string, string, string, string> {
+export class PgVarchar extends PgColumnType<string, string, string, string, string> {
 	readonly length: number | undefined;
 
 	constructor(config?: PgVarcharConfig) {
@@ -180,7 +192,7 @@ export interface PgCharConfig {
 	length?: number;
 }
 
-class PgChar extends PgColumnType<string, string, string, string, string> {
+export class PgChar extends PgColumnType<string, string, string, string, string> {
 	readonly length: number | undefined;
 
 	constructor(config?: PgCharConfig) {
@@ -199,7 +211,13 @@ export function char(config?: PgCharConfig): PgChar {
 
 // Date/Time types
 
-class PgDate extends PgColumnType<Date, Date | string, Date | string, string | Date, string> {
+export class PgDate extends PgColumnType<
+	Date,
+	Date | string,
+	Date | string,
+	string | Date,
+	string
+> {
 	readonly sqlType = "date";
 
 	fromDriver(input: string | Date): Date {
@@ -225,7 +243,13 @@ export interface PgTimestampConfig {
 	withTimezone?: boolean;
 }
 
-class PgTimestamp extends PgColumnType<Date, Date | string, Date | string, string | Date, string> {
+export class PgTimestamp extends PgColumnType<
+	Date,
+	Date | string,
+	Date | string,
+	string | Date,
+	string
+> {
 	readonly precision: Precision | undefined;
 	readonly withTimezone: boolean;
 
@@ -261,7 +285,7 @@ export interface PgTimeConfig {
 	withTimezone?: boolean;
 }
 
-class PgTime extends PgColumnType<string, string, string, string, string> {
+export class PgTime extends PgColumnType<string, string, string, string, string> {
 	readonly precision: Precision | undefined;
 	readonly withTimezone: boolean;
 
@@ -301,7 +325,7 @@ export interface PgIntervalConfig {
 	precision?: Precision;
 }
 
-class PgInterval extends PgColumnType<string, string, string, string, string> {
+export class PgInterval extends PgColumnType<string, string, string, string, string> {
 	readonly fields: IntervalFields | undefined;
 	readonly precision: Precision | undefined;
 
@@ -324,7 +348,7 @@ export function interval(config?: PgIntervalConfig): PgInterval {
 
 // JSON types
 
-class PgJson<T = unknown> extends PgColumnType<T, T, T, T | string, T | string> {
+export class PgJson<T = unknown> extends PgColumnType<T, T, T, T | string, T | string> {
 	readonly sqlType = "json";
 
 	fromDriver(input: T | string): T {
@@ -343,7 +367,7 @@ export function json<T = unknown>(): PgJson<T> {
 	return new PgJson<T>();
 }
 
-class PgJsonb<T = unknown> extends PgColumnType<T, T, T, T | string, T | string> {
+export class PgJsonb<T = unknown> extends PgColumnType<T, T, T, T | string, T | string> {
 	readonly sqlType = "jsonb";
 
 	fromDriver(input: T | string): T {
@@ -364,7 +388,7 @@ export function jsonb<T = unknown>(): PgJsonb<T> {
 
 // UUID type
 
-class PgUuid extends PgColumnType<string, string, string, string, string> {
+export class PgUuid extends PgColumnType<string, string, string, string, string> {
 	readonly sqlType = "uuid";
 }
 
@@ -374,7 +398,7 @@ export function uuid(): PgUuid {
 
 // Network address types
 
-class PgCidr extends PgColumnType<string, string, string, string, string> {
+export class PgCidr extends PgColumnType<string, string, string, string, string> {
 	readonly sqlType = "cidr";
 }
 
@@ -382,7 +406,7 @@ export function cidr(): PgCidr {
 	return new PgCidr();
 }
 
-class PgInet extends PgColumnType<string, string, string, string, string> {
+export class PgInet extends PgColumnType<string, string, string, string, string> {
 	readonly sqlType = "inet";
 }
 
@@ -390,7 +414,7 @@ export function inet(): PgInet {
 	return new PgInet();
 }
 
-class PgMacaddr extends PgColumnType<string, string, string, string, string> {
+export class PgMacaddr extends PgColumnType<string, string, string, string, string> {
 	readonly sqlType = "macaddr";
 }
 
@@ -398,7 +422,7 @@ export function macaddr(): PgMacaddr {
 	return new PgMacaddr();
 }
 
-class PgMacaddr8 extends PgColumnType<string, string, string, string, string> {
+export class PgMacaddr8 extends PgColumnType<string, string, string, string, string> {
 	readonly sqlType = "macaddr8";
 }
 
@@ -415,7 +439,7 @@ interface PgEnum<TValues extends readonly string[]> {
 	readonly schema: string | undefined;
 }
 
-class PgEnumColumn<TValues extends readonly string[]> extends PgColumnType<
+export class PgEnumColumn<TValues extends readonly string[]> extends PgColumnType<
 	TValues[number],
 	TValues[number],
 	TValues[number],
@@ -457,7 +481,7 @@ export function pgEnum<const TValues extends readonly string[]>(
 
 // Array type
 
-class PgArray<SelectType, InsertType, UpdateType, DriverType, JsonType> extends PgColumnType<
+export class PgArray<SelectType, InsertType, UpdateType, DriverType, JsonType> extends PgColumnType<
 	SelectType[],
 	InsertType[],
 	UpdateType[],
