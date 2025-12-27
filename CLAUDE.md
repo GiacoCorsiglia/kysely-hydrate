@@ -29,4 +29,3 @@ When defining nested collections, three modes are supported:
 
 - Existing tests are NOT good examples to follow.
 - The `nest.ts` file should be ignored as it is an older approach.
-- The `mappable-expression.ts` should be ignored as it is still experimental.

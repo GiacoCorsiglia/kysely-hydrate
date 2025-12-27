@@ -11,10 +11,12 @@ import {
 	WildcardSelectionError,
 } from "./errors.ts";
 
+type MapFn = (input: any) => unknown;
+
 export type Provenance =
-	| { type: "COLUMN"; table: string; column: string; columnType: SomeColumnType }
-	| { type: "DERIVED" }
-	| { type: "UNRESOLVED" };
+	| { type: "COLUMN"; table: string; column: string; columnType: SomeColumnType; mapFns: MapFn[] }
+	| { type: "DERIVED"; mapFns: MapFn[] }
+	| { type: "UNRESOLVED"; mapFns: MapFn[] };
 
 type SourceDefinition =
 	| { kind: "TABLE"; node: k.TableNode }
@@ -24,6 +26,7 @@ type SourceDefinition =
 type GlobalContext = {
 	ctes: Map<string, k.CommonTableExpressionNode>;
 	database: Database;
+	mappedNodes: WeakMap<k.OperationNode, MapFn>;
 };
 
 type LocalScope = Map<string, SourceDefinition>;
@@ -121,6 +124,7 @@ function expandSelectAll(
 						table: fullTableName,
 						column: columnName,
 						columnType,
+						mapFns: [],
 					});
 				}
 			}
@@ -150,6 +154,7 @@ function expandSelectAll(
 							table: fullTableName,
 							column: columnName,
 							columnType,
+							mapFns: [],
 						});
 					}
 				}
@@ -190,6 +195,14 @@ function traceSelection(
 		const aliasNode = actualSelection as k.AliasNode;
 		const outputKey = (aliasNode.alias as k.IdentifierNode).name;
 		const provenance = traceNode(aliasNode.node, localScope, context);
+
+		// Check if this node has a map function associated with it
+		const mapFn = context.mappedNodes.get(aliasNode.node);
+		if (mapFn) {
+			// Add the map function to the provenance (stacking with any existing maps)
+			provenance.mapFns = [...provenance.mapFns, mapFn];
+		}
+
 		return new Map([[outputKey, provenance]]);
 	}
 
@@ -243,7 +256,7 @@ function traceNode(
 	}
 
 	// Any other node type (functions, literals, expressions) is DERIVED
-	return { type: "DERIVED" };
+	return { type: "DERIVED", mapFns: [] };
 }
 
 function resolveColumn(
@@ -255,14 +268,14 @@ function resolveColumn(
 	if (tableAlias) {
 		const source = localScope.get(tableAlias);
 		if (!source) {
-			return { type: "UNRESOLVED" };
+			return { type: "UNRESOLVED", mapFns: [] };
 		}
 		return traceFromSource(source, columnName, context);
 	}
 
 	// No alias: search all sources
 	if (localScope.size === 0) {
-		return { type: "UNRESOLVED" };
+		return { type: "UNRESOLVED", mapFns: [] };
 	}
 
 	// Optimize for single source.
@@ -289,7 +302,7 @@ function resolveColumn(
 		throw new AmbiguousColumnReferenceError(columnName);
 	}
 
-	return { type: "UNRESOLVED" };
+	return { type: "UNRESOLVED", mapFns: [] };
 }
 
 function traceFromSource(
@@ -307,32 +320,32 @@ function traceFromSource(
 		// Look up the column type from the database schema
 		const tableSchema = context.database[tableName];
 		if (!tableSchema) {
-			return { type: "UNRESOLVED" };
+			return { type: "UNRESOLVED", mapFns: [] };
 		}
 
 		const columnType = tableSchema.$columns[columnName];
 		if (!columnType) {
-			return { type: "UNRESOLVED" };
+			return { type: "UNRESOLVED", mapFns: [] };
 		}
 
-		return { type: "COLUMN", table: fullTableName, column: columnName, columnType };
+		return { type: "COLUMN", table: fullTableName, column: columnName, columnType, mapFns: [] };
 	}
 
 	if (source.kind === "SUBQUERY") {
 		const subResult = traceSelectQuery(source.node, context);
-		return subResult.get(columnName) || { type: "UNRESOLVED" };
+		return subResult.get(columnName) || { type: "UNRESOLVED", mapFns: [] };
 	}
 
 	if (source.kind === "CTE") {
 		const cte = context.ctes.get(source.name);
 		if (!cte || !cte.expression) {
-			return { type: "UNRESOLVED" };
+			return { type: "UNRESOLVED", mapFns: [] };
 		}
 		const subResult = traceSelectQuery(cte.expression as k.SelectQueryNode, context);
-		return subResult.get(columnName) || { type: "UNRESOLVED" };
+		return subResult.get(columnName) || { type: "UNRESOLVED", mapFns: [] };
 	}
 
-	return { type: "UNRESOLVED" };
+	return { type: "UNRESOLVED", mapFns: [] };
 }
 
 function traceSelections(
@@ -462,6 +475,7 @@ const tracers: {
 export function traceLineage(
 	node: k.RootOperationNode,
 	database: Database,
+	mappedNodes: WeakMap<k.OperationNode, MapFn> = new WeakMap(),
 ): Map<string, Provenance> {
 	const tracer = tracers[node.kind];
 	if (!tracer) {
@@ -471,6 +485,7 @@ export function traceLineage(
 	const context: GlobalContext = {
 		ctes: new Map(),
 		database,
+		mappedNodes,
 	};
 
 	return tracer(node as never, context);

@@ -8,6 +8,7 @@ import {
 } from "kysely";
 
 import { type Provenance, traceLineage } from "./helpers/scope-resolver.ts";
+import { getMappedNodes } from "./mapped-expression.ts";
 import { type Database } from "./schema/table.ts";
 
 export class HydratePlugin implements KyselyPlugin {
@@ -19,7 +20,8 @@ export class HydratePlugin implements KyselyPlugin {
 	}
 
 	transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
-		const lineage = traceLineage(args.node, this.#database);
+		const mappedNodes = getMappedNodes();
+		const lineage = traceLineage(args.node, this.#database, mappedNodes);
 		this.#lineageCache.set(args.queryId, lineage);
 		return args.node;
 	}
@@ -39,11 +41,24 @@ export class HydratePlugin implements KyselyPlugin {
 				for (const [key, value] of Object.entries(row)) {
 					const provenance = lineage.get(key);
 
-					if (provenance?.type === "COLUMN") {
-						transformed[key] = provenance.columnType.fromDriver(value);
-					} else {
+					if (!provenance) {
 						transformed[key] = value;
+						continue;
 					}
+
+					let transformedValue = value;
+
+					// Apply fromDriver first if this is a COLUMN
+					if (provenance.type === "COLUMN") {
+						transformedValue = provenance.columnType.fromDriver(transformedValue);
+					}
+
+					// Then apply any map functions in order
+					for (const mapFn of provenance.mapFns) {
+						transformedValue = mapFn(transformedValue);
+					}
+
+					transformed[key] = transformedValue;
 				}
 
 				return transformed;

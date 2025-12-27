@@ -16,7 +16,7 @@ function getQueryNode(query: k.SelectQueryBuilder<any, any, any>): k.SelectQuery
 function col(
 	table: string,
 	column: string,
-): { type: "COLUMN"; table: string; column: string; columnType: SomeColumnType } {
+): { type: "COLUMN"; table: string; column: string; columnType: SomeColumnType; mapFns: any[] } {
 	const tableName = table.includes(".") ? table.split(".")[1]! : table;
 	const tableSchema = (seedDb as any)[tableName];
 	if (!tableSchema) {
@@ -26,7 +26,7 @@ function col(
 	if (!columnType) {
 		throw new Error(`Column ${column} not found in table ${tableName}`);
 	}
-	return { type: "COLUMN", table, column, columnType };
+	return { type: "COLUMN", table, column, columnType, mapFns: [] };
 }
 
 // Basic single-table queries
@@ -146,7 +146,7 @@ test("derived: function call returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("derived: arithmetic expression returns DERIVED", () => {
@@ -154,7 +154,7 @@ test("derived: arithmetic expression returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["double_id", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["double_id", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("derived: literal value returns DERIVED", () => {
@@ -162,7 +162,7 @@ test("derived: literal value returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["literal", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["literal", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // Subqueries
@@ -200,7 +200,7 @@ test("subquery: derived column breaks lineage", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // CTEs
@@ -381,7 +381,7 @@ test("case: simple case expression returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["category", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["category", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // COALESCE
@@ -390,7 +390,7 @@ test("coalesce: coalesce expression returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["name", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["name", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // Aggregates
@@ -399,7 +399,7 @@ test("aggregate: count(*) returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["total", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["total", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("aggregate: count(column) returns DERIVED", () => {
@@ -407,7 +407,7 @@ test("aggregate: count(column) returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["user_count", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["user_count", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("aggregate: sum with column returns DERIVED", () => {
@@ -415,7 +415,7 @@ test("aggregate: sum with column returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["total_views", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["total_views", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("aggregate: grouped query with column and aggregate", () => {
@@ -430,7 +430,7 @@ test("aggregate: grouped query with column and aggregate", () => {
 		result,
 		new Map<string, Provenance>([
 			["user_id", col("posts", "user_id")],
-			["post_count", { type: "DERIVED" }],
+			["post_count", { type: "DERIVED", mapFns: [] }],
 		]),
 	);
 });
@@ -459,7 +459,7 @@ test("subquery: scalar subquery in select list", () => {
 		result,
 		new Map<string, Provenance>([
 			["id", col("posts", "id")],
-			["author_name", { type: "DERIVED" }],
+			["author_name", { type: "DERIVED", mapFns: [] }],
 		]),
 	);
 
@@ -518,7 +518,7 @@ test("mixed: column with literal in expression", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["next_id", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["next_id", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("mixed: multiple columns with derived in same select", () => {
@@ -533,7 +533,7 @@ test("mixed: multiple columns with derived in same select", () => {
 		new Map<string, Provenance>([
 			["id", col("users", "id")],
 			["username", col("users", "username")],
-			["upper_email", { type: "DERIVED" }],
+			["upper_email", { type: "DERIVED", mapFns: [] }],
 		]),
 	);
 });
@@ -544,7 +544,7 @@ test("unresolved: nonexistent table reference", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["id", { type: "UNRESOLVED" }]]));
+	assert.deepStrictEqual(result, new Map([["id", { type: "UNRESOLVED", mapFns: [] }]]));
 });
 
 test("unresolved: column from no sources", () => {
@@ -554,7 +554,7 @@ test("unresolved: column from no sources", () => {
 	const result = traceLineage(node, seedDb);
 
 	// This should be UNRESOLVED since there's no way to resolve it
-	assert.deepStrictEqual(result, new Map([["nonexistent", { type: "UNRESOLVED" }]]));
+	assert.deepStrictEqual(result, new Map([["nonexistent", { type: "UNRESOLVED", mapFns: [] }]]));
 });
 
 // Multiple joins with mixed aliasing
@@ -741,7 +741,7 @@ test("lateral: lateral join with aggregation", () => {
 		new Map<string, Provenance>([
 			["id", col("users", "id")],
 			["username", col("users", "username")],
-			["post_count", { type: "DERIVED" }],
+			["post_count", { type: "DERIVED", mapFns: [] }],
 		]),
 	);
 });
@@ -804,7 +804,7 @@ test("lateral: lateral join with derived column", () => {
 		result,
 		new Map<string, Provenance>([
 			["id", col("users", "id")],
-			["upper_title", { type: "DERIVED" }],
+			["upper_title", { type: "DERIVED", mapFns: [] }],
 		]),
 	);
 });
@@ -845,7 +845,7 @@ test("cte: cte with derived column breaks lineage", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["upper_name", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // Subquery with join inside
@@ -895,7 +895,7 @@ test("returning: update with expression in returning", () => {
 	const node = query.toOperationNode() as k.UpdateQueryNode;
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["email", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["email", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // Empty/minimal queries
@@ -937,7 +937,7 @@ test("window: window function returns DERIVED", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["row_num", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["row_num", { type: "DERIVED", mapFns: [] }]]));
 });
 
 test("window: window function with partition by", () => {
@@ -947,7 +947,7 @@ test("window: window function with partition by", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["post_rank", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["post_rank", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // Type casts
@@ -956,7 +956,7 @@ test("cast: explicit type cast", () => {
 	const node = getQueryNode(query);
 	const result = traceLineage(node, seedDb);
 
-	assert.deepStrictEqual(result, new Map([["id_str", { type: "DERIVED" }]]));
+	assert.deepStrictEqual(result, new Map([["id_str", { type: "DERIVED", mapFns: [] }]]));
 });
 
 // Multiple table sources without join
@@ -992,4 +992,242 @@ test("from: multiple tables with qualified unique columns", () => {
 			["title", col("posts", "title")],
 		]),
 	);
+});
+
+// Map function tests
+import { getMappedNodes, map } from "../mapped-expression.ts";
+
+test("mapFns: simple map on column reference", () => {
+	const mapFn = (x: any) => x;
+	const query = db.selectFrom("users").select((eb) => [map(eb.ref("id"), mapFn).as("mapped_id")]);
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("mapped_id");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 1);
+		assert.strictEqual(provenance.mapFns[0], mapFn);
+	}
+});
+
+test("mapFns: map on derived expression", () => {
+	const mapFn = (x: any) => x;
+	const query = db
+		.selectFrom("users")
+		.select(() => [map(k.sql<number>`COUNT(*)`, mapFn).as("mapped_count")]);
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("mapped_count");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "DERIVED");
+	assert.strictEqual(provenance.mapFns.length, 1);
+	assert.strictEqual(provenance.mapFns[0], mapFn);
+});
+
+test("mapFns: stacks maps through subquery", () => {
+	const mapFn1 = (x: any) => x;
+	const mapFn2 = (x: any) => x;
+
+	const inner = db
+		.selectFrom("users")
+		.select((eb) => [map(eb.ref("id"), mapFn1).as("mapped_id")])
+		.as("inner");
+
+	const query = db
+		.selectFrom(inner)
+		.select((eb) => [map(eb.ref("inner.mapped_id"), mapFn2).as("double_mapped")]);
+
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("double_mapped");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 2);
+		assert.strictEqual(provenance.mapFns[0], mapFn1);
+		assert.strictEqual(provenance.mapFns[1], mapFn2);
+	}
+});
+
+test("mapFns: stacks maps through CTE", () => {
+	const mapFn1 = (x: any) => x;
+	const mapFn2 = (x: any) => x;
+
+	const query = db
+		.with("cte", (db) =>
+			db.selectFrom("users").select((eb) => [map(eb.ref("id"), mapFn1).as("mapped_id")]),
+		)
+		.selectFrom("cte")
+		.select((eb) => [map(eb.ref("cte.mapped_id"), mapFn2).as("double_mapped")]);
+
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("double_mapped");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 2);
+		assert.strictEqual(provenance.mapFns[0], mapFn1);
+		assert.strictEqual(provenance.mapFns[1], mapFn2);
+	}
+});
+
+test("mapFns: preserves through nested subqueries", () => {
+	const mapFn1 = (x: any) => x;
+	const mapFn2 = (x: any) => x;
+	const mapFn3 = (x: any) => x;
+
+	const inner1 = db
+		.selectFrom("users")
+		.select((eb) => [map(eb.ref("id"), mapFn1).as("id1")])
+		.as("inner1");
+
+	const inner2 = db
+		.selectFrom(inner1)
+		.select((eb) => [map(eb.ref("inner1.id1"), mapFn2).as("id2")])
+		.as("inner2");
+
+	const query = db.selectFrom(inner2).select((eb) => [map(eb.ref("inner2.id2"), mapFn3).as("id3")]);
+
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("id3");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 3);
+		assert.strictEqual(provenance.mapFns[0], mapFn1);
+		assert.strictEqual(provenance.mapFns[1], mapFn2);
+		assert.strictEqual(provenance.mapFns[2], mapFn3);
+	}
+});
+
+test("mapFns: unmapped column has empty mapFns", () => {
+	const query = db.selectFrom("users").select("id");
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("id");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 0);
+	}
+});
+
+test("mapFns: mixed mapped and unmapped columns", () => {
+	const mapFn = (x: any) => x;
+	const query = db
+		.selectFrom("users")
+		.select((eb) => ["username", map(eb.ref("id"), mapFn).as("mapped_id")]);
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const usernameProvenance = result.get("username");
+	assert.ok(usernameProvenance);
+	assert.strictEqual(usernameProvenance.type, "COLUMN");
+	if (usernameProvenance.type === "COLUMN") {
+		assert.strictEqual(usernameProvenance.mapFns.length, 0);
+	}
+
+	const idProvenance = result.get("mapped_id");
+	assert.ok(idProvenance);
+	assert.strictEqual(idProvenance.type, "COLUMN");
+	if (idProvenance.type === "COLUMN") {
+		assert.strictEqual(idProvenance.mapFns.length, 1);
+		assert.strictEqual(idProvenance.mapFns[0], mapFn);
+	}
+});
+
+test("mapFns: map on qualified column reference", () => {
+	const mapFn = (x: any) => x;
+	const query = db
+		.selectFrom("users")
+		.select((eb) => [map(eb.ref("users.id"), mapFn).as("mapped_id")]);
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("mapped_id");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 1);
+		assert.strictEqual(provenance.mapFns[0], mapFn);
+	}
+});
+
+test("mapFns: map preserved through table alias", () => {
+	const mapFn = (x: any) => x;
+	const query = db
+		.selectFrom("users as u")
+		.select((eb) => [map(eb.ref("u.id"), mapFn).as("mapped_id")]);
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("mapped_id");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 1);
+		assert.strictEqual(provenance.mapFns[0], mapFn);
+	}
+});
+
+test("mapFns: map on column from joined table", () => {
+	const mapFn = (x: any) => x;
+	const query = db
+		.selectFrom("users")
+		.innerJoin("posts", "posts.user_id", "users.id")
+		.select((eb) => [map(eb.ref("posts.title"), mapFn).as("mapped_title")]);
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("mapped_title");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		assert.strictEqual(provenance.mapFns.length, 1);
+		assert.strictEqual(provenance.mapFns[0], mapFn);
+	}
+});
+
+test("mapFns: composes nested map() calls", () => {
+	const innerMapFn = (x: any) => x + "_inner";
+	const outerMapFn = (x: any) => x + "_outer";
+
+	const query = db
+		.selectFrom("users")
+		.select((eb) => [map(map(eb.ref("id"), innerMapFn), outerMapFn).as("composed_id")]);
+
+	const node = getQueryNode(query);
+	const mappedNodes = getMappedNodes();
+	const result = traceLineage(node, seedDb, mappedNodes);
+
+	const provenance = result.get("composed_id");
+	assert.ok(provenance);
+	assert.strictEqual(provenance.type, "COLUMN");
+	if (provenance.type === "COLUMN") {
+		// Should have a single composed function, not two separate ones
+		assert.strictEqual(provenance.mapFns.length, 1);
+
+		// Verify the function is composed correctly: outer(inner(x))
+		const composedFn = provenance.mapFns[0]!;
+		assert.strictEqual(composedFn("test"), "test_inner_outer");
+	}
 });
