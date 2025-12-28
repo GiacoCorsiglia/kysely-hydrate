@@ -65,9 +65,9 @@ interface Collection<ChildInput, ChildOutput> {
 	 */
 	readonly prefix: string;
 	/**
-	 * The Hydratable to use when hydrating the objects in the nested collection.
+	 * The Hydrator to use when hydrating the objects in the nested collection.
 	 */
-	readonly hydratable: Hydratable<ChildInput, ChildOutput>;
+	readonly hydrator: Hydrator<ChildInput, ChildOutput>;
 }
 
 /**
@@ -138,9 +138,9 @@ type CollectionsMap = Map<string, Collection<any, any>>;
 type AttachedCollectionsMap = Map<string, AttachedCollection<any, any>>;
 
 /**
- * Internal configuration for a Hydratable.
+ * Internal configuration for a Hydrator.
  */
-interface HydratableProps<Input> {
+interface HydratorProps<Input> {
 	/**
 	 * The key(s) to group by for this entity.
 	 * Can be a single key or an array of keys for composite keys.
@@ -170,28 +170,28 @@ interface HydratableProps<Input> {
 }
 
 /**
- * A Hydratable instance or a function that creates one.
- * Used to allow inline Hydratable creation in method calls.
+ * A Hydrator instance or a function that creates one.
+ * Used to allow inline Hydrator creation in method calls.
  */
-type HydratableArg<Input, Output> =
-	| Hydratable<Input, Output>
-	| ((keyBy: typeof createHydratable<Input>) => Hydratable<Input, Output>);
+type HydratorArg<Input, Output> =
+	| Hydrator<Input, Output>
+	| ((keyBy: typeof createHydrator<Input>) => Hydrator<Input, Output>);
 
 /**
- * A Hydratable instance for a child collection or a function that creates one.
+ * A Hydrator instance for a child collection or a function that creates one.
  * The input type is automatically prefixed based on the parent's prefix.
  */
-type ChildHydratableArg<P extends string, ParentInput, ChildOutput> =
-	| Hydratable<SelectAndStripPrefix<P, ParentInput>, ChildOutput>
+type ChildHydratorArg<P extends string, ParentInput, ChildOutput> =
+	| Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>
 	| ((
-			keyBy: typeof createHydratable<SelectAndStripPrefix<P, ParentInput>>,
-	  ) => Hydratable<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
+			keyBy: typeof createHydrator<SelectAndStripPrefix<P, ParentInput>>,
+	  ) => Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
 
-export type { Hydratable };
+export type { Hydrator };
 /**
  * A configuration for how to hydrate flat database rows into a denormalized structure.
  *
- * The Hydratable class provides a fluent API for configuring:
+ * The Hydrator class provides a fluent API for configuring:
  * - Fields to include (with optional transformations)
  * - Extra computed fields
  * - Nested collections (using `has()` methods)
@@ -202,10 +202,10 @@ export type { Hydratable };
  * @template Input - The type of the input data (typically from a database query)
  * @template Output - The type of the hydrated output structure
  */
-class Hydratable<Input, Output> {
-	#props: HydratableProps<Input>;
+class Hydrator<Input, Output> {
+	#props: HydratorProps<Input>;
 
-	constructor(props: HydratableProps<Input>) {
+	constructor(props: HydratorProps<Input>) {
 		this.#props = props;
 	}
 
@@ -218,12 +218,12 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param fields - An object mapping field names to either `true` (include as-is)
 	 *   or a transformation function
-	 * @returns A new Hydratable with the fields configuration merged
+	 * @returns A new Hydrator with the fields configuration merged
 	 */
 	fields<F extends Fields<Input>>(
 		fields: F,
-	): Hydratable<Input, Extend<Output, InferFields<Input, F>>> {
-		return new Hydratable({
+	): Hydrator<Input, Extend<Output, InferFields<Input, F>>> {
+		return new Hydrator({
 			...this.#props,
 
 			fields: addObjectToMap(this.#props.fields, fields),
@@ -235,12 +235,12 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param extras - An object mapping field names to functions that compute
 	 *   the field value from the entire input
-	 * @returns A new Hydratable with the extras configuration merged
+	 * @returns A new Hydrator with the extras configuration merged
 	 */
 	extras<E extends Extras<Input>>(
 		extras: E,
-	): Hydratable<Input, Extend<Output, InferExtras<Input, E>>> {
-		return new Hydratable({
+	): Hydrator<Input, Extend<Output, InferExtras<Input, E>>> {
+		return new Hydrator({
 			...this.#props,
 
 			extras: addObjectToMap(this.#props.extras, extras),
@@ -259,47 +259,47 @@ class Hydratable<Input, Output> {
 	 *   single, or "oneOrThrow" for non-nullable single.
 	 * @param key - The property name for the collection in the output.
 	 * @param prefix - The prefix used in the input data (e.g., "posts$$").
-	 * @param hydratable - The Hydratable configuration for the child entities, or
+	 * @param hydrator - The Hydrator configuration for the child entities, or
 	 *   a function that creates one.
-	 * @returns A new Hydratable with the nested collection added.
+	 * @returns A new Hydrator with the nested collection added.
 	 */
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "many",
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "one",
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: CollectionMode,
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>>;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>>;
 	has<K extends string, ChildOutput>(
 		mode: CollectionMode,
 		key: K,
 		prefix: string,
-		hydratable: ChildHydratableArg<any, Input, ChildOutput>,
-	): Hydratable<Input, any> {
-		return new Hydratable({
+		hydrator: ChildHydratorArg<any, Input, ChildOutput>,
+	): Hydrator<Input, any> {
+		return new Hydrator({
 			...this.#props,
 
 			collections: new Map(this.#props.collections).set(key, {
 				prefix,
 				mode,
-				hydratable: typeof hydratable === "function" ? hydratable(createHydratable) : hydratable,
+				hydrator: typeof hydrator === "function" ? hydrator(createHydrator) : hydrator,
 			} satisfies Collection<any, ChildOutput>),
 		}) as any;
 	}
@@ -309,15 +309,15 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param key - The key name for the collection in the output
 	 * @param prefix - The prefix used in the input data (e.g., "posts$$")
-	 * @param hydratable - The Hydratable configuration for the child entities
-	 * @returns A new Hydratable with the nested collection added
+	 * @param hydrator - The Hydrator configuration for the child entities
+	 * @returns A new Hydrator with the nested collection added
 	 */
 	hasMany<K extends string, P extends string, ChildOutput>(
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput[] }>> {
-		return this.has("many", key, prefix, hydratable) as any;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>> {
+		return this.has("many", key, prefix, hydrator) as any;
 	}
 
 	/**
@@ -325,15 +325,15 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param key - The key name for the entity in the output
 	 * @param prefix - The prefix used in the input data (e.g., "author$$")
-	 * @param hydratable - The Hydratable configuration for the child entity
-	 * @returns A new Hydratable with the nested entity added
+	 * @param hydrator - The Hydrator configuration for the child entity
+	 * @returns A new Hydrator with the nested entity added
 	 */
 	hasOne<K extends string, P extends string, ChildOutput>(
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput | null }>> {
-		return this.has("one", key, prefix, hydratable) as any;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>> {
+		return this.has("one", key, prefix, hydrator) as any;
 	}
 
 	/**
@@ -342,21 +342,21 @@ class Hydratable<Input, Output> {
 	 *
 	 * @param key - The key name for the entity in the output.
 	 * @param prefix - The prefix used in the input data (e.g., "author$$").
-	 * @param hydratable - The Hydratable configuration for the child entity.
-	 * @returns A new Hydratable with the nested entity added.
+	 * @param hydrator - The Hydrator configuration for the child entity.
+	 * @returns A new Hydrator with the nested entity added.
 	 */
 	hasOneOrThrow<K extends string, P extends string, ChildOutput>(
 		key: K,
 		prefix: P,
-		hydratable: ChildHydratableArg<P, Input, ChildOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: ChildOutput }>> {
-		return this.has("oneOrThrow", key, prefix, hydratable) as any;
+		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
+	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>> {
+		return this.has("oneOrThrow", key, prefix, hydrator) as any;
 	}
 
 	/**
 	 * Configures an attached collection that is fetched from an external source.
 	 * The `fetchFn` is called exactly once per hydration with all parent inputs
-	 * to avoid N+1 queries, even when this hydratable is nested within another.
+	 * to avoid N+1 queries, even when this hydrator is nested within another.
 	 *
 	 * For convenience, you may prefer to use the shorthand methods:
 	 * {@link attachMany}, {@link attachOne}, or {@link attachOneOrThrow}.
@@ -370,39 +370,39 @@ class Hydratable<Input, Output> {
 	 *   parent input
 	 * @param keys.parentKey - The key(s) on the parent input to compare with the
 	 *   attached child's key.
-	 * @returns A new Hydratable with the attached collection added.
+	 * @returns A new Hydrator with the attached collection added.
 	 */
 	attach<K extends string, AttachedOutput>(
 		mode: "many",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "one",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, any> {
-		return new Hydratable({
+	): Hydrator<Input, any> {
+		return new Hydrator({
 			...this.#props,
 
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
@@ -421,13 +421,13 @@ class Hydratable<Input, Output> {
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
 	 * @param keys.childKey - The key(s) on the attached output to use for matching to parents.
 	 * @param keys.parentKey - The key(s) on the parent input to compare with the child's key.
-	 * @returns A new Hydratable with the attached collection added.
+	 * @returns A new Hydrator with the attached collection added.
 	 */
 	attachMany<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>> {
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>> {
 		return this.attach("many", key, fetchFn, keys) as any;
 	}
 
@@ -438,13 +438,13 @@ class Hydratable<Input, Output> {
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
 	 * @param keys.childKey - The key(s) on the attached output to use for matching to parents.
 	 * @param keys.ParentKey - The key(s) on the parent input to compare with the child's key.
-	 * @returns A new Hydratable with the attached entity added.
+	 * @returns A new Hydrator with the attached entity added.
 	 */
 	attachOne<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>> {
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>> {
 		return this.attach("one", key, fetchFn, keys) as any;
 	}
 
@@ -456,13 +456,13 @@ class Hydratable<Input, Output> {
 	 * @param fetchFn - A function that fetches and hydrates the attached data
 	 * @param keys.childKey - The key(s) on the attached output to use for matching to parents
 	 * @param keys.parentKey - The key(s) on the parent input to compare with the child's key.
-	 * @returns A new Hydratable with the attached entity added
+	 * @returns A new Hydrator with the attached entity added
 	 */
 	attachOneOrThrow<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydratable<Input, Extend<Output, { [_ in K]: AttachedOutput }>> {
+	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>> {
 		return this.attach("oneOrThrow", key, fetchFn, keys) as any;
 	}
 
@@ -528,7 +528,7 @@ class Hydratable<Input, Output> {
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Recursively fetch nested attach collections (write directly to the same map).
-				collection.hydratable.#fetchAllAttachedCollections(
+				collection.hydrator.#fetchAllAttachedCollections(
 					childPrefix,
 					inputs,
 					attachedDataMap,
@@ -571,7 +571,7 @@ class Hydratable<Input, Output> {
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydratable.#hydrateMany(
+				const collectionOutputs = collection.hydrator.#hydrateMany(
 					childPrefix,
 					inputRows,
 					attachedDataMap,
@@ -685,42 +685,42 @@ class Hydratable<Input, Output> {
 }
 
 /**
- * Creates a new Hydratable---a configuration for how to hydrate an entity into
+ * Creates a new Hydrator---a configuration for how to hydrate an entity into
  * a denormalized structure.
  *
  * @param keyBy - The key(s) to group by for this entity.
  */
-export const createHydratable = <T = {}>(keyBy: KeyBy<NoInfer<T>>): Hydratable<T, {}> =>
-	new Hydratable({ keyBy });
+export const createHydrator = <T = {}>(keyBy: KeyBy<NoInfer<T>>): Hydrator<T, {}> =>
+	new Hydrator({ keyBy });
 
 /**
  * Hydrates an entity or collection of entities into a denormalized structure
- * per the given Hydratable configuration.
+ * per the given Hydrator configuration.
  *
- * You may provide a function as the second argument to create a Hydratable on the fly.
+ * You may provide a function as the second argument to create a Hydrator on the fly.
  *
- * Note: If the Hydratable uses `attachMany` or `attachOne` methods, this function
+ * Note: If the Hydrator uses `attachMany` or `attachOne` methods, this function
  * will return a Promise that must be awaited.
  */
 export function hydrate<Input, Output>(
 	input: readonly Input[],
-	hydratable: HydratableArg<NoInfer<Input>, Output>,
+	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output[]>;
 export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
-	hydratable: HydratableArg<NoInfer<Input>, Output>,
+	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]>;
 export function hydrate<Input, Output>(
 	input: Input,
-	hydratable: HydratableArg<NoInfer<Input>, Output>,
+	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output>;
 export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
-	hydratable: HydratableArg<NoInfer<Input>, Output>,
+	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
-	hydratable = typeof hydratable === "function" ? hydratable(createHydratable) : hydratable;
+	hydrator = typeof hydrator === "function" ? hydrator(createHydrator) : hydrator;
 
-	return hydratable.hydrate(input);
+	return hydrator.hydrate(input);
 }
 
 /**

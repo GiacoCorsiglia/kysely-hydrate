@@ -12,9 +12,9 @@ import {
 	type AttachedKeysArg,
 	type CollectionMode,
 	type FetchFn,
-	createHydratable,
-	type Hydratable,
-} from "./hydratable.ts";
+	createHydrator,
+	type Hydrator,
+} from "./hydrator.ts";
 
 ////////////////////////////////////////////////////////////////////
 // Interfaces.
@@ -816,7 +816,7 @@ type AnyHydratableQueryBuilder = HydratableQueryBuilder<
 interface HydratableQueryBuilderProps {
 	readonly qb: AnySelectQueryBuilder;
 	readonly prefix: string;
-	readonly hydratable: Hydratable<any, any>;
+	readonly hydrator: Hydrator<any, any>;
 }
 
 /**
@@ -894,9 +894,9 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 				.map((key) => [key, true as const]),
 		);
 
-		const hydratableWithSelection = this.#props.hydratable.fields(fields);
+		const hydratorWithSelection = this.#props.hydrator.fields(fields);
 
-		return hydratableWithSelection.hydrate(rows);
+		return hydratorWithSelection.hydrate(rows);
 	}
 
 	async execute(): Promise<any[]> {
@@ -929,7 +929,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 			qb: this.#props.qb,
 			prefix: makePrefix(this.#props.prefix, key),
 
-			hydratable: createHydratable<any>(keyBy),
+			hydrator: createHydrator<any>(keyBy),
 		});
 		const outputNb = jb(inputNb);
 
@@ -938,12 +938,12 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 
 			qb: outputNb.#props.qb,
 
-			hydratable: this.#props.hydratable.has(
+			hydrator: this.#props.hydrator.has(
 				mode,
 				key,
 				// Hydratables do their own job of handling nested prefixes.
 				makePrefix("", key),
-				outputNb.#props.hydratable,
+				outputNb.#props.hydrator,
 			),
 		});
 	}
@@ -980,7 +980,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	) {
 		return new HydratableQueryBuilderImpl({
 			...this.#props,
-			hydratable: this.#props.hydratable.attach(mode, key, fetchFn, keys),
+			hydrator: this.#props.hydrator.attach(mode, key, fetchFn, keys),
 		});
 	}
 
@@ -1010,7 +1010,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 			qb: this.#props.qb.select(prefixedSelections as any),
 
 			// Ensure all selected fields are included in the hydrated output.
-			hydratable: this.#props.hydratable.fields(
+			hydrator: this.#props.hydrator.fields(
 				Object.fromEntries(
 					prefixedSelections.map((selection) => [selection.originalName, true as const]),
 				),
@@ -1086,6 +1086,6 @@ export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 		qb,
 		prefix: "",
 
-		hydratable: createHydratable<any>(keyBy),
+		hydrator: createHydrator<any>(keyBy),
 	});
 }
