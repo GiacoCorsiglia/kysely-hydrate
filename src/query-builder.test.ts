@@ -566,6 +566,52 @@ test("mixing hasOne and hasMany", async () => {
 });
 
 //
+// extras()
+//
+
+test("extras: computes additional fields at root level", async () => {
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.extras({
+			displayName: (row) => `User: ${row.username}`,
+			idSquared: (row) => row.id * row.id,
+		})
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.displayName, "User: bob");
+	assert.strictEqual(users[0]?.idSquared, 4);
+});
+
+test("extras: work with nested collections", async () => {
+	const users = await hydrateQuery(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id")
+					.select(["posts.id", "posts.title"])
+					.extras({
+						titleUpper: (row) => row.title.toUpperCase(),
+						postNumber: (row) => `Post #${row.id}`,
+					}),
+			"id",
+		)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.posts.length, 4);
+	assert.strictEqual(users[0]?.posts[0]?.titleUpper, "POST 1");
+	assert.strictEqual(users[0]?.posts[0]?.postNumber, "Post #1");
+});
+
+//
 // Join Types
 //
 

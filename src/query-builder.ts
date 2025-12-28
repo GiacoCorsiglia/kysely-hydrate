@@ -11,7 +11,9 @@ import { type Extend, type KeyBy } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
 	type CollectionMode,
+	type Extras,
 	type FetchFn,
+	type InferExtras,
 	createHydrator,
 	type Hydrator,
 } from "./hydrator.ts";
@@ -103,6 +105,43 @@ interface HydratableQueryBuilder<
 		/* LocalRow:    */ LocalRow,
 		// TODO: This extension might be wrong!
 		/* HydratedRow: */ Extend<NewQueryRow, HydratedRow>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+
+	/**
+	 * Configures extra computed fields to add to the hydrated output.
+	 * Each extra is a function that receives the full row (with prefixed columns
+	 * available as accessors) and returns a computed value.
+	 *
+	 * ### Examples
+	 *
+	 * ```ts
+	 * const users = await hydrateQuery(
+	 *   db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
+	 *   "id",
+	 * )
+	 *   .extras({
+	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
+	 *   })
+	 *   .execute();
+	 * // Result: [{ id: 1, firstName: "Alice", lastName: "Smith", fullName: "Alice Smith" }]
+	 * ```
+	 *
+	 * @param extras - An object mapping field names to functions that compute
+	 *   the field value from the entire row.
+	 * @returns A new HydratableQueryBuilder with the extras applied.
+	 */
+	extras<E extends Extras<LocalRow>>(
+		extras: E,
+	): HydratableQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ Extend<HydratedRow, InferExtras<LocalRow, E>>,
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
 	>;
@@ -872,6 +911,13 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 
 	toQuery(): AnySelectQueryBuilder {
 		return this.#props.qb;
+	}
+
+	extras(extras: Extras<any>) {
+		return new HydratableQueryBuilderImpl({
+			...this.#props,
+			hydrator: this.#props.hydrator.extras(extras),
+		});
 	}
 
 	#hydrate(rows: object[]): object[];

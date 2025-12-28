@@ -9,7 +9,8 @@
       "Bash(find:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(npx tsgo:*)"
+      "Bash(npx tsgo:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []

@@ -31,13 +31,13 @@ type InferFields<Input, F extends Fields<Input>> = {
  * Configuration for extra fields to compute from the entire input.
  * Each extra is a function that receives the full input and returns a computed value.
  */
-type Extras<Input> = Record<string, (input: Input) => unknown>;
+export type Extras<Input> = Record<string, (input: Input) => unknown>;
 
 /**
  * Infers the output type for extras based on the Extras configuration.
  * Uses the return type of each extra function.
  */
-type InferExtras<Input, E extends Extras<Input>> = {
+export type InferExtras<Input, E extends Extras<Input>> = {
 	[K in keyof E]: ReturnType<E[K]>;
 };
 
