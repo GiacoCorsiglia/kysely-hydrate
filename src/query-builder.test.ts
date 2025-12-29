@@ -353,7 +353,7 @@ test("attachMany: fetches and attaches related entities", async () => {
 					.where("posts.user_id", "in", userIds)
 					.execute();
 			},
-			{ childKey: "user_id" },
+			{ matchChild: "user_id" },
 		)
 		.execute();
 
@@ -377,7 +377,7 @@ test("attachMany: calls fetchFn exactly once", async () => {
 					.where("posts.user_id", "in", userIds)
 					.execute();
 			},
-			{ childKey: "user_id" },
+			{ matchChild: "user_id" },
 		)
 		.execute();
 
@@ -400,7 +400,7 @@ test("attachMany: returns empty array when no matches", async () => {
 					.where("posts.user_id", "in", userIds)
 					.execute();
 			},
-			{ childKey: "user_id" },
+			{ matchChild: "user_id" },
 		)
 		.execute();
 
@@ -427,7 +427,7 @@ test("attachOne: returns first match or null", async () => {
 					.where("posts.user_id", "in", userIds)
 					.execute();
 			},
-			{ childKey: "user_id" },
+			{ matchChild: "user_id" },
 		)
 		.execute();
 
@@ -455,7 +455,7 @@ test("attachOneOrThrow: returns entity when exists", async () => {
 					.where("posts.user_id", "in", userIds)
 					.execute();
 			},
-			{ childKey: "user_id" },
+			{ matchChild: "user_id" },
 		)
 		.execute();
 
@@ -476,7 +476,7 @@ test("attachOneOrThrow: throws when no match exists", async () => {
 						.where("posts.user_id", "in", userIds)
 						.execute();
 				},
-				{ childKey: "user_id" },
+				{ matchChild: "user_id" },
 			)
 			.execute();
 	}, ExpectedOneItemError);
@@ -523,7 +523,7 @@ test("complex nesting: hasMany with nested hasMany and attach", async () => {
 
 							return []; // No tags in this fixture
 						},
-						{ childKey: "post_id", parentKey: "id" },
+						{ matchChild: "post_id", toParent: "id" },
 					),
 			"id",
 		)
