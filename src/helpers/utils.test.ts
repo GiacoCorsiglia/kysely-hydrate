@@ -60,28 +60,55 @@ test("isIterable: returns false for plain object", () => {
 // addObjectToMap tests
 test("addObjectToMap: creates new Map from undefined", () => {
 	const result = addObjectToMap(undefined, { a: 1, b: 2 });
-	assert.deepStrictEqual(result, new Map([["a", 1], ["b", 2]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([
+			["a", 1],
+			["b", 2],
+		]),
+	);
 });
 
 test("addObjectToMap: clones existing Map", () => {
 	const original = new Map([["x", 10]]);
 	const result = addObjectToMap(original, { a: 1 });
 
-	assert.deepStrictEqual(result, new Map([["x", 10], ["a", 1]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([
+			["x", 10],
+			["a", 1],
+		]),
+	);
 	assert.notStrictEqual(result, original);
 	assert.strictEqual(original.size, 1);
 });
 
 test("addObjectToMap: skips undefined values", () => {
 	const result = addObjectToMap(undefined, { a: 1, b: undefined, c: 3 });
-	assert.deepStrictEqual(result, new Map([["a", 1], ["c", 3]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([
+			["a", 1],
+			["c", 3],
+		]),
+	);
 });
 
 test("addObjectToMap: overwrites existing keys", () => {
-	const original = new Map([["a", 1], ["b", 2]]);
+	const original = new Map([
+		["a", 1],
+		["b", 2],
+	]);
 	const result = addObjectToMap(original, { a: 999 });
 
-	assert.deepStrictEqual(result, new Map([["a", 999], ["b", 2]]));
+	assert.deepStrictEqual(
+		result,
+		new Map([
+			["a", 999],
+			["b", 2],
+		]),
+	);
 	assert.strictEqual(original.get("a"), 1);
 });
 

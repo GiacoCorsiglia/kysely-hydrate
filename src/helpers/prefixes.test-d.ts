@@ -50,9 +50,9 @@ import {
 
 	type Prefixed = ApplyPrefixes<"posts$$", Post>;
 	expectTypeOf<Prefixed>().toEqualTypeOf<{
-		"posts$$id": number;
-		"posts$$title": string;
-		"posts$$content": string;
+		posts$$id: number;
+		posts$$title: string;
+		posts$$content: string;
 	}>();
 
 	type EmptyPrefix = ApplyPrefixes<"", Post>;
@@ -71,9 +71,9 @@ import {
 	interface Row {
 		id: number;
 		name: string;
-		"posts$$id": number | null;
-		"posts$$title": string | null;
-		"comments$$id": number | null;
+		posts$$id: number | null;
+		posts$$title: string | null;
+		comments$$id: number | null;
 	}
 
 	type PostFields = SelectAndStripPrefix<"posts$$", Row>;
@@ -91,8 +91,8 @@ import {
 	expectTypeOf<NoPrefix>().toEqualTypeOf<{
 		id: number;
 		name: string;
-		"posts$$id": number | null;
-		"posts$$title": string | null;
-		"comments$$id": number | null;
+		posts$$id: number | null;
+		posts$$title: string | null;
+		comments$$id: number | null;
 	}>();
 }
