@@ -11,6 +11,7 @@ import { type Extend, type KeyBy, type StrictSubset } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
 	type CollectionMode,
+	DEFAULT_KEY_BY,
 	ensureFields,
 	type Extras,
 	type FetchFn,
@@ -19,25 +20,8 @@ import {
 	type InferFields,
 	createHydrator,
 	type Hydrator,
+	type InputWithDefaultKey,
 } from "./hydrator.ts";
-
-////////////////////////////////////////////////////////////////////
-// Optional keyBy when "id" is a valid key.
-////////////////////////////////////////////////////////////////////
-
-/**
- * The default key used for deduplication when not explicitly specified.
- * Only used when the row type has an "id" property.
- */
-const DEFAULT_KEY_BY = "id";
-
-/**
- * Interface representing a row that has the default key property.
- * Used to constrain overloads where keyBy can be omitted.
- */
-interface RowWithId {
-	[DEFAULT_KEY_BY]: any;
-}
 
 ////////////////////////////////////////////////////////////////////
 // Interfaces.
@@ -398,7 +382,7 @@ interface HydratedQueryBuilder<
 		JoinedQueryTB extends keyof JoinedQueryDB,
 		JoinedQueryRow,
 		NestedLocalDB,
-		NestedLocalRow extends RowWithId,
+		NestedLocalRow extends InputWithDefaultKey,
 		NestedHydratedRow,
 	>(
 		key: K,
@@ -531,7 +515,7 @@ interface HydratedQueryBuilder<
 		JoinedQueryTB extends keyof JoinedQueryDB,
 		JoinedQueryRow,
 		NestedLocalDB,
-		NestedLocalRow extends RowWithId,
+		NestedLocalRow extends InputWithDefaultKey,
 		NestedHydratedRow,
 		IsChildNullable extends boolean,
 	>(
@@ -636,7 +620,7 @@ interface HydratedQueryBuilder<
 		JoinedQueryTB extends keyof JoinedQueryDB,
 		JoinedQueryRow,
 		NestedLocalDB,
-		NestedLocalRow extends RowWithId,
+		NestedLocalRow extends InputWithDefaultKey,
 		NestedHydratedRow,
 	>(
 		key: K,
@@ -1415,7 +1399,11 @@ export function hydrate<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	/* HasJoin:     */ false
 >;
 // Overload 2: keyBy omitted - row must have 'id'
-export function hydrate<QueryDB, QueryTB extends keyof QueryDB, QueryRow extends RowWithId>(
+export function hydrate<
+	QueryDB,
+	QueryTB extends keyof QueryDB,
+	QueryRow extends InputWithDefaultKey,
+>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 ): HydratedQueryBuilder<
 	/* Prefix:      */ "",

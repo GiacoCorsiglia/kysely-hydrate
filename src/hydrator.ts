@@ -13,6 +13,24 @@ import {
 	type KeyBy,
 } from "./helpers/utils.ts";
 
+////////////////////////////////////////////////////////////////////
+// Optional keyBy when "id" is a valid key.
+////////////////////////////////////////////////////////////////////
+
+/**
+ * The default key used for deduplication when not explicitly specified.
+ * Only used when the input type has an "id" property.
+ */
+export const DEFAULT_KEY_BY = "id";
+
+/**
+ * Interface representing an input that has the default key property.
+ * Used to constrain overloads where keyBy can be omitted.
+ */
+export interface InputWithDefaultKey {
+	[DEFAULT_KEY_BY]: any;
+}
+
 /**
  * Helper type for a field mapping function.
  */
@@ -185,11 +203,27 @@ interface HydratorProps<Input> {
 }
 
 /**
+ * Type for createHydrator when Input extends InputWithDefaultKey or not.
+ * Allows optional keyBy only if Input extends InputWithDefaultKey.
+ */
+interface CreateHydratorWithoutDefaultKey<Input> {
+	(keyBy: KeyBy<Input>): Hydrator<Input, {}>;
+}
+
+interface CreateHydratorWithDefaultKey<Input> extends CreateHydratorWithoutDefaultKey<Input> {
+	(): Hydrator<Input, {}>;
+}
+
+/**
+ * Type for a createHydrator function scoped to a specific Input type.
+ */
+type CreateHydratorFn<Input> = Input extends InputWithDefaultKey
+	? CreateHydratorWithDefaultKey<Input>
+	: CreateHydratorWithoutDefaultKey<Input>;
+/**
  * A function that creates a Hydrator.
  */
-type HydratorFactory<Input, Output> = (
-	keyBy: typeof createHydrator<Input>,
-) => Hydrator<Input, Output>;
+type HydratorFactory<Input, Output> = (create: CreateHydratorFn<Input>) => Hydrator<Input, Output>;
 
 /**
  * A Hydrator instance or a function that creates one.
@@ -204,7 +238,7 @@ type HydratorArg<Input, Output> = Hydrator<Input, Output> | HydratorFactory<Inpu
 type ChildHydratorArg<P extends string, ParentInput, ChildOutput> =
 	| Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>
 	| ((
-			keyBy: typeof createHydrator<SelectAndStripPrefix<P, ParentInput>>,
+			create: CreateHydratorFn<SelectAndStripPrefix<P, ParentInput>>,
 	  ) => Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
 
 /**
@@ -426,7 +460,7 @@ class Hydrator<Input, Output> {
 			collections: new Map(this.#props.collections).set(key, {
 				prefix,
 				mode,
-				hydrator: typeof hydrator === "function" ? hydrator(createHydrator) : hydrator,
+				hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
 			} satisfies Collection<any, ChildOutput>),
 		}) as any;
 	}
@@ -820,9 +854,16 @@ class Hydrator<Input, Output> {
  * a denormalized structure.
  *
  * @param keyBy - The key(s) to group by for this entity.
+ *   Defaults to "id" if the input type has an "id" property.
  */
-export const createHydrator = <T = {}>(keyBy: KeyBy<NoInfer<T>>): Hydrator<T, {}> =>
-	new Hydrator({ keyBy });
+// Overload 1: keyBy provided - any input type
+export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): Hydrator<T, {}>;
+// Overload 2: keyBy omitted - input must have 'id'
+export function createHydrator<T extends InputWithDefaultKey>(): Hydrator<T, {}>;
+// Implementation
+export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): Hydrator<T, {}> {
+	return new Hydrator({ keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string) });
+}
 
 /**
  * Hydrates an entity or collection of entities into a denormalized structure
@@ -848,7 +889,7 @@ export function hydrateData<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
-	hydrator = typeof hydrator === "function" ? hydrator(createHydrator) : hydrator;
+	hydrator = typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator;
 
 	return hydrator.hydrate(input);
 }

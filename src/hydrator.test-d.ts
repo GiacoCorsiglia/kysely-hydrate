@@ -1,6 +1,6 @@
 import { expectTypeOf } from "expect-type";
 
-import { createHydrator } from "./hydrator.ts";
+import { createHydrator, hydrateData } from "./hydrator.ts";
 
 //
 // Fields: selection and transformation
@@ -697,4 +697,131 @@ import { createHydrator } from "./hydrator.ts";
 
 	// Different keyBy will cause runtime error but not type error
 	// (keyBy is not part of the type signature)
+}
+
+//
+// Default keyBy: omit keyBy when input has 'id' property
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+		email: string;
+	}
+
+	// keyBy omitted - should work when input has 'id'
+	const hydrator1 = createHydrator<User>().fields({ name: true });
+	const result1 = hydrator1.hydrate([] as User[]);
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ name: string }[]>();
+
+	// keyBy required when input doesn't have 'id'
+	interface NoIdUser {
+		userId: number;
+		name: string;
+	}
+
+	// @ts-expect-error - keyBy required when input doesn't have 'id'
+	createHydrator<NoIdUser>();
+
+	// But works with explicit keyBy
+	const hydrator4 = createHydrator<NoIdUser>("userId");
+	const result4 = hydrator4.hydrate([] as NoIdUser[]);
+	expectTypeOf(result4).resolves.toEqualTypeOf<{}[]>();
+}
+
+//
+// Default keyBy with nested hydrators
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	type UserWithPosts = User & {
+		posts$$id: number;
+		posts$$title: string;
+	};
+
+	// Nested collection using default keyBy in factory function
+	const hydrator = createHydrator<UserWithPosts>()
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (create) => create().fields({ id: true, title: true }));
+
+	const result = hydrator.hydrate([] as UserWithPosts[]);
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{ id: number; name: string; posts: { id: number; title: string }[] }[]
+	>();
+}
+
+//
+// hydrateData function with default keyBy
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	// hydrateData with hydrator that uses default keyBy
+	const hydrator = createHydrator<User>().fields({ id: true, name: true });
+	const result1 = hydrateData([] as User[], hydrator);
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; name: string }[]>();
+
+	// hydrateData with inline hydrator factory
+	const result2 = hydrateData([] as User[], (create: typeof createHydrator<User>) =>
+		create().fields({ id: true }),
+	);
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number }[]>();
+}
+
+//
+// Tests: keyBy required when input lacks 'id'
+//
+
+{
+	interface NoIdUser {
+		userId: number;
+		name: string;
+	}
+
+	// @ts-expect-error - createHydrator requires keyBy when input doesn't have 'id'
+	createHydrator<NoIdUser>();
+
+	// Works with explicit keyBy
+	const validHydrator = createHydrator<NoIdUser>("userId").fields({
+		userId: true,
+		name: true,
+	});
+	expectTypeOf(validHydrator.hydrate([] as NoIdUser[])).resolves.toEqualTypeOf<
+		{ userId: number; name: string }[]
+	>();
+
+	// Nested collections also require keyBy when child doesn't have 'id'
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	type UserWithNoIdPosts = User & {
+		posts$$postId: number;
+		posts$$title: string;
+	};
+
+	// @ts-expect-error - nested collection requires keyBy when child doesn't have 'id'
+	createHydrator<UserWithNoIdPosts>().hasMany("posts", "posts$$", (create) => create());
+
+	// Explicit keyBy works for nested collections without 'id'
+	const nestedHydrator = createHydrator<UserWithNoIdPosts>().hasMany("posts", "posts$$", (create) =>
+		create("postId").fields({ postId: true, title: true }),
+	);
+	expectTypeOf(nestedHydrator.hydrate([] as UserWithNoIdPosts[])).resolves.toEqualTypeOf<
+		{ posts: { postId: number; title: string }[] }[]
+	>();
+
+	// @ts-expect-error - hydrateData with inline factory requires keyBy when input doesn't have 'id'
+	hydrateData([] as NoIdUser[], (create: typeof createHydrator<NoIdUser>) => create());
 }

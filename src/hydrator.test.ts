@@ -1210,8 +1210,10 @@ test("extend: merges hasOne collections", async () => {
 		.fields({ id: true, name: true })
 		.hasOne("profile", "profile$$", (h) => h("id").fields({ id: true, bio: true }));
 
-	const otherHydrator = createHydrator<UserWithProfile>("id").hasOne("settings", "settings$$", (h) =>
-		h("id").fields({ id: true, theme: true }),
+	const otherHydrator = createHydrator<UserWithProfile>("id").hasOne(
+		"settings",
+		"settings$$",
+		(h) => h("id").fields({ id: true, theme: true }),
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
@@ -1332,11 +1334,9 @@ test("extend: merges attachOne collections", async () => {
 
 	const baseHydrator = createHydrator<User>("id")
 		.fields({ id: true, name: true })
-		.attachOne(
-			"profile",
-			async () => [{ userId: 1, bio: "Developer" }] as Profile[],
-			{ matchChild: "userId" },
-		);
+		.attachOne("profile", async () => [{ userId: 1, bio: "Developer" }] as Profile[], {
+			matchChild: "userId",
+		});
 
 	const otherHydrator = createHydrator<User>("id").attachOne(
 		"settings",
@@ -1372,11 +1372,9 @@ test("extend: merges attachOneOrThrow collections", async () => {
 
 	const baseHydrator = createHydrator<User>("id")
 		.fields({ id: true, name: true })
-		.attachOneOrThrow(
-			"settings",
-			async () => [{ userId: 1, theme: "dark" }] as Settings[],
-			{ matchChild: "userId" },
-		);
+		.attachOneOrThrow("settings", async () => [{ userId: 1, theme: "dark" }] as Settings[], {
+			matchChild: "userId",
+		});
 
 	const otherHydrator = createHydrator<User>("id").attachOneOrThrow(
 		"preferences",
@@ -1395,4 +1393,153 @@ test("extend: merges attachOneOrThrow collections", async () => {
 			preferences: { userId: 1, language: "en" },
 		},
 	]);
+});
+
+//
+// Default keyBy
+//
+
+test("createHydrator: keyBy defaults to 'id' when input has id", async () => {
+	// keyBy omitted - should default to "id"
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const hydrator = createHydrator<User>().fields({ id: true, name: true });
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	]);
+});
+
+test("hasMany: keyBy defaults to 'id' when nested input has id", async () => {
+	type UserWithPosts = User & {
+		posts$$id: number;
+		posts$$title: string;
+	};
+
+	const data: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 1, posts$$title: "Post 1" },
+		{ id: 1, name: "Alice", posts$$id: 2, posts$$title: "Post 2" },
+		{ id: 2, name: "Bob", posts$$id: 3, posts$$title: "Post 3" },
+	];
+
+	// Both createHydrator and hasMany keyBy omitted
+	const hydrator = createHydrator<UserWithPosts>()
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (create) => create().fields({ id: true, title: true }));
+
+	const result = await hydrateData(data, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.strictEqual(result[0]?.posts.length, 2);
+	assert.deepStrictEqual(result[0]?.posts[0], { id: 1, title: "Post 1" });
+	assert.strictEqual(result[1]?.posts.length, 1);
+	assert.deepStrictEqual(result[1]?.posts[0], { id: 3, title: "Post 3" });
+});
+
+test("hasOne: keyBy defaults to 'id' when nested input has id", async () => {
+	interface Post {
+		id: number;
+		title: string;
+	}
+
+	type PostWithAuthor = Post & {
+		author$$id: number;
+		author$$name: string;
+	};
+
+	const data: PostWithAuthor[] = [{ id: 1, title: "Post 1", author$$id: 1, author$$name: "Alice" }];
+
+	// Both createHydrator and hasOne keyBy omitted
+	const hydrator = createHydrator<PostWithAuthor>()
+		.fields({ id: true, title: true })
+		.hasOne("author", "author$$", (create) => create().fields({ id: true, name: true }));
+
+	const result = await hydrateData(data, hydrator);
+
+	assert.strictEqual(result.length, 1);
+	assert.deepStrictEqual(result[0]?.author, { id: 1, name: "Alice" });
+});
+
+test("hasOneOrThrow: keyBy defaults to 'id' when nested input has id", async () => {
+	type UserWithProfile = User & {
+		profile$$id: number;
+		profile$$bio: string;
+	};
+
+	const data: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: 1, profile$$bio: "Bio for Alice" },
+	];
+
+	// Both createHydrator and hasOneOrThrow keyBy omitted
+	const hydrator = createHydrator<UserWithProfile>()
+		.fields({ id: true, name: true })
+		.hasOneOrThrow("profile", "profile$$", (create) => create().fields({ id: true, bio: true }));
+
+	const result = await hydrateData(data, hydrator);
+
+	assert.strictEqual(result.length, 1);
+	assert.deepStrictEqual(result[0]?.profile, { id: 1, bio: "Bio for Alice" });
+});
+
+test("multiple nested levels: keyBy defaults to 'id' at all levels", async () => {
+	type UserWithPostsAndComments = User & {
+		posts$$id: number;
+		posts$$title: string;
+		posts$$comments$$id: number;
+		posts$$comments$$content: string;
+	};
+
+	const data: UserWithPostsAndComments[] = [
+		{
+			id: 1,
+			name: "Alice",
+			posts$$id: 1,
+			posts$$title: "Post 1",
+			posts$$comments$$id: 1,
+			posts$$comments$$content: "Comment 1",
+		},
+		{
+			id: 1,
+			name: "Alice",
+			posts$$id: 1,
+			posts$$title: "Post 1",
+			posts$$comments$$id: 2,
+			posts$$comments$$content: "Comment 2",
+		},
+		{
+			id: 1,
+			name: "Alice",
+			posts$$id: 2,
+			posts$$title: "Post 2",
+			posts$$comments$$id: 3,
+			posts$$comments$$content: "Comment 3",
+		},
+	];
+
+	// All keyBy parameters omitted
+	const hydrator = createHydrator<UserWithPostsAndComments>()
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (create) =>
+			create()
+				.fields({ id: true, title: true })
+				.hasMany("comments", "comments$$", (create) =>
+					create().fields({ id: true, content: true }),
+				),
+		);
+
+	const result = await hydrateData(data, hydrator);
+
+	assert.strictEqual(result.length, 1);
+	assert.strictEqual(result[0]?.posts.length, 2);
+	assert.strictEqual(result[0]?.posts[0]?.comments.length, 2);
+	assert.deepStrictEqual(result[0]?.posts[0]?.comments[0], { id: 1, content: "Comment 1" });
+	assert.deepStrictEqual(result[0]?.posts[0]?.comments[1], { id: 2, content: "Comment 2" });
+	assert.strictEqual(result[0]?.posts[1]?.comments.length, 1);
+	assert.deepStrictEqual(result[0]?.posts[1]?.comments[0], { id: 3, content: "Comment 3" });
 });
