@@ -699,8 +699,7 @@ export const createHydrator = <T = {}>(keyBy: KeyBy<NoInfer<T>>): Hydrator<T, {}
  *
  * You may provide a function as the second argument to create a Hydrator on the fly.
  *
- * Note: If the Hydrator uses `attachMany` or `attachOne` methods, this function
- * will return a Promise that must be awaited.
+ * The function will return a Promise that resolves to the hydrated output(s).
  */
 export function hydrate<Input, Output>(
 	input: readonly Input[],
