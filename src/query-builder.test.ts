@@ -67,6 +67,120 @@ test("modify: allows modifying underlying query", async () => {
 });
 
 //
+// mapFields
+//
+
+test("mapFields: transforms field values", async () => {
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.mapFields({
+			username: (username) => username.toUpperCase(),
+		})
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[0]?.username, "ALICE");
+});
+
+test("mapFields: leaves unmapped fields unchanged", async () => {
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.mapFields({
+			username: (username) => username.toUpperCase(),
+		})
+		.execute();
+
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[0]?.username, "ALICE");
+	assert.strictEqual(users[0]?.email, "alice@example.com"); // unchanged
+});
+
+test("mapFields: works in nested collections", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id")
+					.select(["posts.id", "posts.title"])
+					.mapFields({
+						title: (title) => title.toUpperCase(),
+					}),
+			"id",
+		)
+		.execute();
+
+	assert.strictEqual(users[0]?.posts.length, 4);
+	assert.strictEqual(users[0]?.posts[0]?.title, "POST 1");
+	assert.strictEqual(users[0]?.posts[0]?.id, 1); // unchanged
+});
+
+//
+// omit
+//
+
+test("omit: removes fields from output", async () => {
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.omit(["email"])
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[0]?.username, "alice");
+	assert.strictEqual("email" in users[0]!, false);
+});
+
+test("omit: works with extras to hide implementation details", async () => {
+	// Select username and email, then use them to compute displayName, but hide email
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.extras({
+			displayName: (row) => `${row.username} <${row.email}>`,
+		})
+		.omit(["email"])
+		.execute();
+
+	assert.strictEqual(users[0]?.displayName, "alice <alice@example.com>");
+	assert.strictEqual("email" in users[0]!, false);
+	// Other fields still present
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[0]?.username, "alice");
+});
+
+test("omit: works in nested collections", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id")
+					.select(["posts.id", "posts.title", "posts.content"])
+					.omit(["content"]),
+			"id",
+		)
+		.execute();
+
+	assert.strictEqual(users[0]?.posts.length, 4);
+	assert.strictEqual(users[0]?.posts[0]?.id, 1);
+	assert.strictEqual(users[0]?.posts[0]?.title, "Post 1");
+	assert.strictEqual("content" in users[0]!.posts[0]!, false);
+});
+
+//
 // hasMany
 //
 

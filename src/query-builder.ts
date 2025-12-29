@@ -11,9 +11,12 @@ import { type Extend, type KeyBy } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
 	type CollectionMode,
+	ensureFields,
 	type Extras,
 	type FetchFn,
+	type FieldMappings,
 	type InferExtras,
+	type InferFields,
 	createHydrator,
 	type Hydrator,
 } from "./hydrator.ts";
@@ -160,6 +163,78 @@ interface HydratedQueryBuilder<
 		/* LocalDB:     */ LocalDB,
 		/* LocalRow:    */ LocalRow,
 		/* HydratedRow: */ Extend<HydratedRow, InferExtras<LocalRow, E>>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+
+	/**
+	 * Transforms already-selected field values in the hydrated output.  Fields
+	 * not mentioned in the mappings will still be included as-is.
+	 *
+	 * ### Examples
+	 *
+	 * ```ts
+	 * const users = await hydrate(
+	 *   db.selectFrom("users").select(["users.id", "users.name"]),
+	 *   "id",
+	 * )
+	 *   .mapFields({
+	 *     name: (name) => name.toUpperCase(),
+	 *   })
+	 *   .execute();
+	 * // Result: [{ id: 1, name: "ALICE" }]
+	 * ```
+	 *
+	 * @param mappings - An object mapping field names to transformation
+	 * functions.
+	 * @returns A new HydratedQueryBuilder with the field transformations applied.
+	 */
+	mapFields<M extends FieldMappings<LocalRow>>(
+		mappings: M,
+	): HydratedQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ Extend<HydratedRow, InferFields<LocalRow, M>>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+
+	/**
+	 * Omits specified fields from the hydrated output.  Useful for excluding
+	 * fields that were selected for internal use (e.g., for extras).
+	 *
+	 * ### Examples
+	 *
+	 * ```ts
+	 * const users = await hydrate(
+	 *   db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
+	 *   "id",
+	 * )
+	 *   .extras({
+	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
+	 *   })
+	 *   .omit(["firstName", "lastName"])
+	 *   .execute();
+	 * // Result: [{ id: 1, fullName: "Alice Smith" }]
+	 * ```
+	 *
+	 * @param keys - Field names to omit from the output.
+	 * @returns A new HydratedQueryBuilder with the fields omitted.
+	 */
+	omit<K extends keyof LocalRow>(
+		keys: readonly K[],
+	): HydratedQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ Omit<HydratedRow, K>,
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
 	>;
@@ -1072,27 +1147,40 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		});
 	}
 
+	mapFields(mappings: FieldMappings<any>): any {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: this.#props.hydrator.fields(mappings),
+		});
+	}
+
+	omit(keys: readonly PropertyKey[]): any {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: this.#props.hydrator.omit(keys),
+		});
+	}
+
 	#hydrate(rows: object[]): object[];
 	#hydrate(rows: object | undefined): object | undefined;
 	#hydrate(rows: object | object[] | undefined): object | object[] | undefined {
 		const isArray = Array.isArray(rows);
 		const firstRow = isArray ? rows[0] : rows;
 
-		if (firstRow === undefined) {
+		if (!firstRow) {
 			return isArray ? [] : undefined;
 		}
 
 		// This dance is necessary to ensure the hydrated result actually includes
 		// the selected columns from the top-level select.
-		const fields: Record<string, true> = Object.fromEntries(
-			Object.keys(firstRow)
-				// To determine if the key is from the top-level selection versus a
-				// nested selection, we simply check if it includes the prefix separator.
-				.filter((key) => !hasAnyPrefix(key))
-				.map((key) => [key, true as const]),
-		);
+		const fieldNames = Object.keys(firstRow)
+			// To determine if the key is from the top-level selection versus a
+			// nested selection, we simply check if it includes the prefix separator.
+			.filter((key) => !hasAnyPrefix(key));
 
-		const hydratorWithSelection = this.#props.hydrator.fields(fields);
+		// Use ensureFields helper to preserve any explicit field mappings/omissions
+		// from `mapFields()` or `omit()`.
+		const hydratorWithSelection = ensureFields(this.#props.hydrator, fieldNames);
 
 		return hydratorWithSelection.hydrate(rows);
 	}
@@ -1106,7 +1194,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	async executeTakeFirst(): Promise<any | undefined> {
 		const result = await this.#props.qb.executeTakeFirst();
 
-		return result === undefined ? undefined : this.#hydrate(result);
+		return result ? this.#hydrate(result) : undefined;
 	}
 
 	async executeTakeFirstOrThrow(

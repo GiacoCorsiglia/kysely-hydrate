@@ -107,6 +107,64 @@ test("extras: work at nested level", async () => {
 	assert.strictEqual(result[0]?.posts[0]?.fullTitle, "Post #10: Post");
 });
 
+test("omit: removes specified fields from output", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id").fields({ id: true, name: true }).omit(["name"]);
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1 }]);
+	assert.strictEqual("name" in result[0]!, false);
+});
+
+test("omit: works with extras to hide implementation details", async () => {
+	interface UserWithNames extends User {
+		firstName: string;
+		lastName: string;
+	}
+
+	const users: UserWithNames[] = [{ id: 1, name: "Alice Smith", firstName: "Alice", lastName: "Smith" }];
+
+	const hydrator = createHydrator<UserWithNames>("id")
+		.fields({ id: true, firstName: true, lastName: true })
+		.extras({
+			fullName: (input) => `${input.firstName} ${input.lastName}`,
+		})
+		.omit(["firstName", "lastName"]);
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, fullName: "Alice Smith" }]);
+	assert.strictEqual("firstName" in result[0]!, false);
+	assert.strictEqual("lastName" in result[0]!, false);
+});
+
+test("omit: works at nested level", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+		posts$$content: string | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Post", posts$$content: "Content here" },
+	];
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (h) =>
+			h("id")
+				.fields({ id: true, title: true, content: true })
+				.omit(["content"]),
+		);
+
+	const result = await hydrateData(rows, hydrator);
+
+	assert.deepStrictEqual(result[0]?.posts[0], { id: 10, title: "Post" });
+	assert.strictEqual("content" in result[0]!.posts[0]!, false);
+});
+
 test("composite keys: groups by multiple fields", async () => {
 	interface CompositeRow {
 		key1: string;

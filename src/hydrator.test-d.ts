@@ -506,3 +506,80 @@ import { createHydrator } from "./hydrator.ts";
 			{ matchChild: "invalidChild", toParent: "invalidParent" },
 		);
 }
+
+//
+// omit: removes fields from output
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+		email: string;
+		password: string;
+	}
+
+	// Basic omit
+	const hydrator1 = createHydrator<User>("id")
+		.fields({ id: true, name: true, email: true, password: true })
+		.omit(["password"]);
+
+	const result1 = hydrator1.hydrate([] as User[]);
+
+	expectTypeOf(result1).resolves.toEqualTypeOf<
+		{
+			id: number;
+			name: string;
+			email: string;
+		}[]
+	>();
+
+	// Omit multiple fields
+	const hydrator2 = createHydrator<User>("id")
+		.fields({ id: true, name: true, email: true, password: true })
+		.omit(["email", "password"]);
+
+	const result2 = hydrator2.hydrate([] as User[]);
+
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number; name: string }[]>();
+
+	// @ts-expect-error - cannot omit non-existent field
+	createHydrator<User>("id").fields({ id: true, name: true }).omit(["nonExistent"]);
+}
+
+//
+// Nested omit
+//
+
+{
+	interface UserRow {
+		id: number;
+		name: string;
+		posts$$id: number | null;
+		posts$$title: string | null;
+		posts$$content: string | null;
+		posts$$internalNotes: string | null;
+	}
+
+	const hydrator = createHydrator<UserRow>("id")
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (h) =>
+			h("id")
+				.fields({ id: true, title: true, content: true, internalNotes: true })
+				.omit(["internalNotes"]),
+		);
+
+	const result = hydrator.hydrate([] as UserRow[]);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			name: string;
+			posts: Array<{
+				id: number | null;
+				title: string | null;
+				content: string | null;
+			}>;
+		}[]
+	>();
+}

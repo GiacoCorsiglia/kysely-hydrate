@@ -67,6 +67,55 @@ declare const db: DB;
 }
 
 //
+// mapFields: transform field values
+//
+
+{
+	// Basic transformation
+	const result1 = hydrate(db.selectFrom("users").select(["id", "username"]), "id")
+		.mapFields({
+			username: (username) => {
+				expectTypeOf(username).toEqualTypeOf<string>();
+				return username.toUpperCase();
+			},
+		})
+		.execute();
+
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+
+	// Transform to different type
+	const result2 = hydrate(db.selectFrom("users").select(["id", "username"]), "id")
+		.mapFields({
+			username: (username) => username.length,
+		})
+		.execute();
+
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number; username: number }[]>();
+
+	// Multiple transformations
+	const result3 = hydrate(db.selectFrom("users").select(["id", "username", "email"]), "id")
+		.mapFields({
+			username: (username) => username.toUpperCase(),
+			email: (email) => email.length,
+		})
+		.execute();
+
+	expectTypeOf(result3).resolves.toEqualTypeOf<{ id: number; username: string; email: number }[]>();
+
+	// Cannot pass true (only functions allowed)
+	hydrate(db.selectFrom("users").select(["id", "username"]), "id").mapFields({
+		// @ts-expect-error - Type 'boolean' is not assignable to function
+		username: true,
+	});
+
+	// Field must exist in LocalRow
+	hydrate(db.selectFrom("users").select(["id", "username"]), "id").mapFields({
+		// @ts-expect-error - 'nonExistent' does not exist in type
+		nonExistent: (x: any) => x,
+	});
+}
+
+//
 // Execution methods: execute, executeTakeFirst, executeTakeFirstOrThrow
 //
 
@@ -76,7 +125,10 @@ declare const db: DB;
 	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
 
 	// executeTakeFirst: returns first result or undefined
-	const result2 = hydrate(db.selectFrom("users").select(["id", "username"]), "id").executeTakeFirst();
+	const result2 = hydrate(
+		db.selectFrom("users").select(["id", "username"]),
+		"id",
+	).executeTakeFirst();
 	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number; username: string } | undefined>();
 
 	// executeTakeFirstOrThrow: returns first result (non-nullable)
@@ -366,6 +418,80 @@ declare const db: DB;
 }
 
 //
+// Nested mapFields
+//
+
+{
+	const result = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+		.hasMany("posts", (qb) =>
+			qb
+				.innerJoin("posts", "posts.user_id", "users.id")
+				.select(["posts.id", "posts.title"])
+				.mapFields({
+					title: (title) => {
+						expectTypeOf(title).toEqualTypeOf<string>();
+						return title.toUpperCase();
+					},
+				}),
+		)
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			posts: { id: number; title: string }[];
+		}[]
+	>();
+}
+
+//
+// omit: removes fields from output type
+//
+
+{
+	// Basic omit
+	const result1 = hydrate(db.selectFrom("users").select(["id", "username", "email"]), "id")
+		.omit(["email"])
+		.execute();
+
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+
+	// Multiple fields omitted
+	const result2 = hydrate(db.selectFrom("users").select(["id", "username", "email"]), "id")
+		.omit(["username", "email"])
+		.execute();
+
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number }[]>();
+
+	// @ts-expect-error - cannot omit non-existent field
+	hydrate(db.selectFrom("users").select(["id", "username"]), "id").omit(["nonExistent"]);
+}
+
+//
+// Nested omit
+//
+
+{
+	const result = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+		.hasMany("posts", (qb) =>
+			qb
+				.innerJoin("posts", "posts.user_id", "users.id")
+				.select(["posts.id", "posts.title", "posts.content"])
+				.omit(["content"]),
+		)
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			posts: { id: number; title: string }[];
+		}[]
+	>();
+}
+
+//
 // Multi-level nesting
 //
 
@@ -621,13 +747,11 @@ declare const db: DB;
 		(qb) => qb.innerJoin("posts", "posts.user_id", "users.nonExistent").select(["posts.id"]),
 	);
 
-	hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasOne(
-		"profile",
-		(qb) =>
-			qb
-				.innerJoin("profiles", "profiles.user_id", "users.id")
-				// @ts-expect-error - selecting from table not in query
-				.select(["comments.content"]),
+	hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasOne("profile", (qb) =>
+		qb
+			.innerJoin("profiles", "profiles.user_id", "users.id")
+			// @ts-expect-error - selecting from table not in query
+			.select(["comments.content"]),
 	);
 
 	// @ts-expect-error - invalid table in selectFrom

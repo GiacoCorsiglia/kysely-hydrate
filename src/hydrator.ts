@@ -5,21 +5,40 @@ import {
 	getPrefixedValue,
 	type SelectAndStripPrefix,
 } from "./helpers/prefixes.ts";
-import { addObjectToMap, type Extend, isIterable, type KeyBy } from "./helpers/utils.ts";
+import {
+	addObjectToMap,
+	createPrivateAccessor,
+	type Extend,
+	isIterable,
+	type KeyBy,
+} from "./helpers/utils.ts";
+
+/**
+ * Helper type for a field mapping function.
+ */
+type MapFn<Input, K extends keyof Input> = (value: Input[K]) => unknown;
 
 /**
  * Configuration for fields to include in the hydrated output.
  * Each field can be set to `true` to include as-is, or a function to transform the value.
  */
 type Fields<Input> = {
-	[K in keyof Input]?: true | ((value: Input[K]) => unknown);
+	[K in keyof Input]?: true | MapFn<Input, K>;
+};
+
+/**
+ * Configuration for field transformations.
+ * Each field must be a transformation function (not `true` or `false`).
+ */
+export type FieldMappings<Input> = {
+	[K in keyof Input]?: MapFn<Input, K>;
 };
 
 /**
  * Infers the output type for fields based on the Fields configuration.
  * Fields set to `true` keep their original type, while functions use their return type.
  */
-type InferFields<Input, F extends Fields<Input>> = {
+export type InferFields<Input, F extends Fields<Input>> = {
 	[K in keyof F & keyof Input]: F[K] extends true
 		? Input[K]
 		: F[K] extends (...args: any) => infer R
@@ -120,7 +139,7 @@ interface AttachedCollection<ParentInput, AttachedOutput> {
 /**
  * Internal map type for fields configuration.
  */
-type FieldsMap = Map<string, true | ((value: any) => unknown)>;
+type FieldsMap = Map<string, true | false | ((value: any) => unknown)>;
 
 /**
  * Internal map type for extras configuration.
@@ -192,6 +211,30 @@ type ChildHydratorArg<P extends string, ParentInput, ChildOutput> =
 			keyBy: typeof createHydrator<SelectAndStripPrefix<P, ParentInput>>,
 	  ) => Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
 
+/**
+ * Private accessor for the ensureFields method.
+ */
+const ensureFieldsAccessor = createPrivateAccessor<
+	Hydrator<any, any>,
+	[fieldNames: readonly string[]],
+	Hydrator<any, any>
+>();
+
+/**
+ * Ensures fields are included in the Hydrator's output if they don't already
+ * have an explicit configuration (including explicit omission).
+ *
+ * This is used internally by `HydratedQueryBuilder` to auto-detect selected
+ * fields without overwriting explicit field mappings or omissions from
+ * `mapFields()` and `omit()`.
+ *
+ * @param hydrator - The Hydrator instance
+ * @param fieldNames - Field names to ensure are included
+ * @returns A new Hydrator with the fields ensured
+ * @internal
+ */
+export const ensureFields = ensureFieldsAccessor.call;
+
 export type { Hydrator };
 /**
  * A configuration for how to hydrate flat database rows into a denormalized structure.
@@ -212,6 +255,8 @@ class Hydrator<Input, Output> {
 
 	constructor(props: HydratorProps<Input>) {
 		this.#props = props;
+		// Register the bound ensureFields method for internal use
+		ensureFieldsAccessor.register(this as any, this.#ensureFields.bind(this));
 	}
 
 	//
@@ -232,6 +277,41 @@ class Hydrator<Input, Output> {
 			...this.#props,
 
 			fields: addObjectToMap(this.#props.fields, fields),
+		}) as any;
+	}
+
+	/**
+	 * Omits specified fields from the hydrated output.
+	 *
+	 * @param keys - Field names to omit from the output
+	 * @returns A new Hydrator with the fields omitted
+	 */
+	omit<K extends keyof Input>(keys: readonly K[]): Hydrator<Input, Omit<Output, K>> {
+		const omitFields = Object.fromEntries(keys.map((key) => [key, false as const]));
+
+		return new Hydrator({
+			...this.#props,
+
+			fields: addObjectToMap(this.#props.fields, omitFields),
+		}) as any;
+	}
+
+	/**
+	 * Private method to ensure fields are included in the output if they don't
+	 * already have an explicit configuration (including explicit omission).
+	 * Used by HydratedQueryBuilder via the exported ensureFields helper function.
+	 */
+	#ensureFields(fieldNames: readonly string[]): Hydrator<Input, Output> {
+		const clone = new Map(this.#props.fields);
+		for (const name of fieldNames) {
+			if (!clone.has(name)) {
+				clone.set(name, true);
+			}
+		}
+
+		return new Hydrator({
+			...this.#props,
+			fields: clone,
 		}) as any;
 	}
 
@@ -558,6 +638,10 @@ class Hydrator<Input, Output> {
 
 		if (fields) {
 			for (const [key, field] of fields) {
+				// Skip fields explicitly set to false (omitted)
+				if (field === false) {
+					continue;
+				}
 				const value = getPrefixedValue(prefix, input, key);
 				entity[key] = field === true ? value : field(value as any);
 			}
@@ -799,7 +883,7 @@ function groupByKey<T>(
 			continue;
 		}
 		let arr = map.get(key);
-		if (arr === undefined) {
+		if (!arr) {
 			arr = [];
 			map.set(key, arr);
 		}

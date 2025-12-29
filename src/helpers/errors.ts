@@ -76,3 +76,13 @@ export class UnsupportedNodeTypeError extends KyselyHydrateError {
 		super(`Unsupported node type: ${kind}`);
 	}
 }
+
+/**
+ * Error thrown when attempting to call a private method on an instance that
+ * was not properly registered with the private accessor.
+ */
+export class InvalidInstanceError extends KyselyHydrateError {
+	constructor() {
+		super("Invalid instance - private method not registered");
+	}
+}
