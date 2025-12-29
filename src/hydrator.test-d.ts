@@ -583,3 +583,118 @@ import { createHydrator } from "./hydrator.ts";
 		}[]
 	>();
 }
+
+//
+// extend: composing hydrators
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+		email: string;
+	}
+
+	// Basic extend: merges fields
+	const baseHydrator = createHydrator<User>("id").fields({ id: true, name: true });
+
+	const emailHydrator = createHydrator<User>("id").fields({ email: true });
+
+	const combined = baseHydrator.extend(emailHydrator);
+
+	const result = combined.hydrate([] as User[]);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; name: string; email: string }[]>();
+
+	// Other hydrator's field types take precedence
+	const upperHydrator = createHydrator<User>("id").fields({
+		name: (name): string => name.toUpperCase(),
+	});
+
+	const lengthHydrator = createHydrator<User>("id").fields({
+		name: (name): number => name.length,
+	});
+
+	const combined2 = upperHydrator.extend(lengthHydrator);
+
+	const result2 = combined2.hydrate([] as User[]);
+
+	// name is now number (from lengthHydrator)
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ name: number }[]>();
+
+	// Merges extras
+	const hydrator1 = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.extras({
+			displayName: (user) => `${user.name}`,
+		});
+
+	const hydrator2 = createHydrator<User>("id").extras({
+		emailLower: (user) => user.email.toLowerCase(),
+	});
+
+	const combined3 = hydrator1.extend(hydrator2);
+
+	const result3 = combined3.hydrate([] as User[]);
+
+	expectTypeOf(result3).resolves.toEqualTypeOf<
+		{ id: number; name: string; displayName: string; emailLower: string }[]
+	>();
+
+	// Works with subtype (narrower input)
+	interface AdminUser extends User {
+		role: string;
+	}
+
+	const userHydrator = createHydrator<User>("id").fields({ id: true, name: true });
+
+	const adminHydrator = createHydrator<AdminUser>("id").fields({ role: true });
+
+	const combined4 = userHydrator.extend(adminHydrator);
+
+	// Input type is intersection: User & AdminUser = AdminUser
+	const result4 = combined4.hydrate([] as AdminUser[]);
+
+	expectTypeOf(result4).resolves.toEqualTypeOf<{ id: number; name: string; role: string }[]>();
+
+	// Also works in reverse direction (no constraint on OtherInput)
+	const combined5 = adminHydrator.extend(userHydrator);
+
+	// Input type is still AdminUser (AdminUser & User = AdminUser)
+	const result5 = combined5.hydrate([] as AdminUser[]);
+
+	expectTypeOf(result5).resolves.toEqualTypeOf<{ id: number; name: string; role: string }[]>();
+
+	// Works with disjoint types (creates intersection)
+	interface Post {
+		id: number;
+		title: string;
+	}
+
+	const nameHydrator = createHydrator<User>("id").fields({ name: true });
+
+	const titleHydrator = createHydrator<Post>("id").fields({ title: true });
+
+	const combined6 = nameHydrator.extend(titleHydrator);
+
+	// Input type is User & Post = { id, name, email, title }
+	type UserAndPost = User & Post;
+	const result6 = combined6.hydrate([] as UserAndPost[]);
+
+	expectTypeOf(result6).resolves.toEqualTypeOf<{ name: string; title: string }[]>();
+
+	// Cannot extend with incompatible overlapping field types
+	createHydrator<{ id: number; name: string }>("id").extend(
+		// @ts-expect-error - id type mismatch (number vs string)
+		createHydrator<{ id: string; role: string }>("id"),
+	);
+
+	// Incompatible field types in the other direction too
+	createHydrator<{ id: string; role: string }>("id").extend(
+		// @ts-expect-error - id type mismatch (string vs number)
+		createHydrator<{ id: number; name: string }>("id"),
+	);
+
+	// Different keyBy will cause runtime error but not type error
+	// (keyBy is not part of the type signature)
+}

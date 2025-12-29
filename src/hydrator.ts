@@ -1,4 +1,4 @@
-import { ExpectedOneItemError } from "./helpers/errors.ts";
+import { ExpectedOneItemError, KeyByMismatchError } from "./helpers/errors.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
@@ -170,22 +170,22 @@ interface HydratorProps<Input> {
 	 * The fields to include in the final denormalized entity.  You can either specify `true` to
 	 * include a field as-is, or provide a transformation function to modify the field's value.
 	 */
-	readonly fields?: FieldsMap;
+	readonly fields?: FieldsMap | undefined;
 
 	/**
 	 * Extra fields generated from the entire input.
 	 */
-	readonly extras?: ExtrasMap;
+	readonly extras?: ExtrasMap | undefined;
 
 	/**
 	 * An optional map of nested collections.
 	 */
-	readonly collections?: CollectionsMap;
+	readonly collections?: CollectionsMap | undefined;
 
 	/**
 	 * An optional map of attached collections (for application-level joins).
 	 */
-	readonly attachedCollections?: AttachedCollectionsMap;
+	readonly attachedCollections?: AttachedCollectionsMap | undefined;
 }
 
 /**
@@ -330,6 +330,52 @@ class Hydrator<Input, Output> {
 
 			extras: addObjectToMap(this.#props.extras, extras),
 		}) as any;
+	}
+
+	/**
+	 * Extends this Hydrator with the configuration from another Hydrator.  The
+	 * other Hydrator's configuration takes precedence in case of conflicts.
+	 *
+	 * Both hydrators must have the same `keyBy`, and any overlapping fields
+	 * between the two input types must have compatible types.
+	 *
+	 * @param other - The Hydrator to extend with
+	 * @returns A new Hydrator with merged configuration
+	 * @throws {KeyByMismatchError} If the keyBy configurations don't match
+	 */
+	extend<
+		// OtherInput doesn't need to overlap with Input, but any overlapping fields
+		// must have compatible types.
+		OtherInput extends Partial<Input>,
+		OtherOutput,
+	>(
+		other: Hydrator<OtherInput, OtherOutput>,
+	): Hydrator<
+		// Intersect, don't extend because the input must be compatible with both.
+		Input & OtherInput,
+		// Extend, don't intersect, because the output gets overridden.
+		Extend<Output, OtherOutput>
+	> {
+		// Check that keyBy matches
+		const thisKeyBy = JSON.stringify(this.#props.keyBy);
+		const otherKeyBy = JSON.stringify(other.#props.keyBy);
+		if (thisKeyBy !== otherKeyBy) {
+			throw new KeyByMismatchError(thisKeyBy, otherKeyBy);
+		}
+
+		// Merge all configuration maps, with other's values taking precedence
+		const ownProps = this.#props;
+		const otherProps = other.#props;
+		return new Hydrator<Input & OtherInput, Extend<Output, OtherOutput>>({
+			keyBy: otherProps.keyBy,
+			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
+			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
+			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
+			attachedCollections: new Map([
+				...(ownProps.attachedCollections ?? []),
+				...(otherProps.attachedCollections ?? []),
+			]),
+		});
 	}
 
 	/**
