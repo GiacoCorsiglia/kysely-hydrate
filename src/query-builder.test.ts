@@ -71,10 +71,7 @@ test("modify: allows modifying underlying query", async () => {
 //
 
 test("mapFields: transforms field values", async () => {
-	const users = await hydrate(
-		db.selectFrom("users").select(["users.id", "users.username"]),
-		"id",
-	)
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 		.modify((qb) => qb.where("users.id", "=", 1))
 		.mapFields({
 			username: (username) => username.toUpperCase(),
@@ -178,6 +175,113 @@ test("omit: works in nested collections", async () => {
 	assert.strictEqual(users[0]?.posts[0]?.id, 1);
 	assert.strictEqual(users[0]?.posts[0]?.title, "Post 1");
 	assert.strictEqual("content" in users[0]!.posts[0]!, false);
+});
+
+//
+// with
+//
+
+test("with: merges fields from hydrator", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	const extraFields = createHydrator<User>("id").fields({ email: true });
+
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.with(extraFields)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[0]?.username, "alice");
+	assert.strictEqual(users[0]?.email, "alice@example.com");
+});
+
+test("with: merges extras from hydrator", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	const extraFields = createHydrator<User>("id").extras({
+		displayName: (user) => `${user.username} <${user.email}>`,
+	});
+
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.with(extraFields)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.displayName, "alice <alice@example.com>");
+});
+
+test("with: other hydrator's configuration takes precedence", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+	}
+
+	const override = createHydrator<User>("id").fields({
+		username: (username) => username.toUpperCase(),
+	});
+
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.mapFields({
+			username: (username) => username.toLowerCase(),
+		})
+		.with(override)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.username, "ALICE"); // override wins
+});
+
+test("with: works with omit in hydrator", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	const withExtras = createHydrator<User>("id")
+		.extras({
+			displayName: (user) => `${user.username} <${user.email}>`,
+		})
+		.omit(["email"]);
+
+	const users = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+		"id",
+	)
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.with(withExtras)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.username, "alice");
+	assert.strictEqual(users[0]?.displayName, "alice <alice@example.com>");
+	assert.strictEqual("email" in users[0]!, false);
 });
 
 //

@@ -25,6 +25,18 @@ export type AddOrOverride<T, K extends PropertyKey, V> = Flatten<
 	K extends keyof T ? _Override<T, K, V> : T & { [_ in K]: V }
 >;
 
+/**
+ * Ensures that U is a strict subset of T - all keys in U must exist in T
+ * with compatible types, and U cannot have any extra keys.  Can be used in functions like
+ *
+ * ```ts
+ * function <U extends StrictSubset<T, U>>(arg: U) {}
+ * ```
+ */
+export type StrictSubset<T, U> = Partial<T> & {
+	[K in Exclude<keyof U, keyof T>]: never;
+};
+
 export type KeyBy<T> = (keyof T & string) | readonly (keyof T & string)[];
 
 export function assertNever(arg: never): never {

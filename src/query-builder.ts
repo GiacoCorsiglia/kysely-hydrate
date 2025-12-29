@@ -7,7 +7,7 @@ import {
 	makePrefix,
 } from "./helpers/prefixes.ts";
 import { prefixSelectArg } from "./helpers/select-renamer.ts";
-import { type Extend, type KeyBy } from "./helpers/utils.ts";
+import { type Extend, type KeyBy, type StrictSubset } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
 	type CollectionMode,
@@ -235,6 +235,47 @@ interface HydratedQueryBuilder<
 		/* LocalDB:     */ LocalDB,
 		/* LocalRow:    */ LocalRow,
 		/* HydratedRow: */ Omit<HydratedRow, K>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+
+	/**
+	 * Extends this query builder's hydration configuration with another Hydrator.
+	 * The other Hydrator's configuration takes precedence in case of conflicts.
+	 *
+	 * Both hydrators must have the same `keyBy`, and the other Hydrator's input
+	 * type must be a subset of the query's LocalRow (all fields in OtherInput
+	 * must exist in LocalRow with compatible types).
+	 *
+	 * ### Examples
+	 *
+	 * ```ts
+	 * const extraFields = createHydrator<User>("id")
+	 *   .fields({ email: true })
+	 *   .extras({ displayName: (u) => `${u.name} <${u.email}>` });
+	 *
+	 * const users = await hydrate(
+	 *   db.selectFrom("users").select(["users.id", "users.name", "users.email"]),
+	 *   "id",
+	 * )
+	 *   .with(extraFields)
+	 *   .execute();
+	 * // Result: [{ id: 1, name: "Alice", email: "...", displayName: "Alice <...>" }]
+	 * ```
+	 *
+	 * @param hydrator - The Hydrator to extend with.
+	 * @returns A new HydratedQueryBuilder with merged hydration configuration.
+	 */
+	with<OtherInput extends StrictSubset<LocalRow, OtherInput>, OtherOutput>(
+		hydrator: Hydrator<OtherInput, OtherOutput>,
+	): HydratedQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ Extend<HydratedRow, OtherOutput>,
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
 	>;
@@ -1158,6 +1199,13 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		return new HydratedQueryBuilderImpl({
 			...this.#props,
 			hydrator: this.#props.hydrator.omit(keys),
+		});
+	}
+
+	with(hydrator: Hydrator<any, any>): any {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: this.#props.hydrator.extend(hydrator),
 		});
 	}
 

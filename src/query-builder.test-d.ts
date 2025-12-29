@@ -2,6 +2,7 @@ import { expectTypeOf } from "expect-type";
 import { type Kysely } from "kysely";
 
 import { type SeedDB } from "./__tests__/fixture.ts";
+import { createHydrator } from "./hydrator.ts";
 import { hydrate } from "./query-builder.ts";
 
 // Mock db instance type
@@ -489,6 +490,61 @@ declare const db: DB;
 			posts: { id: number; title: string }[];
 		}[]
 	>();
+}
+
+//
+// extend: merges hydrator configuration
+//
+
+{
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	// Basic extend with fields
+	const extraFields = createHydrator<User>("id").fields({ email: true });
+
+	const result1 = hydrate(db.selectFrom("users").select(["id", "username", "email"]), "id")
+		.with(extraFields)
+		.execute();
+
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; username: string; email: string }[]>();
+
+	// Extend with field mappings
+	const withMapping = createHydrator<User>("id").fields({
+		username: (username) => username.toUpperCase(),
+	});
+
+	const result2 = hydrate(db.selectFrom("users").select(["id", "username", "email"]), "id")
+		.with(withMapping)
+		.execute();
+
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number; username: string; email: string }[]>();
+
+	// Other hydrator's field types take precedence
+	const override = createHydrator<{ id: number; username: string }>("id").fields({
+		username: (username) => {
+			expectTypeOf(username).toEqualTypeOf<string>();
+			return username.length;
+		},
+	});
+
+	const result3 = hydrate(db.selectFrom("users").select(["id", "username"]), "id")
+		.mapFields({
+			username: (username) => username.toUpperCase(),
+		})
+		.with(override)
+		.execute();
+
+	expectTypeOf(result3).resolves.toEqualTypeOf<{ id: number; username: number }[]>();
+
+	// Cannot extend with hydrator that has fields not in LocalRow
+	hydrate(db.selectFrom("users").select(["id", "username"]), "id").with(
+		// @ts-expect-error - extraField not in LocalRow
+		createHydrator<{ id: number; username: string; extraField: string }>("id"),
+	);
 }
 
 //
