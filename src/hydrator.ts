@@ -39,11 +39,7 @@ export type FieldMappings<Input> = {
  * Fields set to `true` keep their original type, while functions use their return type.
  */
 export type InferFields<Input, F extends Fields<Input>> = {
-	[K in keyof F & keyof Input]: F[K] extends true
-		? Input[K]
-		: F[K] extends (...args: any) => infer R
-			? R
-			: never;
+	[K in keyof F & keyof Input]: F[K] extends (...args: any) => infer R ? R : Input[K];
 };
 
 /**
