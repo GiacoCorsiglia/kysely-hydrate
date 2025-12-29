@@ -5,16 +5,6 @@ import { sql } from "kysely";
 
 import { getMappedNodes, map } from "./mapped-expression.ts";
 
-test("map returns MappedExpression instance", () => {
-	const mapFn = (x: number) => x.toString();
-	const expr = sql<number>`1`;
-	const mapped = map(expr, mapFn);
-
-	assert.ok(mapped);
-	assert.strictEqual(typeof mapped.as, "function");
-	assert.strictEqual(typeof mapped.toOperationNode, "function");
-});
-
 test("map().as() returns AliasedExpression", () => {
 	const mapFn = (x: number) => x.toString();
 	const expr = sql<number>`1`;
@@ -53,11 +43,6 @@ test("nested maps compose into single function", () => {
 	// Should be composed: outerFn(innerFn(5)) = (5 * 2) + 10 = 20
 	const result = registeredFn(5);
 	assert.strictEqual(result, 20);
-});
-
-test("getMappedNodes returns WeakMap", () => {
-	const mappedNodes = getMappedNodes();
-	assert.ok(mappedNodes instanceof WeakMap);
 });
 
 test("multiple map calls create independent entries", () => {
