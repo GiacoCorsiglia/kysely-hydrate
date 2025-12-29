@@ -25,7 +25,7 @@ export function getMappedNodes(): WeakMap<k.OperationNode, MapFn> {
 export function map<Input, Output>(
 	expression: k.AliasableExpression<Input>,
 	mapFn: (input: NoInfer<Input>) => Output,
-) {
+): MappedExpression<Input, Output> {
 	return new MappedExpression(expression, mapFn);
 }
 

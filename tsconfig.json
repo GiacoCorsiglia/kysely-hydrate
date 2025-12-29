@@ -10,9 +10,6 @@
     "noEmit": true,
     "skipLibCheck": true,
 
-    "declaration": true,
-    "isolatedDeclarations": true,
-
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,

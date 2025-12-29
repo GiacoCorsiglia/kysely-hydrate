@@ -66,7 +66,7 @@ export class Nullable<T extends SomeColumnType> extends ColumnType<
 		this.column = column;
 	}
 
-	fromDriver(input: T["__driverType__"] | null) {
+	fromDriver(input: T["__driverType__"] | null): T["__select__"] | null {
 		if (input === null) {
 			return null;
 		}
@@ -74,7 +74,7 @@ export class Nullable<T extends SomeColumnType> extends ColumnType<
 		return this.column.fromDriver(input);
 	}
 
-	fromJson(input: T["__jsonType__"] | null) {
+	fromJson(input: T["__jsonType__"] | null): T["__select__"] | null {
 		if (input === null) {
 			return null;
 		}
@@ -105,11 +105,11 @@ export class Generated<T extends SomeColumnType>
 		this.column = column;
 	}
 
-	fromDriver(input: T["__driverType__"]) {
+	fromDriver(input: T["__driverType__"]): T["__select__"] {
 		return this.column.fromDriver(input);
 	}
 
-	fromJson(input: T["__jsonType__"]) {
+	fromJson(input: T["__jsonType__"]): T["__select__"] {
 		return this.column.fromJson(input);
 	}
 }
@@ -130,11 +130,11 @@ export class GeneratedAlways<T extends SomeColumnType>
 		this.column = column;
 	}
 
-	fromDriver(input: T["__driverType__"]) {
+	fromDriver(input: T["__driverType__"]): T["__select__"] {
 		return this.column.fromDriver(input);
 	}
 
-	fromJson(input: T["__jsonType__"]) {
+	fromJson(input: T["__jsonType__"]): T["__select__"] {
 		return this.column.fromJson(input);
 	}
 }
@@ -149,7 +149,7 @@ export class Never extends ColumnType<never, never, never, never, never> {
 		this.sqlType = sqlType;
 	}
 
-	fromDriver(input: never) {
+	fromDriver(input: never): never {
 		return input;
 	}
 }

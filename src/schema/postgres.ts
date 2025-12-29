@@ -145,7 +145,7 @@ export function numeric(config?: PgNumericConfig): PgNumeric {
 	return new PgNumeric(config);
 }
 
-export const decimal = numeric;
+export const decimal: (config?: PgNumericConfig) => PgNumeric = numeric;
 
 // Boolean type
 

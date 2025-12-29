@@ -25,6 +25,6 @@ const dialect = new k.SqliteDialect({
 	database: sqlite,
 });
 
-export const db = new k.Kysely<SeedDB>({
+export const db: k.Kysely<SeedDB> = new k.Kysely<SeedDB>({
 	dialect,
 });

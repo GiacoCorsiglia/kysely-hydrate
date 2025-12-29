@@ -263,7 +263,10 @@ const ensureFieldsAccessor = createPrivateAccessor<
  * @returns A new Hydrator with the fields ensured
  * @internal
  */
-export const ensureFields = ensureFieldsAccessor.call;
+export const ensureFields: (
+	hydrator: Hydrator<any, any>,
+	fieldNames: readonly string[],
+) => Hydrator<any, any> = ensureFieldsAccessor.call;
 
 export type { Hydrator };
 /**
