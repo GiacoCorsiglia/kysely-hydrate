@@ -63,7 +63,7 @@ interface RowWithId {
  * @template HasJoin Preserves whether this join builder has already had a join
  * added, which affects the nullability of this relation when adding more joins.
  */
-interface HydratableQueryBuilder<
+interface HydratedQueryBuilder<
 	Prefix extends string,
 	QueryDB,
 	QueryTB extends keyof QueryDB,
@@ -111,7 +111,7 @@ interface HydratableQueryBuilder<
 		modifier: (
 			qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 		) => k.SelectQueryBuilder<NewQueryDB, NewQueryTB, NewQueryRow>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ NewQueryDB,
 		/* QueryTB:     */ NewQueryTB,
@@ -135,7 +135,7 @@ interface HydratableQueryBuilder<
 	 * ### Examples
 	 *
 	 * ```ts
-	 * const users = await hydrateQuery(
+	 * const users = await hydrate(
 	 *   db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
 	 *   "id",
 	 * )
@@ -148,11 +148,11 @@ interface HydratableQueryBuilder<
 	 *
 	 * @param extras - An object mapping field names to functions that compute
 	 *   the field value from the entire row.
-	 * @returns A new HydratableQueryBuilder with the extras applied.
+	 * @returns A new HydratedQueryBuilder with the extras applied.
 	 */
 	extras<E extends Extras<LocalRow>>(
 		extras: E,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
 		/* QueryTB:     */ QueryTB,
@@ -199,7 +199,7 @@ interface HydratableQueryBuilder<
 	 *
 	 * **Example:**
 	 * ```ts
-	 * const userWithPosts = hydrated(
+	 * const userWithPosts = hydrate(
 	 *   db.selectFrom("users").select(["users.id", "users.email"]),
 	 *   "id",
 	 * ).hasMany(
@@ -207,7 +207,7 @@ interface HydratableQueryBuilder<
 	 *   ({ leftJoin }) =>
 	 *     leftJoin("posts", "posts.user_id", "users.id").select(["posts.id", "posts.title"]),
 	 *   "id",
-	 * );
+	 * ).execute();
 	 *
 	 * // Result: [{ id: 1, email: "abc@xyz.co", posts: [{ id: 1, title: "Post 1" }, ...]}]
 	 * ```
@@ -222,11 +222,11 @@ interface HydratableQueryBuilder<
 	 * wrote a flat query without the `hydrated` helper.
 	 *
 	 * @param key - The key name for the collection in the output.
-	 * @param jb - A function that returns a new HydratableQueryBuilder for the
+	 * @param jb - A function that returns a new HydratedQueryBuilder for the
 	 * nested collection.
 	 * @param keyBy - The key(s) on the nested collection to uniquely identify
 	 * those entities. Defaults to "id" if the nested row type has an "id" property.
-	 * @returns A new HydratableQueryBuilder with the nested collection added.
+	 * @returns A new HydratedQueryBuilder with the nested collection added.
 	 */
 	// Overload 1: keyBy provided - any nested row type
 	hasMany<
@@ -240,7 +240,7 @@ interface HydratableQueryBuilder<
 	>(
 		key: K,
 		jb: (
-			nb: HydratableQueryBuilder<
+			nb: HydratedQueryBuilder<
 				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 				/* QueryDB:     */ QueryDB,
 				/* QueryTB:     */ QueryTB,
@@ -251,7 +251,7 @@ interface HydratableQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratableQueryBuilder<
+		) => HydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -264,7 +264,7 @@ interface HydratableQueryBuilder<
 			/* HasJoin:     */ any
 		>,
 		keyBy: KeyBy<NestedLocalRow>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
 		/* QueryTB:     */ JoinedQueryTB,
@@ -287,7 +287,7 @@ interface HydratableQueryBuilder<
 	>(
 		key: K,
 		jb: (
-			nb: HydratableQueryBuilder<
+			nb: HydratedQueryBuilder<
 				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 				/* QueryDB:     */ QueryDB,
 				/* QueryTB:     */ QueryTB,
@@ -298,7 +298,7 @@ interface HydratableQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratableQueryBuilder<
+		) => HydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -310,7 +310,7 @@ interface HydratableQueryBuilder<
 			/* IsNullable:  */ any,
 			/* HasJoin:     */ any
 		>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
 		/* QueryTB:     */ JoinedQueryTB,
@@ -329,7 +329,7 @@ interface HydratableQueryBuilder<
 	 *
 	 * **Example:**
 	 * ```ts
-	 * const userWithPosts = hydrated(
+	 * const userWithPosts = hydrate(
 	 *   db.selectFrom("posts").select(["posts.id", "posts.title"]),
 	 *   "id",
 	 * ).hasOne(
@@ -337,7 +337,7 @@ interface HydratableQueryBuilder<
 	 *   ({ innerJoin }) =>
 	 *     innerJoin("users", "users.id", "posts.user_id").select(["users.id", "users.email"]),
 	 *   "id",
-	 * );
+	 * ).execute();
 	 *
 	 * // Result: [{ id: 1, title: "Post 1", user: { id: 1, email: "abc@xyz.co" } }]
 	 * ```
@@ -352,11 +352,11 @@ interface HydratableQueryBuilder<
 	 * wrote a flat query without the `hydrated` helper.
 	 *
 	 * @param key - The key name for the collection in the output.
-	 * @param jb - A function that returns a new HydratableQueryBuilder for the
+	 * @param jb - A function that returns a new HydratedQueryBuilder for the
 	 * nested collection.
 	 * @param keyBy - The key(s) on the nested collection to uniquely identify
 	 * those entities. Defaults to "id" if the nested row type has an "id" property.
-	 * @returns A new HydratableQueryBuilder with the nested collection added.
+	 * @returns A new HydratedQueryBuilder with the nested collection added.
 	 */
 	// Overload 1: keyBy provided - any nested row type
 	hasOne<
@@ -371,7 +371,7 @@ interface HydratableQueryBuilder<
 	>(
 		key: K,
 		jb: (
-			nb: HydratableQueryBuilder<
+			nb: HydratedQueryBuilder<
 				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 				/* QueryDB:     */ QueryDB,
 				/* QueryTB:     */ QueryTB,
@@ -382,7 +382,7 @@ interface HydratableQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratableQueryBuilder<
+		) => HydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -394,7 +394,7 @@ interface HydratableQueryBuilder<
 			/* HasJoin:     */ any
 		>,
 		keyBy: KeyBy<NestedLocalRow>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
 		/* QueryTB:     */ JoinedQueryTB,
@@ -421,7 +421,7 @@ interface HydratableQueryBuilder<
 	>(
 		key: K,
 		jb: (
-			nb: HydratableQueryBuilder<
+			nb: HydratedQueryBuilder<
 				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 				/* QueryDB:     */ QueryDB,
 				/* QueryTB:     */ QueryTB,
@@ -432,7 +432,7 @@ interface HydratableQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratableQueryBuilder<
+		) => HydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -443,7 +443,7 @@ interface HydratableQueryBuilder<
 			/* IsNullable:  */ IsChildNullable,
 			/* HasJoin:     */ any
 		>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
 		/* QueryTB:     */ JoinedQueryTB,
@@ -462,10 +462,10 @@ interface HydratableQueryBuilder<
 	 * Exactly like {@link hasOne}, but throws an error if the nested object is not found.
 	 *
 	 * @param key - The key name for the nested object in the output.
-	 * @param jb - A function that returns a new HydratableQueryBuilder for the nested object.
+	 * @param jb - A function that returns a new HydratedQueryBuilder for the nested object.
 	 * @param keyBy - The key(s) on the nested object to uniquely identify it.
 	 *   Defaults to "id" if the nested row type has an "id" property.
-	 * @returns A new HydratableQueryBuilder with the nested object added.
+	 * @returns A new HydratedQueryBuilder with the nested object added.
 	 */
 	// Overload 1: keyBy provided - any nested row type
 	hasOneOrThrow<
@@ -479,7 +479,7 @@ interface HydratableQueryBuilder<
 	>(
 		key: K,
 		jb: (
-			nb: HydratableQueryBuilder<
+			nb: HydratedQueryBuilder<
 				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 				/* QueryDB:     */ QueryDB,
 				/* QueryTB:     */ QueryTB,
@@ -490,7 +490,7 @@ interface HydratableQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratableQueryBuilder<
+		) => HydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -502,7 +502,7 @@ interface HydratableQueryBuilder<
 			/* HasJoin:     */ any
 		>,
 		keyBy: KeyBy<NestedLocalRow>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
 		/* QueryTB:     */ JoinedQueryTB,
@@ -525,7 +525,7 @@ interface HydratableQueryBuilder<
 	>(
 		key: K,
 		jb: (
-			nb: HydratableQueryBuilder<
+			nb: HydratedQueryBuilder<
 				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 				/* QueryDB:     */ QueryDB,
 				/* QueryTB:     */ QueryTB,
@@ -536,7 +536,7 @@ interface HydratableQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratableQueryBuilder<
+		) => HydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -547,7 +547,7 @@ interface HydratableQueryBuilder<
 			/* IsNullable:  */ any,
 			/* HasJoin:     */ any
 		>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
 		/* QueryTB:     */ JoinedQueryTB,
@@ -566,7 +566,7 @@ interface HydratableQueryBuilder<
 	 *
 	 * **Example:**
 	 * ```ts
-	 * const users = await hydrated(
+	 * const users = await hydrate(
 	 *   db.selectFrom("users").select(["users.id", "users.name"]),
 	 *   "id",
 	 * ).attachMany(
@@ -585,13 +585,13 @@ interface HydratableQueryBuilder<
 	 * @param key - The key name for the array in the output.
 	 * @param fetchFn - A function that fetches the attached data. Called once with all parent rows.
 	 * @param keys - Configuration for matching attached data to parents.
-	 * @returns A new HydratableQueryBuilder with the attached collection added.
+	 * @returns A new HydratedQueryBuilder with the attached collection added.
 	 */
 	attachMany<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<LocalRow, AttachedOutput>,
 		keys: AttachedKeysArg<LocalRow, AttachedOutput>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
 		/* QueryTB:     */ QueryTB,
@@ -610,7 +610,7 @@ interface HydratableQueryBuilder<
 	 *
 	 * **Example:**
 	 * ```ts
-	 * const posts = await hydrated(
+	 * const posts = await hydrate(
 	 *   db.selectFrom("posts").select(["posts.id", "posts.title"]),
 	 *   "id",
 	 * ).attachOne(
@@ -629,13 +629,13 @@ interface HydratableQueryBuilder<
 	 * @param key - The key name for the nested object in the output.
 	 * @param fetchFn - A function that fetches the attached data. Called once with all parent rows.
 	 * @param keys - Configuration for matching attached data to parents.
-	 * @returns A new HydratableQueryBuilder with the attached object added.
+	 * @returns A new HydratedQueryBuilder with the attached object added.
 	 */
 	attachOne<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<LocalRow, AttachedOutput>,
 		keys: AttachedKeysArg<LocalRow, AttachedOutput>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
 		/* QueryTB:     */ QueryTB,
@@ -653,13 +653,13 @@ interface HydratableQueryBuilder<
 	 * @param key - The key name for the nested object in the output.
 	 * @param fetchFn - A function that fetches the attached data. Called once with all parent rows.
 	 * @param keys - Configuration for matching attached data to parents.
-	 * @returns A new HydratableQueryBuilder with the attached object added.
+	 * @returns A new HydratedQueryBuilder with the attached object added.
 	 */
 	attachOneOrThrow<K extends string, AttachedOutput>(
 		key: K,
 		fetchFn: FetchFn<LocalRow, AttachedOutput>,
 		keys: AttachedKeysArg<LocalRow, AttachedOutput>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
 		/* QueryTB:     */ QueryTB,
@@ -677,7 +677,7 @@ interface HydratableQueryBuilder<
 	 * Joins another table to the query using an `inner join`.
 	 *
 	 * Exactly like Kysely's {@link k.SelectQueryBuilder.innerJoin}, except
-	 * contextualized to a {@link HydratableQueryBuilder}.  This method will add
+	 * contextualized to a {@link HydratedQueryBuilder}.  This method will add
 	 * an `inner join` to your SQL in exactly the same way as Kysely's version.
 	 */
 	innerJoin<
@@ -688,7 +688,7 @@ interface HydratableQueryBuilder<
 		table: TE,
 		k1: K1,
 		k2: K2,
-	): HydratableQueryBuilderWithInnerJoin<
+	): HydratedQueryBuilderWithInnerJoin<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
 		/* QueryTB:     */ QueryTB,
@@ -705,7 +705,7 @@ interface HydratableQueryBuilder<
 	>(
 		table: TE,
 		callback: FN,
-	): HydratableQueryBuilderWithInnerJoin<
+	): HydratedQueryBuilderWithInnerJoin<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
 		/* QueryTB:     */ QueryTB,
@@ -729,7 +729,7 @@ interface HydratableQueryBuilder<
 		table: TE,
 		k1: K1,
 		k2: K2,
-	): HydratableQueryBuilderWithLeftJoin<
+	): HydratedQueryBuilderWithLeftJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -747,7 +747,7 @@ interface HydratableQueryBuilder<
 	>(
 		table: TE,
 		callback: FN,
-	): HydratableQueryBuilderWithLeftJoin<
+	): HydratedQueryBuilderWithLeftJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -766,7 +766,7 @@ interface HydratableQueryBuilder<
 	 */
 	crossJoin<TE extends k.TableExpression<QueryDB, QueryTB>>(
 		table: TE,
-	): HydratableQueryBuilderWithInnerJoin<
+	): HydratedQueryBuilderWithInnerJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -790,7 +790,7 @@ interface HydratableQueryBuilder<
 		table: TE,
 		k1: K1,
 		k2: K2,
-	): HydratableQueryBuilderWithInnerJoin<
+	): HydratedQueryBuilderWithInnerJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -807,7 +807,7 @@ interface HydratableQueryBuilder<
 	>(
 		table: TE,
 		callback: FN,
-	): HydratableQueryBuilderWithInnerJoin<
+	): HydratedQueryBuilderWithInnerJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -831,7 +831,7 @@ interface HydratableQueryBuilder<
 		table: TE,
 		k1: K1,
 		k2: K2,
-	): HydratableQueryBuilderWithLeftJoin<
+	): HydratedQueryBuilderWithLeftJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -849,7 +849,7 @@ interface HydratableQueryBuilder<
 	>(
 		table: TE,
 		callback: FN,
-	): HydratableQueryBuilderWithLeftJoin<
+	): HydratedQueryBuilderWithLeftJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -868,7 +868,7 @@ interface HydratableQueryBuilder<
 	 */
 	crossJoinLateral<TE extends k.TableExpression<QueryDB, QueryTB>>(
 		table: TE,
-	): HydratableQueryBuilderWithInnerJoin<
+	): HydratedQueryBuilderWithInnerJoin<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -890,7 +890,7 @@ interface HydratableQueryBuilder<
 	 */
 	select<SE extends k.SelectExpression<QueryDB, QueryTB>>(
 		selections: ReadonlyArray<SE>,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -903,7 +903,7 @@ interface HydratableQueryBuilder<
 	>;
 	select<CB extends k.SelectCallback<QueryDB, QueryTB>>(
 		callback: CB,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -916,7 +916,7 @@ interface HydratableQueryBuilder<
 	>;
 	select<SE extends k.SelectExpression<QueryDB, QueryTB>>(
 		selection: SE,
-	): HydratableQueryBuilder<
+	): HydratedQueryBuilder<
 		Prefix,
 		QueryDB,
 		QueryTB,
@@ -933,7 +933,7 @@ interface HydratableQueryBuilder<
 type InferDB<SQB extends k.SelectQueryBuilder<any, any, any>> =
 	SQB extends k.SelectQueryBuilder<infer DB, any, any> ? DB : never;
 
-type HydratableQueryBuilderWithInnerJoin<
+type HydratedQueryBuilderWithInnerJoin<
 	/* Prefix:      */ Prefix extends string,
 	/* QueryDB:     */ QueryDB,
 	/* QueryTB:     */ QueryTB extends keyof QueryDB,
@@ -949,7 +949,7 @@ type HydratableQueryBuilderWithInnerJoin<
 		infer JoinedTB,
 		infer JoinedRow
 	>
-		? HydratableQueryBuilder<
+		? HydratedQueryBuilder<
 				/* Prefix:      */ Prefix,
 				/* QueryDB:     */ JoinedDB,
 				/* QueryTB:     */ JoinedTB,
@@ -962,7 +962,7 @@ type HydratableQueryBuilderWithInnerJoin<
 			>
 		: never;
 
-type HydratableQueryBuilderWithLeftJoin<
+type HydratedQueryBuilderWithLeftJoin<
 	/* Prefix:      */ Prefix extends string,
 	/* QueryDB:     */ QueryDB,
 	/* QueryTB:     */ QueryTB extends keyof QueryDB,
@@ -979,7 +979,7 @@ type HydratableQueryBuilderWithLeftJoin<
 		infer JoinedTB,
 		infer JoinedRow
 	>
-		? HydratableQueryBuilder<
+		? HydratedQueryBuilder<
 				/* Prefix:      */ Prefix,
 				/* QueryDB:     */ JoinedDB,
 				/* QueryTB:     */ JoinedTB,
@@ -1002,33 +1002,23 @@ type HydratableQueryBuilderWithLeftJoin<
 
 type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
 
-type AnyHydratableQueryBuilder = HydratableQueryBuilder<
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any,
-	any
->;
+type AnyHydratedQueryBuilder = HydratedQueryBuilder<any, any, any, any, any, any, any, any, any>;
 
-interface HydratableQueryBuilderProps {
+interface HydratedQueryBuilderProps {
 	readonly qb: AnySelectQueryBuilder;
 	readonly prefix: string;
 	readonly hydrator: Hydrator<any, any>;
 }
 
 /**
- * Implementation of the {@link HydratableQueryBuilder} interface.
+ * Implementation of the {@link HydratedQueryBuilder} interface.
  *
  * @internal
  */
-class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
-	#props: HydratableQueryBuilderProps;
+class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
+	#props: HydratedQueryBuilderProps;
 
-	constructor(props: HydratableQueryBuilderProps) {
+	constructor(props: HydratedQueryBuilderProps) {
 		this.#props = props;
 
 		// Support destructuring.
@@ -1065,7 +1055,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	}
 
 	modify(modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder): any {
-		return new HydratableQueryBuilderImpl({
+		return new HydratedQueryBuilderImpl({
 			...this.#props,
 			qb: modifier(this.#props.qb),
 		});
@@ -1076,7 +1066,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	}
 
 	extras(extras: Extras<any>) {
-		return new HydratableQueryBuilderImpl({
+		return new HydratedQueryBuilderImpl({
 			...this.#props,
 			hydrator: this.#props.hydrator.extras(extras),
 		});
@@ -1130,10 +1120,10 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	#addJoin(
 		mode: CollectionMode,
 		key: string,
-		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
+		jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl,
 		keyBy: any = DEFAULT_KEY_BY,
 	) {
-		const inputNb = new HydratableQueryBuilderImpl({
+		const inputNb = new HydratedQueryBuilderImpl({
 			qb: this.#props.qb,
 			prefix: makePrefix(this.#props.prefix, key),
 
@@ -1141,7 +1131,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 		});
 		const outputNb = jb(inputNb);
 
-		return new HydratableQueryBuilderImpl({
+		return new HydratedQueryBuilderImpl({
 			...this.#props,
 
 			qb: outputNb.#props.qb,
@@ -1156,17 +1146,13 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 		});
 	}
 
-	hasMany(
-		key: string,
-		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
-		keyBy?: any,
-	) {
+	hasMany(key: string, jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl, keyBy?: any) {
 		return this.#addJoin("many", key, jb, keyBy);
 	}
 
 	hasOne(
 		key: string,
-		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
+		jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl,
 		keyBy?: any,
 	): any {
 		return this.#addJoin("one", key, jb, keyBy);
@@ -1174,7 +1160,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 
 	hasOneOrThrow(
 		key: string,
-		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
+		jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl,
 		keyBy?: any,
 	): any {
 		return this.#addJoin("oneOrThrow", key, jb, keyBy);
@@ -1186,7 +1172,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	) {
-		return new HydratableQueryBuilderImpl({
+		return new HydratedQueryBuilderImpl({
 			...this.#props,
 			hydrator: this.#props.hydrator.attach(mode, key, fetchFn, keys),
 		});
@@ -1211,7 +1197,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	select(selection: k.SelectArg<any, any, any>) {
 		const prefixedSelections = prefixSelectArg(this.#props.prefix, selection);
 
-		return new HydratableQueryBuilderImpl({
+		return new HydratedQueryBuilderImpl({
 			...this.#props,
 
 			// This cast to `any` is needed because TS can't follow the overload.
@@ -1256,12 +1242,12 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 ////////////////////////////////////////////////////////////////////
 
 /**
- * Creates a new {@link HydratableQueryBuilder} from a Kysely select query.
+ * Creates a new {@link HydratedQueryBuilder} from a Kysely select query.
  * This enables nested joins and automatic hydration of flat SQL results into nested objects.
  *
  * **Example:**
  * ```ts
- * const users = await hydrated(
+ * const users = await hydrate(
  *   db.selectFrom("users").select(["users.id", "users.email"]),
  *   "id",
  * ).hasMany(
@@ -1275,13 +1261,13 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
  * @param qb - A Kysely select query builder to wrap.
  * @param keyBy - The key(s) to uniquely identify rows in the query result.
  *   Defaults to "id" if the row type has an "id" property.
- * @returns A new HydratableQueryBuilder that supports nested joins and hydration.
+ * @returns A new HydratedQueryBuilder that supports nested joins and hydration.
  */
 // Overload 1: keyBy provided - any row type
-export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
+export function hydrate<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	keyBy: KeyBy<QueryRow>,
-): HydratableQueryBuilder<
+): HydratedQueryBuilder<
 	/* Prefix:      */ "",
 	/* QueryDB:     */ QueryDB,
 	/* QueryTB:     */ QueryTB,
@@ -1293,9 +1279,9 @@ export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	/* HasJoin:     */ false
 >;
 // Overload 2: keyBy omitted - row must have 'id'
-export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow extends RowWithId>(
+export function hydrate<QueryDB, QueryTB extends keyof QueryDB, QueryRow extends RowWithId>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
-): HydratableQueryBuilder<
+): HydratedQueryBuilder<
 	/* Prefix:      */ "",
 	/* QueryDB:     */ QueryDB,
 	/* QueryTB:     */ QueryTB,
@@ -1307,8 +1293,8 @@ export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow ex
 	/* HasJoin:     */ false
 >;
 // Implementation
-export function hydrateQuery(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
-	return new HydratableQueryBuilderImpl({
+export function hydrate(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
+	return new HydratedQueryBuilderImpl({
 		qb,
 		prefix: "",
 

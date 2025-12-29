@@ -1,4 +1,4 @@
-export { createHydrator, type Hydrator, hydrate } from "./hydrator.ts";
-export { hydrateQuery } from "./query-builder.ts";
+export { createHydrator, type Hydrator, hydrateData } from "./hydrator.ts";
+export { hydrate } from "./query-builder.ts";
 export { HydratePlugin } from "./plugin.ts";
 export { map } from "./mapped-expression.ts";

@@ -170,12 +170,17 @@ interface HydratorProps<Input> {
 }
 
 /**
+ * A function that creates a Hydrator.
+ */
+type HydratorFactory<Input, Output> = (
+	keyBy: typeof createHydrator<Input>,
+) => Hydrator<Input, Output>;
+
+/**
  * A Hydrator instance or a function that creates one.
  * Used to allow inline Hydrator creation in method calls.
  */
-type HydratorArg<Input, Output> =
-	| Hydrator<Input, Output>
-	| ((keyBy: typeof createHydrator<Input>) => Hydrator<Input, Output>);
+type HydratorArg<Input, Output> = Hydrator<Input, Output> | HydratorFactory<Input, Output>;
 
 /**
  * A Hydrator instance for a child collection or a function that creates one.
@@ -701,19 +706,19 @@ export const createHydrator = <T = {}>(keyBy: KeyBy<NoInfer<T>>): Hydrator<T, {}
  *
  * The function will return a Promise that resolves to the hydrated output(s).
  */
-export function hydrate<Input, Output>(
+export function hydrateData<Input, Output>(
 	input: readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output[]>;
-export function hydrate<Input, Output>(
+export function hydrateData<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]>;
-export function hydrate<Input, Output>(
+export function hydrateData<Input, Output>(
 	input: Input,
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output>;
-export function hydrate<Input, Output>(
+export function hydrateData<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
