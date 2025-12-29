@@ -219,7 +219,7 @@ interface HydratedQueryBuilder<
 	 * ```
 	 * Notably, the selections made within the nested join are prefixed with the
 	 * `key`, but otherwise the SQL is exactly the same as it would be if you
-	 * wrote a flat query without the `hydrated` helper.
+	 * wrote a flat query without the `hydrate` helper.
 	 *
 	 * @param key - The key name for the collection in the output.
 	 * @param jb - A function that returns a new HydratedQueryBuilder for the
@@ -349,7 +349,7 @@ interface HydratedQueryBuilder<
 	 * ```
 	 * Notably, the selections made within the nested join are prefixed with the
 	 * `key`, but otherwise the SQL is exactly the same as it would be if you
-	 * wrote a flat query without the `hydrated` helper.
+	 * wrote a flat query without the `hydrate` helper.
 	 *
 	 * @param key - The key name for the collection in the output.
 	 * @param jb - A function that returns a new HydratedQueryBuilder for the
