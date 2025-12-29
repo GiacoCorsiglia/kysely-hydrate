@@ -19,6 +19,24 @@ import {
 } from "./hydrator.ts";
 
 ////////////////////////////////////////////////////////////////////
+// Optional keyBy when "id" is a valid key.
+////////////////////////////////////////////////////////////////////
+
+/**
+ * The default key used for deduplication when not explicitly specified.
+ * Only used when the row type has an "id" property.
+ */
+const DEFAULT_KEY_BY = "id";
+
+/**
+ * Interface representing a row that has the default key property.
+ * Used to constrain overloads where keyBy can be omitted.
+ */
+interface RowWithId {
+	[DEFAULT_KEY_BY]: any;
+}
+
+////////////////////////////////////////////////////////////////////
 // Interfaces.
 ////////////////////////////////////////////////////////////////////
 
@@ -207,9 +225,10 @@ interface HydratableQueryBuilder<
 	 * @param jb - A function that returns a new HydratableQueryBuilder for the
 	 * nested collection.
 	 * @param keyBy - The key(s) on the nested collection to uniquely identify
-	 * those entities.
+	 * those entities. Defaults to "id" if the nested row type has an "id" property.
 	 * @returns A new HydratableQueryBuilder with the nested collection added.
 	 */
+	// Overload 1: keyBy provided - any nested row type
 	hasMany<
 		K extends string,
 		JoinedQueryDB,
@@ -244,7 +263,53 @@ interface HydratableQueryBuilder<
 			/* IsNullable:  */ any,
 			/* HasJoin:     */ any
 		>,
-		keyBy: KeyBy<NestedHydratedRow>,
+		keyBy: KeyBy<NestedLocalRow>,
+	): HydratableQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ JoinedQueryDB,
+		/* QueryTB:     */ JoinedQueryTB,
+		/* QueryRow:    */ JoinedQueryRow,
+		/* LocalDB:     */ NestedLocalDB,
+		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<"", K>, NestedLocalRow>,
+		/* HydratedRow: */ Extend<HydratedRow, { [_ in K]: NestedHydratedRow[] }>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+	// Overload 2: keyBy omitted - nested LocalRow must have 'id'
+	hasMany<
+		K extends string,
+		JoinedQueryDB,
+		JoinedQueryTB extends keyof JoinedQueryDB,
+		JoinedQueryRow,
+		NestedLocalDB,
+		NestedLocalRow extends RowWithId,
+		NestedHydratedRow,
+	>(
+		key: K,
+		jb: (
+			nb: HydratableQueryBuilder<
+				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
+				/* QueryDB:     */ QueryDB,
+				/* QueryTB:     */ QueryTB,
+				/* QueryRow:    */ QueryRow,
+				/* LocalDB:     */ LocalDB,
+				/* LocalRow:    */ {}, // LocalRow is empty within the nesting.
+				/* HydratedRow: */ {}, // HydratedRow is empty within the nesting.
+				/* IsNullable:  */ false,
+				/* HasJoin:     */ false
+			>,
+		) => HydratableQueryBuilder<
+			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
+			/* QueryDB:     */ JoinedQueryDB,
+			/* QueryTB:     */ JoinedQueryTB,
+			/* QueryRow:    */ JoinedQueryRow,
+			/* LocalDB:     */ NestedLocalDB,
+			/* LocalRow:    */ NestedLocalRow,
+			/* HydratedRow: */ NestedHydratedRow,
+			// We don't care about nullability for joinMany().
+			/* IsNullable:  */ any,
+			/* HasJoin:     */ any
+		>,
 	): HydratableQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
@@ -290,9 +355,10 @@ interface HydratableQueryBuilder<
 	 * @param jb - A function that returns a new HydratableQueryBuilder for the
 	 * nested collection.
 	 * @param keyBy - The key(s) on the nested collection to uniquely identify
-	 * those entities.
+	 * those entities. Defaults to "id" if the nested row type has an "id" property.
 	 * @returns A new HydratableQueryBuilder with the nested collection added.
 	 */
+	// Overload 1: keyBy provided - any nested row type
 	hasOne<
 		K extends string,
 		JoinedQueryDB,
@@ -327,7 +393,56 @@ interface HydratableQueryBuilder<
 			/* IsNullable:  */ IsChildNullable,
 			/* HasJoin:     */ any
 		>,
-		keyBy: KeyBy<NestedHydratedRow>,
+		keyBy: KeyBy<NestedLocalRow>,
+	): HydratableQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ JoinedQueryDB,
+		/* QueryTB:     */ JoinedQueryTB,
+		/* QueryRow:    */ JoinedQueryRow,
+		/* LocalDB:     */ NestedLocalDB,
+		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<"", K>, NestedLocalRow>,
+		/* HydratedRow: */ Extend<
+			HydratedRow,
+			{ [_ in K]: IsChildNullable extends true ? NestedHydratedRow | null : NestedHydratedRow }
+		>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+	// Overload 2: keyBy omitted - nested LocalRow must have 'id'
+	hasOne<
+		K extends string,
+		JoinedQueryDB,
+		JoinedQueryTB extends keyof JoinedQueryDB,
+		JoinedQueryRow,
+		NestedLocalDB,
+		NestedLocalRow extends RowWithId,
+		NestedHydratedRow,
+		IsChildNullable extends boolean,
+	>(
+		key: K,
+		jb: (
+			nb: HydratableQueryBuilder<
+				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
+				/* QueryDB:     */ QueryDB,
+				/* QueryTB:     */ QueryTB,
+				/* QueryRow:    */ QueryRow,
+				/* LocalDB:     */ LocalDB,
+				/* LocalRow:    */ {}, // LocalRow is empty within the nesting.
+				/* HydratedRow: */ {}, // HydratedRow is empty within the nesting.
+				/* IsNullable:  */ false,
+				/* HasJoin:     */ false
+			>,
+		) => HydratableQueryBuilder<
+			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
+			/* QueryDB:     */ JoinedQueryDB,
+			/* QueryTB:     */ JoinedQueryTB,
+			/* QueryRow:    */ JoinedQueryRow,
+			/* LocalDB:     */ NestedLocalDB,
+			/* LocalRow:    */ NestedLocalRow,
+			/* HydratedRow: */ NestedHydratedRow,
+			/* IsNullable:  */ IsChildNullable,
+			/* HasJoin:     */ any
+		>,
 	): HydratableQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
@@ -349,8 +464,10 @@ interface HydratableQueryBuilder<
 	 * @param key - The key name for the nested object in the output.
 	 * @param jb - A function that returns a new HydratableQueryBuilder for the nested object.
 	 * @param keyBy - The key(s) on the nested object to uniquely identify it.
+	 *   Defaults to "id" if the nested row type has an "id" property.
 	 * @returns A new HydratableQueryBuilder with the nested object added.
 	 */
+	// Overload 1: keyBy provided - any nested row type
 	hasOneOrThrow<
 		K extends string,
 		JoinedQueryDB,
@@ -384,7 +501,52 @@ interface HydratableQueryBuilder<
 			/* IsNullable:  */ any,
 			/* HasJoin:     */ any
 		>,
-		keyBy: KeyBy<NestedHydratedRow>,
+		keyBy: KeyBy<NestedLocalRow>,
+	): HydratableQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ JoinedQueryDB,
+		/* QueryTB:     */ JoinedQueryTB,
+		/* QueryRow:    */ JoinedQueryRow,
+		/* LocalDB:     */ NestedLocalDB,
+		/* LocalRow:    */ LocalRow & ApplyPrefixes<MakePrefix<"", K>, NestedLocalRow>,
+		/* HydratedRow: */ Extend<HydratedRow, { [_ in K]: NestedHydratedRow }>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+	// Overload 2: keyBy omitted - nested LocalRow must have 'id'
+	hasOneOrThrow<
+		K extends string,
+		JoinedQueryDB,
+		JoinedQueryTB extends keyof JoinedQueryDB,
+		JoinedQueryRow,
+		NestedLocalDB,
+		NestedLocalRow extends RowWithId,
+		NestedHydratedRow,
+	>(
+		key: K,
+		jb: (
+			nb: HydratableQueryBuilder<
+				/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
+				/* QueryDB:     */ QueryDB,
+				/* QueryTB:     */ QueryTB,
+				/* QueryRow:    */ QueryRow,
+				/* LocalDB:     */ LocalDB,
+				/* LocalRow:    */ {}, // LocalRow is empty within the nesting.
+				/* HydratedRow: */ {}, // HydratedRow is empty within the nesting.
+				/* IsNullable:  */ false,
+				/* HasJoin:     */ false
+			>,
+		) => HydratableQueryBuilder<
+			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
+			/* QueryDB:     */ JoinedQueryDB,
+			/* QueryTB:     */ JoinedQueryTB,
+			/* QueryRow:    */ JoinedQueryRow,
+			/* LocalDB:     */ NestedLocalDB,
+			/* LocalRow:    */ NestedLocalRow,
+			/* HydratedRow: */ NestedHydratedRow,
+			/* IsNullable:  */ any,
+			/* HasJoin:     */ any
+		>,
 	): HydratableQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ JoinedQueryDB,
@@ -969,7 +1131,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 		mode: CollectionMode,
 		key: string,
 		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
-		keyBy: any,
+		keyBy: any = DEFAULT_KEY_BY,
 	) {
 		const inputNb = new HydratableQueryBuilderImpl({
 			qb: this.#props.qb,
@@ -997,7 +1159,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	hasMany(
 		key: string,
 		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
-		keyBy: any,
+		keyBy?: any,
 	) {
 		return this.#addJoin("many", key, jb, keyBy);
 	}
@@ -1005,7 +1167,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	hasOne(
 		key: string,
 		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
-		keyBy: any,
+		keyBy?: any,
 	): any {
 		return this.#addJoin("one", key, jb, keyBy);
 	}
@@ -1013,7 +1175,7 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
 	hasOneOrThrow(
 		key: string,
 		jb: (nb: AnyHydratableQueryBuilder) => HydratableQueryBuilderImpl,
-		keyBy: any,
+		keyBy?: any,
 	): any {
 		return this.#addJoin("oneOrThrow", key, jb, keyBy);
 	}
@@ -1112,8 +1274,10 @@ class HydratableQueryBuilderImpl implements AnyHydratableQueryBuilder {
  *
  * @param qb - A Kysely select query builder to wrap.
  * @param keyBy - The key(s) to uniquely identify rows in the query result.
+ *   Defaults to "id" if the row type has an "id" property.
  * @returns A new HydratableQueryBuilder that supports nested joins and hydration.
  */
+// Overload 1: keyBy provided - any row type
 export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	keyBy: KeyBy<QueryRow>,
@@ -1127,7 +1291,23 @@ export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow>(
 	/* HydratedRow: */ QueryRow,
 	/* IsNullable:  */ false,
 	/* HasJoin:     */ false
-> {
+>;
+// Overload 2: keyBy omitted - row must have 'id'
+export function hydrateQuery<QueryDB, QueryTB extends keyof QueryDB, QueryRow extends RowWithId>(
+	qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
+): HydratableQueryBuilder<
+	/* Prefix:      */ "",
+	/* QueryDB:     */ QueryDB,
+	/* QueryTB:     */ QueryTB,
+	/* QueryRow:    */ QueryRow,
+	/* LocalDB:     */ QueryDB,
+	/* LocalRow:    */ QueryRow,
+	/* HydratedRow: */ QueryRow,
+	/* IsNullable:  */ false,
+	/* HasJoin:     */ false
+>;
+// Implementation
+export function hydrateQuery(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
 	return new HydratableQueryBuilderImpl({
 		qb,
 		prefix: "",

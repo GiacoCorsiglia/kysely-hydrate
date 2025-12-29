@@ -778,3 +778,80 @@ test("toQuery: returns underlying kysely query builder", async () => {
 	assert.strictEqual(result.length, 1);
 	assert.strictEqual(result[0]?.id, 1);
 });
+
+//
+// Optional keyBy (defaults to "id")
+//
+
+test("hydrateQuery: keyBy defaults to 'id' when row has id", async () => {
+	// keyBy omitted - should default to "id"
+	const users = await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "<=", 2))
+		.execute();
+
+	assert.strictEqual(users.length, 2);
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[1]?.id, 2);
+});
+
+test("hasMany: keyBy defaults to 'id' when nested row has id", async () => {
+	// Both hydrateQuery and hasMany keyBy omitted
+	const users = await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id").select(["posts.id", "posts.title"]),
+		)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.posts.length, 4);
+	assert.deepStrictEqual(users[0]?.posts[0], { id: 1, title: "Post 1" });
+});
+
+test("hasOne: keyBy defaults to 'id' when nested row has id", async () => {
+	// Both hydrateQuery and hasOne keyBy omitted
+	const posts = await hydrateQuery(db.selectFrom("posts").select(["posts.id", "posts.title"]))
+		.modify((qb) => qb.where("posts.id", "=", 1))
+		.hasOne("author", ({ innerJoin }) =>
+			innerJoin("users", "users.id", "posts.user_id").select(["users.id", "users.username"]),
+		)
+		.execute();
+
+	assert.strictEqual(posts[0]?.author.username, "bob");
+});
+
+test("hasOneOrThrow: keyBy defaults to 'id' when nested row has id", async () => {
+	// Both hydrateQuery and hasOneOrThrow keyBy omitted
+	const users = await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.hasOneOrThrow("profile", ({ leftJoin }) =>
+			leftJoin("profiles", "profiles.user_id", "users.id").select(["profiles.id", "profiles.bio"]),
+		)
+		.execute();
+
+	assert.strictEqual(users[0]?.profile.bio, "Bio for user 1");
+});
+
+test("multiple nested levels: keyBy defaults to 'id' at all levels", async () => {
+	// All keyBy parameters omitted
+	const users = await hydrateQuery(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id")
+				.select(["posts.id", "posts.title"])
+				.hasMany("comments", ({ leftJoin }) =>
+					leftJoin("comments", "comments.post_id", "posts.id").select([
+						"comments.id",
+						"comments.content",
+					]),
+				),
+		)
+		.execute();
+
+	assert.strictEqual(users[0]?.posts.length, 4);
+	assert.strictEqual(users[0]?.posts[0]?.comments.length, 2);
+	assert.deepStrictEqual(users[0]?.posts[0]?.comments[0], {
+		id: 1,
+		content: "Comment 1 on post 1",
+	});
+});
