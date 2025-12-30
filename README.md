@@ -120,6 +120,44 @@ By design, Kysely has the following constraints:
 3. It returns query results from the underlying database driver verbatim, even
    if they don't match the expected type. -->
 
+## Table of Contents
+
+- [Installation](#installation)
+- [Hydrated queries with `hydrate()`](#hydrated-queries-with-hydrate)
+  - [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)
+  - [Modifying the underlying query with `.modify()`](#modifying-the-underlying-query-with-modify)
+  - [Inspecting the underlying query with `.toQuery()`](#inspecting-the-underlying-query-with-toquery)
+  - [Traditional joins with `.has*()`](#traditional-joins-with-has)
+    - [`.hasMany()`](#hasmany)
+    - [`.hasOne()`](#hasone)
+    - [`.hasOneOrThrow()`](#hasoneorthrow)
+  - [Application-level joins with `.attach*()`](#application-level-joins-with-attach)
+    - [`.attachMany()`](#attachmany)
+    - [`.attachOne()`](#attachone)
+    - [`.attachOneOrThrow()`](#attachoneorthrow-1)
+  - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
+  - [Computed properties with `.extras()`](#computed-properties-with-extras)
+  - [Excluded properties with `.omit()`](#excluded-properties-with-omit)
+  - [Composable mappings with `.with()`](#composable-mappings-with-with)
+  - [Execution](#execution)
+- [Hydrators](#hydrators)
+  - [Creating hydrators with `createHydrator()`](#creating-hydrators-with-createhydrator)
+  - [Manual hydration with `hydrateData()`](#manual-hydration-with-hydratedata)
+  - [Selecting and mapping fields with `.fields()`](#selecting-and-mapping-fields-with-fields)
+  - [Computed properties with `.extras()`](#computed-properties-with-extras-1)
+  - [Excluding fields with `.omit()`](#excluding-fields-with-omit)
+  - [Attached collections with `.attach*()`](#attached-collections-with-attach)
+  - [Prefixed collections with `.has*()`](#prefixed-collections-with-has)
+  - [Composing hydrators with `.extend()`](#composing-hydrators-with-extend)
+- [Kysely plugin](#kysely-plugin)
+  - [Runtime schema definition](#runtime-schema-definition)
+  - [Automatic per-column hydration](#automatic-per-column-hydration)
+  - [Ad-hoc mapping](#ad-hoc-mapping)
+  - [Subquery joins via JSON aggregation](#subquery-joins-via-json-aggregation)
+- [Code generation](#code-generation)
+- [FAQ](#faq)
+- [Acknowledgements](#acknowledgements)
+
 ## Installation
 
 Kysely is a peer dependency:
@@ -179,23 +217,27 @@ Examples:
 // If you don’t have an `"id"` column (or you need a composite key), pass `keyBy` explicitly.
 
 // Default keyBy (only allowed when the row type has an "id" property)
-// Result type: Array<{ id: number }>
 await hydrate(db.selectFrom("users").select(["users.id"])).execute();
+// ⬇
+type Result = Array<{ id: number }>;
 
 // Explicit keyBy (always allowed)
-// Result type: Array<{ id: number }>
 await hydrate(db.selectFrom("users").select(["users.id"]), "id").execute();
+// ⬇
+type Result = Array<{ id: number }>;
 
 // keyBy is REQUIRED when your primary key is not named "id"
-// Result type: Array<{ pk: number }>
 await hydrate(db.selectFrom("widgets").select(["widgets.pk"]), "pk").execute();
+// ⬇
+type Result = Array<{ pk: number }>;
 
 // Composite keyBy
-// Result type: Array<{ orderId: string, productId: string }>
 await hydrate(
   db.selectFrom("order_items").select(["order_items.orderId", "order_items.productId"]),
   ["orderId", "productId"],
 ).execute();
+// ⬇
+type Result = Array<{ orderId: string; productId: string }>;
 ```
 
 If `keyBy` (or any part of a composite key) is `null` or `undefined` for a row,
@@ -255,7 +297,6 @@ exact same effect on the underlying SQL—they just return a `HydratedQueryBuild
 so you can keep nesting and so your nested selects are automatically prefixed.
 
 ```ts
-// Result type: { id: number, posts: Array<{ id: number, title: string }> }[]
 const users = await hydrate(
   db.selectFrom("users").select("users.id"),
 ).hasMany(
@@ -266,6 +307,11 @@ const users = await hydrate(
       // Select columns for the nested object:
       .select(["posts.id", "posts.title"]),
 ).execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  posts: Array<{ id: number; title: string }>;
+}>;
 ```
 
 > [!NOTE]
@@ -311,27 +357,30 @@ Because the nested builder is itself a `HydratedQueryBuilder`, you can nest furt
 collections, add mappings, or use any other feature.
 
 ```ts
-// Result type: Array<{
-//   id: number,
-//   posts: Array<{
-//     id: number,
-//     title: string,
-//     comments: Array<{ id: number, content: string }>
-//   }>
-// }>
-.hasMany(
-  "posts",
-  ({ leftJoin }) =>
-    leftJoin("posts", "posts.userId", "users.id")
-      .select(["posts.id", "posts.title"])
-      // Nested hasMany:
-      .hasMany(
-        "comments",
-        ({ leftJoin }) =>
-          leftJoin("comments", "comments.postId", "posts.id")
-            .select(["comments.id", "comments.content"]),
-      ),
-)
+const users = await hydrate(db.selectFrom("users").select("users.id"))
+  .hasMany(
+    "posts",
+    ({ leftJoin }) =>
+      leftJoin("posts", "posts.userId", "users.id")
+        .select(["posts.id", "posts.title"])
+        // Nested hasMany:
+        .hasMany(
+          "comments",
+          ({ leftJoin }) =>
+            leftJoin("comments", "comments.postId", "posts.id")
+              .select(["comments.id", "comments.content"]),
+        ),
+  )
+  .execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  posts: Array<{
+    id: number;
+    title: string;
+    comments: Array<{ id: number; content: string }>;
+  }>;
+}>;
 ```
 
 > [!WARNING]
@@ -343,12 +392,7 @@ collections, add mappings, or use any other feature.
 You can define multiple sibling collections at the same level by chaining:
 
 ```ts
-// Result type: Array<{
-//   id: number,
-//   posts: Array<{ id: number, title: string }>,
-//   comments: Array<{ id: number, content: string }>
-// }>
-await hydrate(db.selectFrom("users").select(["users.id"]))
+const users = await hydrate(db.selectFrom("users").select(["users.id"]))
   .hasMany("posts", ({ leftJoin }) =>
     leftJoin("posts", "posts.userId", "users.id").select(["posts.id", "posts.title"]),
   )
@@ -356,6 +400,12 @@ await hydrate(db.selectFrom("users").select(["users.id"]))
     leftJoin("comments", "comments.userId", "users.id").select(["comments.id", "comments.content"]),
   )
   .execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  posts: Array<{ id: number; title: string }>;
+  comments: Array<{ id: number; content: string }>;
+}>;
 ```
 
 > [!WARNING]
@@ -378,15 +428,21 @@ Hydrates a single nested object (or `null`).
 - If you use `innerJoin` (or `crossJoin`), the result is non-nullable (`T`).
 
 ```ts
-// Result type: { author: { name: string } }
-.hasOne("author", ({ innerJoin }) =>
-  innerJoin("users", "users.id", "posts.authorId").select(["users.name"])
-)
+const posts = await hydrate(db.selectFrom("posts").select("posts.id"))
+  .hasOne("author", ({ innerJoin }) =>
+    innerJoin("users", "users.id", "posts.authorId").select(["users.name"])
+  )
+  .execute();
+// ⬇
+type NonNullableAuthor = { author: { name: string } };
 
-// Result type: { author: { name: string } | null }
-.hasOne("author", ({ leftJoin }) =>
-  leftJoin("users", "users.id", "posts.authorId").select(["users.name"])
-)
+const posts2 = await hydrate(db.selectFrom("posts").select("posts.id"))
+  .hasOne("author", ({ leftJoin }) =>
+    leftJoin("users", "users.id", "posts.authorId").select(["users.name"])
+  )
+  .execute();
+// ⬇
+type NullableAuthor = { author: { name: string } | null };
 ```
 
 > [!NOTE]
@@ -550,11 +606,10 @@ itself defaults to `"id"` when available).
 )
 ```
 
-Here’s an example where `toParent` is *not* `"id"`: attaching an author to posts
+Here's an example where `toParent` is *not* `"id"`: attaching an author to posts
 by matching `authors.id` to `posts.authorId`:
 
 ```ts
-// Result type: Array<{ id: number, title: string, authorId: number, author: { id: number, name: string } | null }>
 const posts = await hydrate(
   db.selectFrom("posts").select(["posts.id", "posts.title", "posts.authorId"]),
 )
@@ -569,6 +624,13 @@ const posts = await hydrate(
     { matchChild: "id", toParent: "authorId" },
   )
   .execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  title: string;
+  authorId: number;
+  author: { id: number; name: string } | null;
+}>;
 ```
 
 Because the `fetchFn` can be any async function, `.attachMany()` is also useful
@@ -649,11 +711,6 @@ those fields, but does **not** change the underlying SQL; the mapping runs in
 JavaScript after the query.
 
 ```ts
-// Result type: Array<{
-//   id: number,
-//   email: string,
-//   metadata: { plan: string }
-// }>
 const users = await hydrate(
   db.selectFrom("users").select(["users.id", "users.email", "users.metadata"]),
 )
@@ -664,6 +721,12 @@ const users = await hydrate(
     metadata: (json) => JSON.parse(json) as { plan: string },
   })
   .execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  email: string;
+  metadata: { plan: string };
+}>;
 ```
 
 ### Computed properties with `.extras()`
@@ -672,12 +735,6 @@ Add new properties derived from the entire row.  Extras do **not** change the
 underlying SQL; they are computed in JavaScript after the query runs.
 
 ```ts
-// Result type: Array<{
-//   id: number,
-//   firstName: string,
-//   lastName: string,
-//   fullName: string
-// }>
 const users = await hydrate(
   db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
 )
@@ -685,6 +742,13 @@ const users = await hydrate(
     fullName: (row) => `${row.firstName} ${row.lastName}`,
   })
   .execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+}>;
 ```
 
 ### Excluded properties with `.omit()`
@@ -695,7 +759,6 @@ or removing intermediate fields used for computed properties.  `.omit()` does
 result.
 
 ```ts
-// Result type: Array<{ id: number, fullName: string }>
 const users = await hydrate(
   db
     .selectFrom("users")
@@ -707,6 +770,8 @@ const users = await hydrate(
   // Hide intermediate fields
   .omit(["firstName", "lastName"])
   .execute();
+// ⬇
+type Result = Array<{ id: number; fullName: string }>;
 ```
 
 ### Composable mappings with `.with()`
@@ -731,15 +796,15 @@ const userHydrator = createHydrator<{
   .omit(["email"]);
 
 // Reuse in query #1:
-// Result type: Array<{ id: number, username: string, displayName: string }>
 const users = await hydrate(
   db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
 )
   .with(userHydrator)
   .execute();
+// ⬇
+type Result1 = Array<{ id: number; username: string; displayName: string }>;
 
 // Reuse in query #2 (different root query, same hydration rules):
-// Result type: { id: number, username: string, displayName: string } | undefined
 const author = await hydrate(
   db
     .selectFrom("posts")
@@ -749,6 +814,8 @@ const author = await hydrate(
 )
   .with(userHydrator)
   .executeTakeFirst();
+// ⬇
+type Result2 = { id: number; username: string; displayName: string } | undefined;
 ```
 
 ### Execution
@@ -827,16 +894,17 @@ type FlatRow = {
   posts$$title: string | null;
 };
 
-// Result type: Array<{
-//   id: number,
-//   username: string,
-//   posts: Array<{ id: number | null, title: string | null }>
-// }>
 const nestedUsers = await hydrateData(flatRows, (h) =>
   h()
     .fields({ id: true, username: true })
     .hasMany("posts", "posts$$", (h) => h().fields({ id: true, title: true })),
 );
+// ⬇
+type Result = Array<{
+  id: number;
+  username: string;
+  posts: Array<{ id: number | null; title: string | null }>;
+}>;
 ```
 
 > [!NOTE]
@@ -854,35 +922,34 @@ corresponding single hydrated object.
 Configures which fields to include and optionally how to transform them.
 
 This only affects the hydrated output—it does not change your SQL. With hydrators,
-any field you don’t explicitly include is omitted from the output.
+any field you don't explicitly include is omitted from the output.
 
 ```ts
 type UserRow = { id: number; username: string };
 
-// Result type: Array<{ id: number, username: string }>
-const hydrator = createHydrator<UserRow>()
-  .fields({
-    id: true,
-    username: true,
-  });
+const hydrator = createHydrator<UserRow>().fields({
+  id: true,
+  username: true,
+});
+// ⬇
+type Result = Array<{ id: number; username: string }>;
 ```
 
 ### Computed properties with `.extras()`
 
 Computes new fields from the input row.
 
-Extras are computed in JavaScript during hydration. They don’t change your SQL.
-
 ```ts
 type UserRow = { id: number; username: string; email: string };
 
-// Result type: Array<{ id: number, username: string, displayName: string }>
 const hydrator = createHydrator<UserRow>()
   .fields({ id: true, username: true, email: true })
   .extras({
     displayName: (u) => `${u.username} <${u.email}>`,
   })
   .omit(["email"]);
+// ⬇
+type Result = Array<{ id: number; username: string; displayName: string }>;
 ```
 
 ### Excluding fields with `.omit()`
@@ -894,10 +961,11 @@ fields by default.
 ```ts
 type UserRow = { id: number; passwordHash: string };
 
-// Result type: Array<{ id: number }>
 const hydrator = createHydrator<UserRow>()
   .fields({ id: true, passwordHash: true })
   .omit(["passwordHash"]);
+// ⬇
+type Result = Array<{ id: number }>;
 ```
 
 ### Attached collections with `.attach*()`
@@ -925,15 +993,6 @@ type FlatRow = {
   posts$$comments$$content: string | null;
 };
 
-// Result type: Array<{
-//   id: number,
-//   username: string,
-//   posts: Array<{
-//     id: number | null,
-//     title: string | null,
-//     comments: Array<{ id: number | null, content: string | null }>
-//   }>
-// }>
 const hydrator = createHydrator<FlatRow>()
   .fields({ id: true, username: true })
   .hasMany("posts", "posts$$", (h) =>
@@ -941,6 +1000,16 @@ const hydrator = createHydrator<FlatRow>()
       .fields({ id: true, title: true })
       .hasMany("comments", "comments$$", (h) => h().fields({ id: true, content: true })),
   );
+// ⬇
+type Result = Array<{
+  id: number;
+  username: string;
+  posts: Array<{
+    id: number | null;
+    title: string | null;
+    comments: Array<{ id: number | null; content: string | null }>;
+  }>;
+}>;
 ```
 
 `hasOne` and `hasOneOrThrow` are also supported.
@@ -971,8 +1040,9 @@ const withDisplayName = createHydrator<UserRow>()
   .extras({ displayName: (u) => `${u.username} <${u.email}>` })
   .omit(["email"]);
 
-// Result type: Hydrator<UserRow, { id: number, username: string, displayName: string }>
 const combined = base.extend(withDisplayName);
+// ⬇
+type Result = Hydrator<UserRow, { id: number; username: string; displayName: string }>;
 ```
 
 ## Kysely plugin
@@ -987,6 +1057,8 @@ provided runtime schema helpers (inspired by Drizzle ORM).  These helpers define
 the TypeScript type and the runtime transformations (e.g., parsing dates).
 
 ```ts
+// tables.ts
+
 import * as p from "kysely-hydrate/schema/postgres";
 
 export const users = p.createTable("public", "users", {
@@ -1004,7 +1076,7 @@ detects which columns are being selected and applies their `fromDriver` transfor
 ```ts
 import { HydratePlugin } from "kysely-hydrate";
 import { createDatabase } from "kysely-hydrate/schema/table";
-import * as t from "./tables";
+import * as t from "./tables"; // Defined above
 
 const database = createDatabase("public", t);
 
