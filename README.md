@@ -70,10 +70,10 @@ const users = await hydrate(
         ])
         // Application-level join:
         .attachOneOrThrow(
-          "authors",
+          "author",
           // Fetch authors (one query, batched over all posts):
           async (posts) =>
-            db.selectFrom("author")
+            db.selectFrom("authors")
               .select(["authors.id", "authors.name"])
               .where("authors.id", "in", posts.map((post) => post.authorId))
               .execute(),
@@ -96,7 +96,7 @@ const users = await hydrate(
         title: "..."
         authorId: AuthorId(3)
         likesCount: 42,
-        // Nested object resulting from `attachOne`.
+        // Nested object resulting from `attachOneOrThrow`.
         author: {
           id: AuthorId(3),
           name: "..."
@@ -1117,102 +1117,3 @@ Thank you to:
 - The [Drizzle project](https://orm.drizzle.team), for their column type definitions
 - [My boss](https://github.com/jamesvillarrubia) for pushing us to prefer a
   query builder over an ORM (so I basically built my own, lol)
-
-
-----------------
-
-EVERYTHING BELOW HERE IS DEFUNCT.  IT CAN BE DRAWN UPON FOR INSPIRATION BUT
-SHOULD BE LEFT ALONE.  DO NOT CONSIDER ANYTHING BELOW THIS LINE WHEN MATCHING
-THE TONE OR STYLE OF THE AUTHOR.
-
-
-## Overview
-
-
-When you perform SQL JOINs, you get flat rows with prefixed columns. This
-library helps you transform those flat results into nested, denormalized
-objects—similar to what you'd get from an ORM.
-
-## Query Builder API
-
-Chainable query builder that wraps Kysely's `SelectQueryBuilder` with
-`hasMany()` and `hasOne()` methods:
-
-```typescript
-import { hydrate } from "kysely-hydrate";
-
-const result = await hydrate(db.selectFrom("users").select(["users.id", "users.email"]), "id")
-  .hasMany(
-    "posts",
-    ({ leftJoin }) =>
-      leftJoin("posts", "posts.user_id", "users.id")
-        .select(["posts.id", "posts.title"]),
-    "id"
-  )
-  .hasOne(
-    "profile",
-    ({ leftJoin }) =>
-      leftJoin("profiles", "profiles.user_id", "users.id")
-        .select(["profiles.bio"]),
-    "id"
-  )
-  .execute();
-
-// Result: [{ id: 1, email: "...", posts: [...], profile: {...} }]
-```
-
-## Hydratable API
-
-Configuration-based approach for transforming already-fetched flat rows:
-
-```typescript
-import { createHydrator, hydrateData } from "kysely-hydrate";
-
-interface FlatRow {
-  id: number;
-  name: string;
-  posts__id: number;
-  posts__title: string;
-}
-
-const hydrator = createHydrator<FlatRow>("id")
-  .fields({ id: true, name: true })
-  .hasMany("posts", "posts__", (keyBy) =>
-    keyBy("id").fields({ id: true, title: true })
-  );
-
-const nested = await hydrateData(flatRows, hydrator);
-```
-
-## Application-Level Joins
-
-Both APIs support `.attachMany()`, `.attachOne()`, and `.attachOneOrThrow()`
-methods for performing application-level joins.
-
-For example:
-```ts
-const posts = [
-  { id: 1, title: "Post 1", userId: 1 },
-  { id: 2, title: "Post 2", userId: 1 },
-  { id: 3, title: "Post 3", userId: 2 },
-  { id: 4, title: "Post 4", userId: 3 },
-];
-
-const postsWithUser = hydrateData(posts, (keyBy) =>
-  keyBy("id")
-    .fields({
-      id: true,
-      title: true,
-    })
-    .attachOne(
-      "user",
-      async (posts) => await getUsersById(posts.map((p) => p.userId)),
-      { keyBy: "id", compareTo: "userId" }
-    ),
-);
-
-// Result: [{ id: 1, title: "Post 1", user: { email: "..." }  }, ...]
-```
-
-In the above example, the fetch function (which calls `getUsersById`) is called
-once, with the entire set of posts.
