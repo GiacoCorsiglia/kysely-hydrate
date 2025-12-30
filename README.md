@@ -71,7 +71,7 @@ const users = await hydrate(
         // Application-level join:
         .attachOneOrThrow(
           "authors",
-          // This async function is called exactly once, with all posts:
+          // Fetch authors (one query, batched over all posts):
           async (posts) =>
             db.selectFrom("author")
               .select(["authors.id", "authors.name"])
@@ -130,161 +130,930 @@ npm install kysely kysely-hydrate
 
 ## Hydrated queries with `hydrate()`
 
-The `hydrate` helper accepts an unexecuted Kysely select query
+The `hydrate` helper accepts an unexecuted Kysely select query and returns a
+`HydratedQueryBuilder`, which lets you
+
+- Add **traditional joins** that hydrate into nested properties (`hasMany`, `hasOne`, `hasOneOrThrow`)
+- Add **application-level joins** that batch-fetch related rows (`attachMany`, `attachOne`, `attachOneOrThrow`)
+- Add **mappings and computed fields** (`mapFields`, `extras`) and then clean up (`omit`)
+- Still use Kysely query builder methods via `.modify(qb => ...)`, and then execute with `execute*()`
+
+It’s still “just Kysely”—you can write whatever SQL you want—but you get back a
+result that looks like what your application wants to work with: nested objects,
+arrays for relations, and rich types you can map in one place.
+
 
 ```ts
 import { hydrate } from "kysely-hydrate";
 
-const result = await hydrate(
-  db.selectFrom("users").select(["id"])
-).execute()
+// Result type: Array<{ id: number }>
+const users = await hydrate(db.selectFrom("users").select(["users.id"])).execute();
 ```
 
-From there, you can add joins and more.  The return type is a `HydratedQueryBuilder`
+### Keying and deduplication with `keyBy`
+
+Hydration works by grouping the flat rows returned by your query into entities.
+The `keyBy` argument tells Kysely Hydrate **how to uniquely identify each entity**
+in the result set, so it can:
+
+- Deduplicate parent rows when joins multiply them (NxM output).
+- Group nested collections correctly.
+
+`keyBy` can be either:
+
+- A single key, like `"id"` or `"pk"`
+- A composite key, like `["orderId", "productId"]`
+
+Single key values will be compared via reference equality (`===`), and composite
+key values will be stringified for comparison.
+
+#### Special `"id"` behavior:
+
+- If the row type has an `"id"` property, `keyBy` is **optional** and defaults to `"id"`.
+- If the row type does **not** have an `"id"` property, you must provide `keyBy`.
+
+Examples:
+
+```ts
+// Most examples in this README omit the `keyBy` argument when it defaults to `"id"`.
+// If you don’t have an `"id"` column (or you need a composite key), pass `keyBy` explicitly.
+
+// Default keyBy (only allowed when the row type has an "id" property)
+// Result type: Array<{ id: number }>
+await hydrate(db.selectFrom("users").select(["users.id"])).execute();
+
+// Explicit keyBy (always allowed)
+// Result type: Array<{ id: number }>
+await hydrate(db.selectFrom("users").select(["users.id"]), "id").execute();
+
+// keyBy is REQUIRED when your primary key is not named "id"
+// Result type: Array<{ pk: number }>
+await hydrate(db.selectFrom("widgets").select(["widgets.pk"]), "pk").execute();
+
+// Composite keyBy
+// Result type: Array<{ orderId: string, productId: string }>
+await hydrate(
+  db.selectFrom("order_items").select(["order_items.orderId", "order_items.productId"]),
+  ["orderId", "productId"],
+).execute();
+```
+
+If `keyBy` (or any part of a composite key) is `null` or `undefined` for a row,
+that row is treated as “no entity” and is skipped for that entity level. This is
+how left-joined nested entities resolve to `Entity[] | null` rather than objects
+full of `null` fields.
 
 ### Modifying the underlying query with `.modify()`
 
-Example of adding where clauses, etc.
+The `modify` method allows you to apply changes to the underlying Kysely query, such as adding `where` clauses, `orderBy` clauses, or pagination.
 
-### Collection modes
+```ts
+// Get the first 10 active users
+const users = await hydrate(
+  db.selectFrom("users").select(["id", "name"])
+)
+  .modify((qb) => qb.where("isActive", "=", true).limit(10))
+  .execute();
+```
 
-When defining nested collections, three modes are supported:
+This is useful once you have added some joins, and wish to write a `WHERE`
+clause using a joined column.
 
-- `"many"`: Returns an array of nested objects
-- `"one"`: Returns a single nested object or `null` if not found
-- `"oneOrThrow"`: Returns a single nested object or throws an error if not found
+### Inspecting the underlying query with `.toQuery()`
 
-These modes are used as suffixes for each of the relational query methods
-(`has*()`, `attach*()`, and `select*()`).
+Sometimes you just want to see what SQL you’ve built.  `HydratedQueryBuilder.toQuery()`
+returns the underlying Kysely `SelectQueryBuilder`, so you can call `.compile()`
+or use any other Kysely tooling you’re used to.
+
+```ts
+const builder = hydrate(db.selectFrom("users").select(["users.id"]))
+  .hasMany("posts", ({ leftJoin }) =>
+    leftJoin("posts", "posts.userId", "users.id").select(["posts.id"]),
+  );
+
+const compiled = builder.toQuery().compile();
+console.log(compiled.sql);
+console.log(compiled.parameters);
+```
 
 ### Traditional joins with `.has*()`
 
+These methods add SQL joins to your query and hydrate the results into nested objects.
+
+> [!TIP]
+> The `.has*()` method suffixes are reused throughout the library:
+> - `*Many(...)` methods produce an array (`T[]`)
+> - `*One(...)` methods produce a nullable object (`T | null`)
+> - `*OneOrThrow(...)` methods produce a required object (`T`) and throw if it’s missing
+
 #### `.hasMany()`
 
-- `innerJoin()`
-- `leftJoin()`
-- ...
+Hydrates a nested array of objects.  It accepts a callback that receives a
+nested `HydratedQueryBuilder` instance, which supports all the standard join methods
+(`innerJoin`, `leftJoin`, etc.). The join methods behave **exactly** like their Kysely counterparts and have the
+exact same effect on the underlying SQL—they just return a `HydratedQueryBuilder`
+so you can keep nesting and so your nested selects are automatically prefixed.
 
-You can use the destructured form (`({ leftJoin }) => leftJoin(...)`)
-
-This is another `HydratedQueryBuilder` so you can do more levels of nesting, add
-mappings, etc.
+```ts
+// Result type: { id: number, posts: Array<{ id: number, title: string }> }[]
+const users = await hydrate(
+  db.selectFrom("users").select("users.id"),
+).hasMany(
+  "posts",
+  // Destructure the join method you want (e.g., leftJoin, innerJoin):
+  ({ leftJoin }) =>
+    leftJoin("posts", "posts.userId", "users.id")
+      // Select columns for the nested object:
+      .select(["posts.id", "posts.title"]),
+).execute();
+```
 
 > [!NOTE]
-> Don't do `.modify(qb => qb.select(...))`.  Always use
-> `HydratedQueryBuilder.select()` so that your selections are automatically prefixed.
+> Like `hydrate()`, the last argument to `hasMany()` is `keyBy` (see
+> [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)).
+> It defaults to `"id"` if your nested row type has an `"id"` property; otherwise, it is required.
+>
+> For example:
+>
+> - If the nested row has an `id` column, you can omit it:
+>   - `.hasMany("posts", (jb) => jb.leftJoin(...).select([...]))`
+> - If the nested primary key is named something else, pass it:
+>   - `.hasMany("posts", (jb) => jb.leftJoin(...).select([...]), "pk")`
+> - If the nested entity has a composite key, pass both keys:
+>   - `.hasMany("items", (jb) => jb.leftJoin(...).select([...]), ["orderId", "productId"])`
 
+##### Supported join methods
+
+All of these exist on the nested builder:
+
+- `innerJoin`
+- `leftJoin`
+- `crossJoin`
+- `innerJoinLateral`
+- `leftJoinLateral`
+- `crossJoinLateral`
+
+`RIGHT JOIN` and `FULL JOIN` are intentionally omitted because they don’t map
+cleanly to ORM-style nested results (and are usually a sign you want a different
+shape for your root query).
+
+##### How nested join building works
+
+Inside the `.hasMany("posts", (jb) => ...)` callback, you are still operating on
+the same underlying query:
+
+- Calling `jb.leftJoin(...)` adds a real `LEFT JOIN` to your SQL.
+- Calling `jb.select(...)` adds real selections to your SQL, but aliases them
+  under the collection key (e.g., `posts$$title`) so hydration can reconstruct
+  nested objects.
+
+Because the nested builder is itself a `HydratedQueryBuilder`, you can nest further
+collections, add mappings, or use any other feature.
+
+```ts
+// Result type: Array<{
+//   id: number,
+//   posts: Array<{
+//     id: number,
+//     title: string,
+//     comments: Array<{ id: number, content: string }>
+//   }>
+// }>
+.hasMany(
+  "posts",
+  ({ leftJoin }) =>
+    leftJoin("posts", "posts.userId", "users.id")
+      .select(["posts.id", "posts.title"])
+      // Nested hasMany:
+      .hasMany(
+        "comments",
+        ({ leftJoin }) =>
+          leftJoin("comments", "comments.postId", "posts.id")
+            .select(["comments.id", "comments.content"]),
+      ),
+)
+```
+
+> [!WARNING]
+> Don't use `.modify(qb => qb.select(...))` inside the callback.  Always use
+> the builder's `.select()` method so that your selections are automatically prefixed.
+
+##### Chaining multiple `.hasMany()` calls
+
+You can define multiple sibling collections at the same level by chaining:
+
+```ts
+// Result type: Array<{
+//   id: number,
+//   posts: Array<{ id: number, title: string }>,
+//   comments: Array<{ id: number, content: string }>
+// }>
+await hydrate(db.selectFrom("users").select(["users.id"]))
+  .hasMany("posts", ({ leftJoin }) =>
+    leftJoin("posts", "posts.userId", "users.id").select(["posts.id", "posts.title"]),
+  )
+  .hasMany("comments", ({ leftJoin }) =>
+    leftJoin("comments", "comments.userId", "users.id").select(["comments.id", "comments.content"]),
+  )
+  .execute();
+```
+
+> [!WARNING]
+> Kysely Hydrate doesn’t “hide” SQL complexity—you’re still writing SQL. When you
+> chain many `.has*()` calls, you are adding more `JOIN`s to a single query. Be
+> mindful of join cardinality and row explosion. When in doubt, inspect what
+> you’ve built (see [Inspecting the underlying query with `.toQuery()`](#inspecting-the-underlying-query-with-toquery)).
+>
+> Also note that a nested `.modify(qb => ...)` is still modifying the *same* underlying
+> SQL query. That means adding a `WHERE` clause inside a `.hasMany(...)` callback will
+> filter the entire result set, not “just that collection”. If you need to filter a
+> collection per-parent (e.g., “latest 3 posts per user”), you may want a lateral join
+> (or any other SQL pattern that scopes the filtering to the joined relation).
 
 #### `.hasOne()`
 
-Works like hasMany but takes the first | null
+Hydrates a single nested object (or `null`).
 
-Make note of special handling for innerJoin (or crossJoin---these are non-nullable) versus leftJoin
+- If you use `leftJoin`, the result is nullable (`T | null`).
+- If you use `innerJoin` (or `crossJoin`), the result is non-nullable (`T`).
 
-##### `.hasOneOrThrow()`
+```ts
+// Result type: { author: { name: string } }
+.hasOne("author", ({ innerJoin }) =>
+  innerJoin("users", "users.id", "posts.authorId").select(["users.name"])
+)
 
-in case you need to write a leftJoin but can guarantee non-nullability anyway
+// Result type: { author: { name: string } | null }
+.hasOne("author", ({ leftJoin }) =>
+  leftJoin("users", "users.id", "posts.authorId").select(["users.name"])
+)
+```
 
-#### SQL output (how does it owrk)
+> [!NOTE]
+> Like `hydrate()`, `hasOne()` also accepts an optional final `keyBy` argument with the
+> same semantics (see [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)).
 
-Kysely Hydrate modifies your SQL in exactly one way: it aliases nested selects.
-For example: ...
+#### `.hasOneOrThrow()`
 
-Some examples of SQL output for combinations of collections
+Similar to `.hasOne()`, but guarantees a non-nullable result.  If the nested object
+is missing (i.e., all selected columns are null), it throws an error.
 
-#### Combining joins
+Use this when you need to perform a `leftJoin` (e.g., for performance or complex logic)
+but you know the record must exist.
 
-You can chain `leftJoin(...).innerJoin()` etc within the same `hasMany` to
-combine columns from multiple
+> [!NOTE]
+> Like `hydrate()`, `hasOneOrThrow()` also accepts an optional final `keyBy` argument with the
+> same semantics (see [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)).
 
-You can also just do `hasOneOrThrow('foo', (jb) => jb.select([...]))` without a join
-if you want to get a nested object
+#### SQL output
+
+Kysely Hydrate produces the SQL you tell it to with exactly one exception: it
+aliases nested selections to avoid naming collisions.
+
+For example, `users.id` remains `users.id`, but `posts.id` nested under "posts"
+becomes `posts$$id`.  The hydration layer then un-flattens these aliases back
+into nested objects.
+
+```ts
+const query = hydrate(
+  db.selectFrom("users").select(["users.id", "users.name"])
+).hasMany(
+  "posts",
+  ({ leftJoin }) =>
+    leftJoin("posts", "posts.userId", "users.id")
+      .select(["posts.id", "posts.title"]),
+);
+```
+
+The above produces the following SQL:
+
+```sql
+SELECT
+  users.id,
+  users.name,
+  posts.id as posts$$id,
+  posts.title as posts$$title
+FROM users
+LEFT JOIN posts ON posts.userId = users.id
+```
+
+#### Combining joins within one entity
+
+You can chain multiple joins within a single `.has*()` block to combine columns
+from multiple tables into one nested object.
+
+```ts
+.hasOne(
+  "details",
+  ({ leftJoin }) =>
+    leftJoin("profiles", "profiles.userId", "users.id")
+      .leftJoin("settings", "settings.userId", "users.id")
+      .select(["profiles.bio", "settings.theme"])
+)
+```
+
+You can also use `.hasOneOrThrow()` without any join at all, simply to group
+top-level columns into a nested object:
+
+```ts
+.hasOneOrThrow("meta", (jb) => jb.select(["users.createdAt", "users.updatedAt"]))
+```
 
 #### Advanced use cases
 
-Show an example with a CTE and a group by clause that then gets some hydrated joins inside of it.
+Kysely Hydrate works on *any* select query Kysely can build—CTEs, grouping, having
+clauses, custom expressions, whatever. The only thing it does differently is alias
+nested selections so it can reassemble them into nested objects.
+
+Here’s an example mixes a CTE, `GROUP BY` + `HAVING`, and nested joins:
+
+```ts
+// Result type: Array<{
+//   id: number,
+//   username: string,
+//   postCount: number,
+//   latestPostAt: Date | null,
+//   posts: Array<{
+//     id: number,
+//     title: string,
+//     createdAt: Date,
+//     comments: Array<{ id: number, content: string }>
+//   }>
+// }>
+const activeAuthors = db
+  .with("active_authors", (db) =>
+    db
+      .selectFrom("users")
+      .leftJoin("posts", "posts.userId", "users.id")
+      .select(["users.id", "users.username"])
+      .select((eb) => [
+        eb.fn.count("posts.id").as("postCount"),
+        eb.fn.max("posts.createdAt").as("latestPostAt"),
+      ])
+      .groupBy(["users.id", "users.username"])
+      .having((eb) => eb.fn.count("posts.id"), ">", 0),
+  )
+  .selectFrom("active_authors")
+  .select(["active_authors.id", "active_authors.username", "active_authors.postCount", "active_authors.latestPostAt"]);
+
+const result = await hydrate(activeAuthors)
+  .hasMany("posts", ({ leftJoin }) =>
+    leftJoin("posts as p", "p.userId", "active_authors.id")
+      .select(["p.id", "p.title", "p.createdAt"])
+      .hasMany("comments", ({ leftJoin }) =>
+        leftJoin("comments", "comments.postId", "p.id").select(["comments.id", "comments.content"]),
+      ),
+  )
+  .execute();
+```
 
 ### Application-level joins with `.attach*()`
 
-Explain that each attach fetch fn is called exactly once per execution with the *input*.
+Application-level joins allow you to fetch related data in separate queries
+(actually, with any async function) while still receiving a nested result.
+
+
+Kysely Hydrate handles the "N+1" problem automatically: the `fetchFn` you
+provide is called **exactly once** per query execution, receiving all parent
+rows at once.  This allows you to batch load the related data efficiently.
 
 ### `.attachMany()`
 
-Explain the AttachedKeyArgs thing with several examples
+Attaches a nested array of objects.
+
+#### Matching attached rows back to parents (`{ matchChild, toParent }`)
+
+The third argument to `.attachMany()` (and the other `.attach*()` methods) tells
+Kysely Hydrate how to match the attached rows back to their parents:
+
+- `matchChild`: the key (or keys) on the attached rows
+- `toParent` (optional): the key (or keys) on the parent rows
+
+If you omit `toParent`, it defaults to the parent collection’s `keyBy` (which
+itself defaults to `"id"` when available).
+
+```ts
+.attachMany(
+  "posts",
+  async (users) => {
+    // 1. Get all user IDs from the parent rows
+    const userIds = users.map(u => u.id);
+
+    // 2. Fetch all posts for these users in one query
+    return db.selectFrom("posts")
+      .select(["id", "title", "userId"])
+      .where("userId", "in", userIds)
+      .execute();
+  },
+  // 3. Define how to match child rows (posts) back to parent rows (users)
+  { matchChild: "userId" }
+)
+```
+
+Here’s an example where `toParent` is *not* `"id"`: attaching an author to posts
+by matching `authors.id` to `posts.authorId`:
+
+```ts
+// Result type: Array<{ id: number, title: string, authorId: number, author: { id: number, name: string } | null }>
+const posts = await hydrate(
+  db.selectFrom("posts").select(["posts.id", "posts.title", "posts.authorId"]),
+)
+  .attachOne(
+    "author",
+    async (posts) =>
+      db
+        .selectFrom("authors")
+        .select(["authors.id", "authors.name"])
+        .where("authors.id", "in", posts.map((p) => p.authorId))
+        .execute(),
+    { matchChild: "id", toParent: "authorId" },
+  )
+  .execute();
+```
+
+Because the `fetchFn` can be any async function, `.attachMany()` is also useful
+for things that *aren’t* database rows: HTTP calls, caches, etc.
+
+```ts
+// Example: Attach feature flags from a cached HTTP endpoint
+const users = await hydrate(db.selectFrom("users").select(["users.id", "users.email"]))
+  .attachMany(
+    "flags",
+    async (users) => {
+      const userIds = users.map((u) => u.id);
+
+      // This could be backed by a CDN, an in-memory cache, Redis, etc.
+      const result = await flagsClient.getFlagsForUsers(userIds);
+
+      // Must return an array/iterable of rows with a key that matches back to the parent
+      return result.flags.map((f) => ({ userId: f.userId, name: f.name }));
+    },
+    { matchChild: "userId" },
+  )
+  .execute();
+```
+
+The guarantee that your `fetchFn` runs exactly once holds even when the attach
+is nested (for example: attaching tags to posts inside a `hasMany("posts", ...)`):
+your function will still run once, with the full batch of parent inputs.
+
+```ts
+// Example: Attaching tags to posts, where posts are nested under users
+hydrate(usersQuery)
+  .hasMany("posts", ({ leftJoin }) =>
+    leftJoin("posts", ...)
+      .select(...)
+      // Attach tags to posts:
+      .attachMany(
+        "tags",
+        // Called once with ALL posts from ALL users
+        async (posts) => {
+           const postIds = posts.map(p => p.id);
+           return db.selectFrom("tags")...execute();
+        },
+        { matchChild: "postId", toParent: "id" }
+      ),
+  )
+```
 
 ### `.attachOne()`
 
+Attaches a single nested object (nullable).
+
+```ts
+.attachOne(
+  "latestPost",
+  // Returns an array/iterable of posts (potentially multiple per user)
+  async (users) => { /* ... fetch latest post for each user ... */ },
+  { matchChild: "userId", toParent: "id" }
+)
+```
+
+**Note:** The `fetchFn` for `attachOne` should still return an **array/iterable**
+containing *all* matching records for the whole batch of parents. Kysely Hydrate
+groups those child rows per parent and then takes the **first** match (or `null`
+if there is none).
+
+This means **ordering is your responsibility**. If you need “latest post”, make
+sure your SQL orders the results appropriately (or use whatever SQL you want:
+window functions, `DISTINCT ON`, lateral joins, etc.).
+
 #### `.attachOneOrThrow()`
+
+Attaches a single nested object and throws if it is missing.
 
 ### Mapped properties with `.mapFields()`
 
+Transform individual fields in the result set.  This changes the output type for
+those fields, but does **not** change the underlying SQL; the mapping runs in
+JavaScript after the query.
+
+```ts
+// Result type: Array<{
+//   id: number,
+//   email: string,
+//   metadata: { plan: string }
+// }>
+const users = await hydrate(
+  db.selectFrom("users").select(["users.id", "users.email", "users.metadata"]),
+)
+  .mapFields({
+    // email: string -> string
+    email: (email) => email.toLowerCase(),
+    // metadata: string -> { plan: string }
+    metadata: (json) => JSON.parse(json) as { plan: string },
+  })
+  .execute();
+```
+
 ### Computed properties with `.extras()`
+
+Add new properties derived from the entire row.  Extras do **not** change the
+underlying SQL; they are computed in JavaScript after the query runs.
+
+```ts
+// Result type: Array<{
+//   id: number,
+//   firstName: string,
+//   lastName: string,
+//   fullName: string
+// }>
+const users = await hydrate(
+  db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
+)
+  .extras({
+    fullName: (row) => `${row.firstName} ${row.lastName}`,
+  })
+  .execute();
+```
 
 ### Excluded properties with `.omit()`
 
+Remove fields from the final output.  This is useful for cleaning up sensitive data
+or removing intermediate fields used for computed properties.  `.omit()` does
+**not** change the underlying SQL; it only removes properties from the hydrated
+result.
+
+```ts
+// Result type: Array<{ id: number, fullName: string }>
+const users = await hydrate(
+  db
+    .selectFrom("users")
+    .select(["users.id", "users.firstName", "users.lastName"]),
+)
+  .extras({
+    fullName: (row) => `${row.firstName} ${row.lastName}`,
+  })
+  // Hide intermediate fields
+  .omit(["firstName", "lastName"])
+  .execute();
+```
+
 ### Composable mappings with `.with()`
 
-See below for Hydrators.
+Re-use hydration logic by importing it from another `Hydrator`.  This is great for
+sharing consistent formatting logic across different queries.  `.with()` does
+**not** change the underlying SQL; it only composes hydration configuration
+(see [Hydrators](#hydrators) below).
+
+```ts
+import { createHydrator } from "kysely-hydrate";
+
+// Define once:
+const userHydrator = createHydrator<{
+  id: number;
+  username: string;
+  email: string;
+}>("id")
+  .extras({
+    displayName: (u) => `${u.username} <${u.email}>`,
+  })
+  .omit(["email"]);
+
+// Reuse in query #1:
+// Result type: Array<{ id: number, username: string, displayName: string }>
+const users = await hydrate(
+  db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+)
+  .with(userHydrator)
+  .execute();
+
+// Reuse in query #2 (different root query, same hydration rules):
+// Result type: { id: number, username: string, displayName: string } | undefined
+const author = await hydrate(
+  db
+    .selectFrom("posts")
+    .innerJoin("users", "users.id", "posts.authorId")
+    .select(["users.id", "users.username", "users.email"])
+    .where("posts.id", "=", 123),
+)
+  .with(userHydrator)
+  .executeTakeFirst();
+```
 
 ### Execution
 
-execute
-executeTakeFirst
-executeTakeFirstOrThrow
+To run the query and get the hydrated results, use one of the standard execution methods.
+These have the same semantics as Kysely's methods but return the hydrated types.
+
+- `execute()`: Returns `Promise<Result[]>`
+- `executeTakeFirst()`: Returns `Promise<Result | undefined>`
+- `executeTakeFirstOrThrow()`: Returns `Promise<Result>` (throws if empty)
 
 ## Hydrators
 
-Explain that this is a lower level API
+The `hydrate()` API described above is the happy path when you’re building a
+query in Kysely and want nested results.
 
-### `.fields()`
+Hydrators are the lower-level API: they let you take *already-fetched* rows
+(from Kysely, raw SQL, a view, an API, anywhere) and hydrate them into nested
+objects using the same core logic.  `hydrate` uses a `Hydrator` under the hood.
 
-### `.extras()`
+Use hydrators when:
 
-### `.omit()`
+- You already have flat rows and want to hydrate them; or,
+- You want to define reusable hydration logic independent of any particular query.
 
-### Attached collections with `.attach*()`
-
-Works the same as with the `hydrate()` API.
-
-### Prefixed collections with `.has*()`
-
-In addition to describing the API, Explain why this is not good enough in
-general...the reason is that when you do a left join, each column from the
-joined table becomes individually nullable in the flat output type.  But that's
-not what you want for nested collections
-
-### Composing hydrators with `.extend()`
+> [!NOTE]
+> Hydrators don’t “know” what you selected. Unlike `hydrate()`, you need to
+> specify what you want in the output using `.fields()` (and/or `.extras()`).
 
 ### Creating hydrators with `createHydrator()`
 
+Creates a new, empty hydrator configuration.
+
+Like `hydrate()`, hydrators use `keyBy` to group and deduplicate entities. The
+same rules apply (see [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)).
+
+```ts
+// Group by "id"
+const h = createHydrator<User>();
+
+// Group by composite key
+const h2 = createHydrator<OrderItem>(["orderId", "productId"]);
+```
+
 ### Manual hydration with `hydrateData()`
+
+Hydrates an array of flat objects using a configured hydrator.
+
+```ts
+const flatRows = await db
+  .selectFrom("users")
+  .leftJoin("posts", "posts.userId", "users.id")
+  .select([
+    "users.id",
+    "users.username",
+    // Manual prefixing to match the hydrator:
+    "posts.id as posts$$id",
+    "posts.title as posts$$title",
+  ])
+  .execute();
+
+const nestedUsers = await hydrateData(flatRows, hydrator);
+```
+
+You can create the `hydrator` using the dedicated `createHydrator()` helper (see
+below), or you can create it inline by providing a callback.
+
+The inline form is handy for small, one-off hydrations, or for keeping the
+hydration logic right next to the query that produces the flat rows:
+
+```ts
+type FlatRow = {
+  id: number;
+  username: string;
+  posts$$id: number | null;
+  posts$$title: string | null;
+};
+
+// Result type: Array<{
+//   id: number,
+//   username: string,
+//   posts: Array<{ id: number | null, title: string | null }>
+// }>
+const nestedUsers = await hydrateData(flatRows, (h) =>
+  h()
+    .fields({ id: true, username: true })
+    .hasMany("posts", "posts$$", (h) => h().fields({ id: true, title: true })),
+);
+```
+
+> [!NOTE]
+> The `h(...)` function is `createHydrator` in callback form. It accepts an optional
+> `keyBy` argument with the same semantics described above:
+> - `h()` defaults to `"id"` only when your row type has an `id` field
+> - `h("pk")` for a non-`id` primary key
+> - `h(["orderId", "productId"])` for composite keys
+
+`hydrateData()` also accepts a single object (not just arrays) and returns the
+corresponding single hydrated object.
+
+### Selecting and mapping fields with `.fields()`
+
+Configures which fields to include and optionally how to transform them.
+
+This only affects the hydrated output—it does not change your SQL. With hydrators,
+any field you don’t explicitly include is omitted from the output.
+
+```ts
+type UserRow = { id: number; username: string };
+
+// Result type: Array<{ id: number, username: string }>
+const hydrator = createHydrator<UserRow>()
+  .fields({
+    id: true,
+    username: true,
+  });
+```
+
+### Computed properties with `.extras()`
+
+Computes new fields from the input row.
+
+Extras are computed in JavaScript during hydration. They don’t change your SQL.
+
+```ts
+type UserRow = { id: number; username: string; email: string };
+
+// Result type: Array<{ id: number, username: string, displayName: string }>
+const hydrator = createHydrator<UserRow>()
+  .fields({ id: true, username: true, email: true })
+  .extras({
+    displayName: (u) => `${u.username} <${u.email}>`,
+  })
+  .omit(["email"]);
+```
+
+### Excluding fields with `.omit()`
+
+Excludes fields from the output that were already included.  This method
+primarily exists for use by the `HydratedQueryBuilder`, which includes all
+fields by default.
+
+```ts
+type UserRow = { id: number; passwordHash: string };
+
+// Result type: Array<{ id: number }>
+const hydrator = createHydrator<UserRow>()
+  .fields({ id: true, passwordHash: true })
+  .omit(["passwordHash"]);
+```
+
+### Attached collections with `.attach*()`
+
+These work the same as in the `hydrate()` API (see the `.attach*()` section above).
+They’re useful when your “rows” come from somewhere other than SQL, but you still
+want to batch-fetch and attach related data.
+
+### Prefixed collections with `.has*()`
+
+Configures nested collections from flat, prefixed input data. This is primarily used
+when you have a flat join result (possibly written manually) and want to hydrate it.
+
+```ts
+type FlatRow = {
+  id: number;
+  username: string;
+
+  // Left-joined posts:
+  posts$$id: number | null;
+  posts$$title: string | null;
+
+  // Left-joined comments on posts:
+  posts$$comments$$id: number | null;
+  posts$$comments$$content: string | null;
+};
+
+// Result type: Array<{
+//   id: number,
+//   username: string,
+//   posts: Array<{
+//     id: number | null,
+//     title: string | null,
+//     comments: Array<{ id: number | null, content: string | null }>
+//   }>
+// }>
+const hydrator = createHydrator<FlatRow>()
+  .fields({ id: true, username: true })
+  .hasMany("posts", "posts$$", (h) =>
+    h()
+      .fields({ id: true, title: true })
+      .hasMany("comments", "comments$$", (h) => h().fields({ id: true, content: true })),
+  );
+```
+
+`hasOne` and `hasOneOrThrow` are also supported.
+
+Notice that every single field in the nested result types are nullable.  This
+happens because we cannot know if `posts$$title` is nullable because (a) it is a
+non-nullable column that was made nullable by a left join; or, (b) it's actually
+nullable in the "posts" table.  The `HydratedQueryBuilder` API, on the other
+hand, _does_ know the difference, and so does not suffer from this problem.
+
+### Composing hydrators with `.extend()`
+
+Merges two hydrators.  The second hydrator's configuration takes precedence.
+
+This is a good way to build small, reusable hydrators (for a “user preview”, a
+“user display name”, etc.) and compose them.
+
+> [!NOTE]
+> Hydrators must have the same `keyBy`. If they don’t, `.extend()` throws.
+
+```ts
+type UserRow = { id: number; username: string; email: string };
+
+const base = createHydrator<UserRow>().fields({ id: true, username: true });
+
+const withDisplayName = createHydrator<UserRow>()
+  .fields({ email: true })
+  .extras({ displayName: (u) => `${u.username} <${u.email}>` })
+  .omit(["email"]);
+
+// Result type: Hydrator<UserRow, { id: number, username: string, displayName: string }>
+const combined = base.extend(withDisplayName);
+```
 
 ## Kysely plugin
 
-> [!WARNING]
+> [!CAUTION]
 > This feature is experimental and is subject to change.
 
 ### Runtime schema definition
 
-See the schema directory
+To enable automatic hydration, you must define your database schema using the
+provided runtime schema helpers (inspired by Drizzle ORM).  These helpers define both
+the TypeScript type and the runtime transformations (e.g., parsing dates).
+
+```ts
+import * as p from "kysely-hydrate/schema/postgres";
+
+export const users = p.createTable("public", "users", {
+  id: p.serial(),
+  name: p.text(),
+  createdAt: p.timestamp(), // Automatically parses string -> Date
+});
+```
 
 ### Automatic per-column hydration
 
-This is the `fromDriver` thing
+When you use the `HydratePlugin` with your runtime schema, the library automatically
+detects which columns are being selected and applies their `fromDriver` transformation.
+
+```ts
+import { HydratePlugin } from "kysely-hydrate";
+import { createDatabase } from "kysely-hydrate/schema/table";
+import * as t from "./tables";
+
+const database = createDatabase("public", t);
+
+const db = new Kysely<DB>({
+  dialect: new PostgresDialect({ ... }),
+  plugins: [new HydratePlugin(database)],
+});
+
+// usage:
+// createdAt will be a Date instance, not a string
+const user = await db.selectFrom("users").select("createdAt").executeTakeFirst();
+```
 
 ### Ad-hoc mapping
 
-This is mapped-expression
+You can map arbitrary expressions using the `map` helper.  This is useful for
+computed columns where you don't have a schema definition.
+
+```ts
+import { map } from "kysely-hydrate";
+
+const result = await db
+  .selectFrom("users")
+  .select((eb) => [
+    "username",
+    // Map the result of this expression:
+    map(
+      eb.fn.countAll(),
+      (count) => Number(count) // Convert string/bigint to number
+    ).as("count"),
+  ])
+  .execute();
+```
 
 ### Subquery joins via JSON aggregation
 
 > [!CAUTION]
 > This feature is not yet implemented.
 
+The goal is to support `jsonArrayFrom` and `jsonObjectFrom` but with automatic hydration
+of the nested JSON data back into rich types (Dates, etc.) using the runtime schema.
+
 ## Code generation
 
 > [!CAUTION]
 > This feature is not yet implemented.
+
+Future versions will include functions to generate the runtime schema definitions from
+your database, similar to `kysely-codegen` but with runtime metadata.
 
 ## FAQ
 
@@ -446,5 +1215,4 @@ const postsWithUser = hydrateData(posts, (keyBy) =>
 ```
 
 In the above example, the fetch function (which calls `getUsersById`) is called
-exactly once, with the entire set of posts.  This guarantee holds true even for
-nested hydratables.
+once, with the entire set of posts.
