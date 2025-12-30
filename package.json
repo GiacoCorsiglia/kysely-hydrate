@@ -1,6 +1,6 @@
 {
   "name": "kysely-hydrate",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Explicit ORM-style queries with Kysely",
   "license": "MIT",
   "author": {
