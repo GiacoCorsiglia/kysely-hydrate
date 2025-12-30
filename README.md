@@ -174,19 +174,23 @@ The `hydrate` helper accepts an unexecuted Kysely select query and returns a
 - Add **traditional joins** that hydrate into nested properties (`hasMany`, `hasOne`, `hasOneOrThrow`)
 - Add **application-level joins** that batch-fetch related rows (`attachMany`, `attachOne`, `attachOneOrThrow`)
 - Add **mappings and computed fields** (`mapFields`, `extras`) and then clean up (`omit`)
-- Still use Kysely query builder methods via `.modify(qb => ...)`, and then execute with `execute*()`
+- Still use Kysely query builder methods via `.modify(qb => ...)`, and then execute with `execute*()
+`
 
-It’s still “just Kysely”—you can write whatever SQL you want—but you get back a
-result that looks like what your application wants to work with: nested objects,
-arrays for relations, and rich types you can map in one place.
-
+Wrapping your query with `hydrate()` does nothing until you apply any of the
+above methods.  The example below is the same as executing the query without `hydrate`.
 
 ```ts
 import { hydrate } from "kysely-hydrate";
 
-// Result type: Array<{ id: number }>
 const users = await hydrate(db.selectFrom("users").select(["users.id"])).execute();
+// ⬇
+type Result = Array<{ id: number }>
 ```
+
+It’s still “just Kysely”—you can write whatever SQL you want—but you get back a
+result that looks like what your application wants to work with: nested objects,
+arrays for relations, and rich types you can map in one place.
 
 ### Keying and deduplication with `keyBy`
 
@@ -524,18 +528,6 @@ nested selections so it can reassemble them into nested objects.
 Here’s an example mixes a CTE, `GROUP BY` + `HAVING`, and nested joins:
 
 ```ts
-// Result type: Array<{
-//   id: number,
-//   username: string,
-//   postCount: number,
-//   latestPostAt: Date | null,
-//   posts: Array<{
-//     id: number,
-//     title: string,
-//     createdAt: Date,
-//     comments: Array<{ id: number, content: string }>
-//   }>
-// }>
 const activeAuthors = db
   .with("active_authors", (db) =>
     db
@@ -561,6 +553,19 @@ const result = await hydrate(activeAuthors)
       ),
   )
   .execute();
+// ⬇
+type Result = Array<{
+  id: number,
+  username: string,
+  postCount: number,
+  latestPostAt: Date | null,
+  posts: Array<{
+    id: number,
+    title: string,
+    createdAt: Date,
+    comments: Array<{ id: number, content: string }>
+  }>
+}>
 ```
 
 ### Application-level joins with `.attach*()`
