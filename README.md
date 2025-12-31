@@ -849,10 +849,18 @@ const users = await hydrate(db.selectFrom("users").select(["users.id"]))
   .map((user) => ({
     userId: user.id,
     postCount: user.posts.length,
+    posts: user.posts,
   }))
   .execute();
 // ⬇
-type Result = Array<{ userId: number; postCount: number }>;
+type Result = Array<{
+  userId: number;
+  postCount: number;
+  posts: {
+    postId: number;
+    postTitle: string;
+  };
+}>;
 ```
 
 #### Terminal operation
