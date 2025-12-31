@@ -825,3 +825,191 @@ import { createHydrator, hydrateData } from "./hydrator.ts";
 	// @ts-expect-error - hydrateData with inline factory requires keyBy when input doesn't have 'id'
 	hydrateData([] as NoIdUser[], (create: typeof createHydrator<NoIdUser>) => create());
 }
+
+//
+// map(): transformations
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	// Basic map: transforms output type
+	const hydrator1 = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.map((user) => ({ userId: user.id, userName: user.name }));
+
+	const result1 = hydrator1.hydrate([] as User[]);
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ userId: number; userName: string }[]>();
+
+	// Chaining maps
+	const hydrator2 = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; name: string }>();
+			return { ...user, upper: user.name.toUpperCase() };
+		})
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; name: string; upper: string }>();
+			return { final: user.upper };
+		});
+
+	const result2 = hydrator2.hydrate([] as User[]);
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ final: string }[]>();
+
+	// After map, only map() and hydrate() are available
+	const mapped = createHydrator<User>("id")
+		.fields({ id: true })
+		.map((u) => u.id);
+
+	// @ts-expect-error - cannot call fields() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.fields;
+
+	// @ts-expect-error - cannot call extras() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.extras;
+
+	// @ts-expect-error - cannot call omit() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.omit;
+
+	// @ts-expect-error - cannot call hasMany() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.hasMany;
+
+	// @ts-expect-error - cannot call hasOne() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.hasOne;
+
+	// @ts-expect-error - cannot call hasOneOrThrow() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.hasOneOrThrow;
+
+	// @ts-expect-error - cannot call attachMany() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.attachMany;
+
+	// @ts-expect-error - cannot call attachOne() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.attachOne;
+
+	// @ts-expect-error - cannot call attachOneOrThrow() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.attachOneOrThrow;
+
+	// @ts-expect-error - cannot call extend() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.extend;
+}
+
+//
+// map() with nested collections
+//
+
+{
+	interface UserRow {
+		id: number;
+		name: string;
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	// Nested map
+	const hydrator = createHydrator<UserRow>("id")
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (h) =>
+			h("id")
+				.fields({ id: true, title: true })
+				// Map child
+				.map((post) => {
+					expectTypeOf(post).toEqualTypeOf<{ id: number | null; title: string | null }>();
+					return { postId: post.id, postTitle: post.title };
+				}),
+		)
+		// Map parent.
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{
+				id: number;
+				name: string;
+				// The mapped post type:
+				posts: { postId: number | null; postTitle: string | null }[];
+			}>();
+			return { userName: user.name, postCount: user.posts.length };
+		});
+
+	const result = hydrator.hydrate([] as UserRow[]);
+	expectTypeOf(result).resolves.toEqualTypeOf<{ userName: string; postCount: number }[]>();
+}
+
+//
+// map() with attached collections
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	interface Post {
+		id: number;
+		userId: number;
+		title: string;
+	}
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", async (): Promise<Post[]> => [], { matchChild: "userId" })
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; name: string; posts: Post[] }>();
+			return { userName: user.name, postTitles: user.posts.map((p) => p.title) };
+		});
+
+	const result = hydrator.hydrate([] as User[]);
+	expectTypeOf(result).resolves.toEqualTypeOf<{ userName: string; postTitles: string[] }[]>();
+}
+
+//
+// map() with extend()
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	// Cannot extend a mapped hydrator
+	const baseHydrator = createHydrator<User>("id").fields({ id: true, name: true });
+
+	const mappedHydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.map((u) => ({ userId: u.id }));
+
+	// This should work - extending with a mapped hydrator
+	const extended = baseHydrator.extend(mappedHydrator);
+	const result1 = extended.hydrate([] as User[]);
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; name: string; userId: number }[]>();
+
+	// @ts-expect-error - cannot call fields() after extend() with a mapped hydrator
+	// oxlint-disable-next-line no-unused-expressions
+	extended.extras;
+
+	const otherHydrator = createHydrator<User>("id").extras({ displayName: (u) => u.name });
+
+	// However, extending with a full hydrator should produce a full hydrator.
+	const extendedButNotMapped = baseHydrator.extend(otherHydrator);
+	// This is allowed.
+	const extendedWithExtras = extendedButNotMapped.extras({ idSquared: (u) => u.id ** 2 });
+	expectTypeOf(extendedWithExtras.hydrate([] as User[])).resolves.toEqualTypeOf<
+		{
+			id: number;
+			name: string;
+			displayName: string;
+			idSquared: number;
+		}[]
+	>();
+}

@@ -100,7 +100,7 @@ interface Collection<ChildInput, ChildOutput> {
 	/**
 	 * The Hydrator to use when hydrating the objects in the nested collection.
 	 */
-	readonly hydrator: Hydrator<ChildInput, ChildOutput>;
+	readonly hydrator: HydratorImpl<ChildInput, ChildOutput>;
 }
 
 /**
@@ -200,6 +200,11 @@ interface HydratorProps<Input> {
 	 * An optional map of attached collections (for application-level joins).
 	 */
 	readonly attachedCollections?: AttachedCollectionsMap | undefined;
+
+	/**
+	 * An optional array of map functions to apply to the hydrated output.
+	 */
+	readonly mapFns?: Array<(value: any) => any> | undefined;
 }
 
 /**
@@ -207,11 +212,11 @@ interface HydratorProps<Input> {
  * Allows optional keyBy only if Input extends InputWithDefaultKey.
  */
 interface CreateHydratorWithoutDefaultKey<Input> {
-	(keyBy: KeyBy<Input>): Hydrator<Input, {}>;
+	(keyBy: KeyBy<Input>): FullHydrator<Input, {}>;
 }
 
 interface CreateHydratorWithDefaultKey<Input> extends CreateHydratorWithoutDefaultKey<Input> {
-	(): Hydrator<Input, {}>;
+	(): FullHydrator<Input, {}>;
 }
 
 /**
@@ -220,34 +225,37 @@ interface CreateHydratorWithDefaultKey<Input> extends CreateHydratorWithoutDefau
 type CreateHydratorFn<Input> = Input extends InputWithDefaultKey
 	? CreateHydratorWithDefaultKey<Input>
 	: CreateHydratorWithoutDefaultKey<Input>;
+
 /**
  * A function that creates a Hydrator.
  */
-type HydratorFactory<Input, Output> = (create: CreateHydratorFn<Input>) => Hydrator<Input, Output>;
+type HydratorFactory<Input, Output> = (
+	create: CreateHydratorFn<Input>,
+) => MappedHydrator<Input, Output>;
 
 /**
  * A Hydrator instance or a function that creates one.
  * Used to allow inline Hydrator creation in method calls.
  */
-type HydratorArg<Input, Output> = Hydrator<Input, Output> | HydratorFactory<Input, Output>;
+type HydratorArg<Input, Output> = MappedHydrator<Input, Output> | HydratorFactory<Input, Output>;
 
 /**
  * A Hydrator instance for a child collection or a function that creates one.
  * The input type is automatically prefixed based on the parent's prefix.
  */
 type ChildHydratorArg<P extends string, ParentInput, ChildOutput> =
-	| Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>
+	| MappedHydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>
 	| ((
 			create: CreateHydratorFn<SelectAndStripPrefix<P, ParentInput>>,
-	  ) => Hydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
+	  ) => MappedHydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
 
 /**
  * Private accessor for the ensureFields method.
  */
 const ensureFieldsAccessor = createPrivateAccessor<
-	Hydrator<any, any>,
+	HydratorImpl<any, any>,
 	[fieldNames: readonly string[]],
-	Hydrator<any, any>
+	HydratorImpl<any, any>
 >();
 
 /**
@@ -266,9 +274,10 @@ const ensureFieldsAccessor = createPrivateAccessor<
 export const ensureFields: (
 	hydrator: Hydrator<any, any>,
 	fieldNames: readonly string[],
-) => Hydrator<any, any> = ensureFieldsAccessor.call;
+) => Hydrator<any, any> = ensureFieldsAccessor.call as any;
 
-export type { Hydrator };
+const IsFullHydrator = Symbol("HydratorType");
+
 /**
  * A configuration for how to hydrate flat database rows into a denormalized structure.
  *
@@ -277,24 +286,88 @@ export type { Hydrator };
  * - Extra computed fields
  * - Nested collections (using `has()` methods)
  * - Attached collections (using `attach()` methods)
+ * - Map functions to apply to the hydrated output
  *
  * Once configured, call `hydrate()` to transform input data into the denormalized output.
  *
  * @template Input - The type of the input data (typically from a database query)
  * @template Output - The type of the hydrated output structure
  */
-class Hydrator<Input, Output> {
-	#props: HydratorProps<Input>;
+export type Hydrator<Input, Output> = MappedHydrator<Input, Output> | FullHydrator<Input, Output>;
 
-	constructor(props: HydratorProps<Input>) {
-		this.#props = props;
-		// Register the bound ensureFields method for internal use
-		ensureFieldsAccessor.register(this as any, this.#ensureFields.bind(this));
+/**
+ * Determines if a hydrator is a full hydrator, meaning it has not had a .map()
+ * applied to it yet.
+ *
+ * @param hydrator - The hydrator to check
+ * @returns True if the hydrator is a full hydrator, false otherwise
+ */
+export const isFullHydrator = <Input, Output>(
+	hydrator: Hydrator<Input, Output>,
+): hydrator is FullHydrator<Input, Output> => {
+	return hydrator[IsFullHydrator];
+};
+
+/**
+ * Asserts that a hydrator is a full hydrator and returns it.
+ *
+ * @internal
+ */
+export const asFullHydrator = <Input, Output>(
+	hydrator: Hydrator<Input, Output>,
+): FullHydrator<Input, Output> => {
+	if (isFullHydrator(hydrator)) {
+		return hydrator;
 	}
 
-	//
-	// Configuration.
-	//
+	throw new Error("Hydrator is not a full hydrator");
+};
+
+/**
+ * Base interface for a mapped hydrator that only allows hydration and further mapping.
+ * This is returned after calling `.map()` to prevent further configuration.
+ */
+export interface MappedHydrator<Input, Output> {
+	[IsFullHydrator]: boolean;
+
+	/**
+	 * Applies a transformation function to the hydrated output.
+	 *
+	 * This is a terminal operation: after calling `.map()`, only `.map()` and
+	 * `.hydrate()` are available.
+	 *
+	 * Use this for more complex transformations, such as:
+	 * - Hydrating into class instances
+	 * - Asserting discriminated union types
+	 * - Complex data reshaping
+	 *
+	 * For simple field transformations, prefer `.fields()` or `.extras()`.
+	 *
+	 * @param fn - A function that transforms the hydrated output
+	 * @returns A MappedHydrator with the transformation added
+	 */
+	map<NewOutput>(fn: (output: Output) => NewOutput): MappedHydrator<Input, NewOutput>;
+
+	/**
+	 * Hydrates the input data into a denormalized structure according to this configuration.
+	 *
+	 * If attached collections are configured, this method will fetch them asynchronously
+	 * before performing the hydration. The method always returns a Promise for consistency.
+	 *
+	 * @param input - A single input entity or an iterable of input entities
+	 * @returns A Promise that resolves to the hydrated output(s)
+	 */
+	hydrate(input: Iterable<Input>): Promise<Output[]>;
+	hydrate(input: Input | Iterable<Input>): Promise<Output | Output[]>;
+	hydrate(input: Input): Promise<Output>;
+}
+
+/**
+ * Full hydrator interface with all configuration methods.
+ * Extends MappedHydrator but `.map()` returns MappedHydrator to make it terminal.
+ */
+interface FullHydrator<Input, Output> extends MappedHydrator<Input, Output> {
+	[IsFullHydrator]: true;
 
 	/**
 	 * Configures which fields to include in the hydrated output.
@@ -305,13 +378,7 @@ class Hydrator<Input, Output> {
 	 */
 	fields<F extends Fields<Input>>(
 		fields: F,
-	): Hydrator<Input, Extend<Output, InferFields<Input, F>>> {
-		return new Hydrator({
-			...this.#props,
-
-			fields: addObjectToMap(this.#props.fields, fields),
-		}) as any;
-	}
+	): FullHydrator<Input, Extend<Output, InferFields<Input, F>>>;
 
 	/**
 	 * Omits specified fields from the hydrated output.
@@ -319,34 +386,7 @@ class Hydrator<Input, Output> {
 	 * @param keys - Field names to omit from the output
 	 * @returns A new Hydrator with the fields omitted
 	 */
-	omit<K extends keyof Input>(keys: readonly K[]): Hydrator<Input, Omit<Output, K>> {
-		const omitFields = Object.fromEntries(keys.map((key) => [key, false as const]));
-
-		return new Hydrator({
-			...this.#props,
-
-			fields: addObjectToMap(this.#props.fields, omitFields),
-		}) as any;
-	}
-
-	/**
-	 * Private method to ensure fields are included in the output if they don't
-	 * already have an explicit configuration (including explicit omission).
-	 * Used by HydratedQueryBuilder via the exported ensureFields helper function.
-	 */
-	#ensureFields(fieldNames: readonly string[]): Hydrator<Input, Output> {
-		const clone = new Map(this.#props.fields);
-		for (const name of fieldNames) {
-			if (!clone.has(name)) {
-				clone.set(name, true);
-			}
-		}
-
-		return new Hydrator({
-			...this.#props,
-			fields: clone,
-		}) as any;
-	}
+	omit<K extends keyof Input>(keys: readonly K[]): FullHydrator<Input, Omit<Output, K>>;
 
 	/**
 	 * Configures extra computed fields to add to the hydrated output.
@@ -357,13 +397,7 @@ class Hydrator<Input, Output> {
 	 */
 	extras<E extends Extras<Input>>(
 		extras: E,
-	): Hydrator<Input, Extend<Output, InferExtras<Input, E>>> {
-		return new Hydrator({
-			...this.#props,
-
-			extras: addObjectToMap(this.#props.extras, extras),
-		}) as any;
-	}
+	): FullHydrator<Input, Extend<Output, InferExtras<Input, E>>>;
 
 	/**
 	 * Extends this Hydrator with the configuration from another Hydrator.  The
@@ -382,34 +416,26 @@ class Hydrator<Input, Output> {
 		OtherInput extends Partial<Input>,
 		OtherOutput,
 	>(
-		other: Hydrator<OtherInput, OtherOutput>,
-	): Hydrator<
+		other: FullHydrator<OtherInput, OtherOutput>,
+	): FullHydrator<
 		// Intersect, don't extend because the input must be compatible with both.
 		Input & OtherInput,
 		// Extend, don't intersect, because the output gets overridden.
 		Extend<Output, OtherOutput>
-	> {
-		// Check that keyBy matches
-		const thisKeyBy = JSON.stringify(this.#props.keyBy);
-		const otherKeyBy = JSON.stringify(other.#props.keyBy);
-		if (thisKeyBy !== otherKeyBy) {
-			throw new KeyByMismatchError(thisKeyBy, otherKeyBy);
-		}
-
-		// Merge all configuration maps, with other's values taking precedence
-		const ownProps = this.#props;
-		const otherProps = other.#props;
-		return new Hydrator<Input & OtherInput, Extend<Output, OtherOutput>>({
-			keyBy: otherProps.keyBy,
-			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
-			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
-			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
-			attachedCollections: new Map([
-				...(ownProps.attachedCollections ?? []),
-				...(otherProps.attachedCollections ?? []),
-			]),
-		});
-	}
+	>;
+	extend<
+		// OtherInput doesn't need to overlap with Input, but any overlapping fields
+		// must have compatible types.
+		OtherInput extends Partial<Input>,
+		OtherOutput,
+	>(
+		other: MappedHydrator<OtherInput, OtherOutput>,
+	): MappedHydrator<
+		// Intersect, don't extend because the input must be compatible with both.
+		Input & OtherInput,
+		// Extend, don't intersect, because the output gets overridden.
+		Extend<Output, OtherOutput>
+	>;
 
 	/**
 	 * Configures a nested collection that exists in the same query result. The
@@ -432,41 +458,25 @@ class Hydrator<Input, Output> {
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "one",
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: CollectionMode,
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>>;
-	has<K extends string, ChildOutput>(
-		mode: CollectionMode,
-		key: K,
-		prefix: string,
-		hydrator: ChildHydratorArg<any, Input, ChildOutput>,
-	): Hydrator<Input, any> {
-		return new Hydrator({
-			...this.#props,
-
-			collections: new Map(this.#props.collections).set(key, {
-				prefix,
-				mode,
-				hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
-			} satisfies Collection<any, ChildOutput>),
-		}) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>>;
 
 	/**
 	 * Shorthand for `has("many", ...)` - configures a nested array collection.
@@ -480,9 +490,7 @@ class Hydrator<Input, Output> {
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>> {
-		return this.has("many", key, prefix, hydrator) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
 
 	/**
 	 * Shorthand for `has("one", ...)` - configures a nested nullable single entity.
@@ -496,9 +504,7 @@ class Hydrator<Input, Output> {
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>> {
-		return this.has("one", key, prefix, hydrator) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
 
 	/**
 	 * Shorthand for `has("oneOrThrow", ...)` - configures a nested non-nullable single entity.
@@ -513,9 +519,7 @@ class Hydrator<Input, Output> {
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>> {
-		return this.has("oneOrThrow", key, prefix, hydrator) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
 
 	/**
 	 * Configures an attached collection that is fetched from an external source.
@@ -541,42 +545,25 @@ class Hydrator<Input, Output> {
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "one",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
-	attach<K extends string, AttachedOutput>(
-		mode: CollectionMode,
-		key: K,
-		fetchFn: FetchFn<Input, AttachedOutput>,
-		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, any> {
-		return new Hydrator({
-			...this.#props,
-
-			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
-				mode,
-				fetchFn,
-				matchChild: keys.matchChild,
-				toParent: keys.toParent ?? this.#props.keyBy,
-			} satisfies AttachedCollection<Input, AttachedOutput>),
-		}) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
 
 	/**
 	 * Shorthand for `attach("many", ...)` - configures an attached array collection.
@@ -591,9 +578,7 @@ class Hydrator<Input, Output> {
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>> {
-		return this.attach("many", key, fetchFn, keys) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
 
 	/**
 	 * Shorthand for `attach("one", ...)` - configures an attached nullable single entity.
@@ -608,9 +593,7 @@ class Hydrator<Input, Output> {
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>> {
-		return this.attach("one", key, fetchFn, keys) as any;
-	}
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
 
 	/**
 	 * Shorthand for `attach("oneOrThrow", ...)` - configures an attached non-nullable single entity.
@@ -626,8 +609,151 @@ class Hydrator<Input, Output> {
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): Hydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>> {
-		return this.attach("oneOrThrow", key, fetchFn, keys) as any;
+	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
+}
+
+/**
+ * Implements the entire inheritance chain of Hydrators.
+ */
+class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Output> {
+	#props: HydratorProps<Input>;
+
+	constructor(props: HydratorProps<Input>) {
+		this.#props = props;
+		// Register the bound ensureFields method for internal use
+		ensureFieldsAccessor.register(this as any, this.#ensureFields.bind(this));
+	}
+
+	get [IsFullHydrator]() {
+		// This cast is weird but it works to force HydratorImpl to implement
+		// FullHydrator while behaving correctly as a MappedHydrator as well
+		return !this.#props.mapFns?.length as true;
+	}
+
+	fields(fields: Fields<any>): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			fields: addObjectToMap(this.#props.fields, fields),
+		}) as any;
+	}
+
+	omit(keys: readonly PropertyKey[]): any {
+		const omitFields = Object.fromEntries(keys.map((key) => [key, false as const]));
+
+		return new HydratorImpl({
+			...this.#props,
+
+			fields: addObjectToMap(this.#props.fields, omitFields),
+		}) as any;
+	}
+
+	#ensureFields(fieldNames: readonly string[]): any {
+		const clone = new Map(this.#props.fields);
+		for (const name of fieldNames) {
+			if (!clone.has(name)) {
+				clone.set(name, true);
+			}
+		}
+
+		return new HydratorImpl({
+			...this.#props,
+
+			fields: clone,
+		}) as any;
+	}
+
+	extras(extras: Extras<any>): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			extras: addObjectToMap(this.#props.extras, extras),
+		}) as any;
+	}
+
+	extend(other: MappedHydrator<any, any>): any {
+		const otherImpl = other as any as HydratorImpl;
+		const thisKeyBy = JSON.stringify(this.#props.keyBy);
+		const otherKeyBy = JSON.stringify(otherImpl.#props.keyBy);
+		if (thisKeyBy !== otherKeyBy) {
+			throw new KeyByMismatchError(thisKeyBy, otherKeyBy);
+		}
+
+		const ownProps = this.#props;
+		const otherProps = otherImpl.#props;
+		return new HydratorImpl({
+			keyBy: otherProps.keyBy,
+			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
+			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
+			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
+			attachedCollections: new Map([
+				...(ownProps.attachedCollections ?? []),
+				...(otherProps.attachedCollections ?? []),
+			]),
+			mapFns: [...(this.#props.mapFns ?? []), ...(otherProps.mapFns ?? [])],
+		});
+	}
+
+	map(fn: (output: any) => any): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			mapFns: [...(this.#props.mapFns ?? []), fn],
+		});
+	}
+
+	has(mode: CollectionMode, key: string, prefix: string, hydrator: any): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			collections: new Map(this.#props.collections).set(key, {
+				prefix,
+				mode,
+				hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
+			} satisfies Collection<any, any>),
+		});
+	}
+
+	hasMany(key: string, prefix: string, hydrator: any): any {
+		return this.has("many", key, prefix, hydrator);
+	}
+
+	hasOne(key: string, prefix: string, hydrator: any): any {
+		return this.has("one", key, prefix, hydrator);
+	}
+
+	hasOneOrThrow(key: string, prefix: string, hydrator: any): any {
+		return this.has("oneOrThrow", key, prefix, hydrator);
+	}
+
+	attach(
+		mode: CollectionMode,
+		key: string,
+		fetchFn: FetchFn<any, any>,
+		keys: AttachedKeysArg<any, any>,
+	): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
+				mode,
+				fetchFn,
+				matchChild: keys.matchChild,
+				toParent: keys.toParent ?? this.#props.keyBy,
+			} satisfies AttachedCollection<any, any>),
+		});
+	}
+
+	attachMany(key: string, fetchFn: FetchFn<any, any>, keys: AttachedKeysArg<any, any>): any {
+		return this.attach("many", key, fetchFn, keys);
+	}
+
+	attachOne(key: string, fetchFn: FetchFn<any, any>, keys: AttachedKeysArg<any, any>): any {
+		return this.attach("one", key, fetchFn, keys);
+	}
+
+	attachOneOrThrow(key: string, fetchFn: FetchFn<any, any>, keys: AttachedKeysArg<any, any>): any {
+		return this.attach("oneOrThrow", key, fetchFn, keys);
 	}
 
 	//
@@ -766,6 +892,16 @@ class Hydrator<Input, Output> {
 			}
 		}
 
+		// Apply map functions if present
+		const { mapFns } = this.#props;
+		if (mapFns) {
+			let result: any = entity;
+			for (const mapFn of mapFns) {
+				result = mapFn(result);
+			}
+			return result;
+		}
+
 		return entity;
 	}
 
@@ -814,19 +950,7 @@ class Hydrator<Input, Output> {
 		return result;
 	}
 
-	/**
-	 * Hydrates the input data into a denormalized structure according to this configuration.
-	 *
-	 * If attached collections are configured, this method will fetch them asynchronously
-	 * before performing the hydration. The method always returns a Promise for consistency.
-	 *
-	 * @param input - A single input entity or an iterable of input entities
-	 * @returns A Promise that resolves to the hydrated output(s)
-	 */
-	hydrate(input: Iterable<Input>): Promise<Output[]>;
-	hydrate(input: Input | Iterable<Input>): Promise<Output | Output[]>;
-	hydrate(input: Input): Promise<Output>;
-	hydrate(input: Input | Iterable<Input>): Promise<Output | Output[]> {
+	hydrate(input: Input | Iterable<Input>): Promise<any> {
 		// Fetch all attach collections upfront (this is the only async operation).
 		// Start with empty prefix for top-level collections.
 		const attachedDataMap = new Map<string, Map<unknown, any[]>>();
@@ -860,12 +984,12 @@ class Hydrator<Input, Output> {
  *   Defaults to "id" if the input type has an "id" property.
  */
 // Overload 1: keyBy provided - any input type
-export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): Hydrator<T, {}>;
+export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): FullHydrator<T, {}>;
 // Overload 2: keyBy omitted - input must have 'id'
-export function createHydrator<T extends InputWithDefaultKey>(): Hydrator<T, {}>;
+export function createHydrator<T extends InputWithDefaultKey>(): FullHydrator<T, {}>;
 // Implementation
-export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): Hydrator<T, {}> {
-	return new Hydrator({ keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string) });
+export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<T, {}> {
+	return new HydratorImpl({ keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string) });
 }
 
 /**

@@ -1543,3 +1543,136 @@ test("multiple nested levels: keyBy defaults to 'id' at all levels", async () =>
 	assert.strictEqual(result[0]?.posts[1]?.comments.length, 1);
 	assert.deepStrictEqual(result[0]?.posts[1]?.comments[0], { id: 3, content: "Comment 3" });
 });
+
+//
+// map() transformations
+//
+
+test("map: transforms hydrated output", async () => {
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.map((user) => ({ userId: user.id, userName: user.name }));
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.deepStrictEqual(result[0], { userId: 1, userName: "Alice" });
+	assert.deepStrictEqual(result[1], { userId: 2, userName: "Bob" });
+});
+
+test("map: allows chaining multiple transformations", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.map((user) => ({ ...user, uppercaseName: user.name.toUpperCase() }))
+		.map((user) => ({ ...user, nameLength: user.uppercaseName.length }))
+		.map((user) => ({ final: `${user.uppercaseName} (${user.nameLength})` }));
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ final: "ALICE (5)" }]);
+});
+
+test("map: transforms into class instances", async () => {
+	class UserModel {
+		id: number;
+		name: string;
+
+		constructor(id: number, name: string) {
+			this.id = id;
+			this.name = name;
+		}
+
+		greet() {
+			return `Hello, I'm ${this.name}`;
+		}
+	}
+
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.map((user) => new UserModel(user.id, user.name));
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.ok(result[0] instanceof UserModel);
+	assert.strictEqual(result[0]?.greet(), "Hello, I'm Alice");
+});
+
+test("map: works with nested collections", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Post 1" },
+		{ id: 1, name: "Alice", posts$$id: 11, posts$$title: "Post 2" },
+	];
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.hasMany(
+			"posts",
+			"posts$$",
+			(h) =>
+				h("id")
+					.fields({ id: true, title: true })
+					.map((post) => ({ postId: post.id, postTitle: post.title?.toUpperCase() })), // Map nested
+		)
+		.map((user) => ({ userName: user.name, postCount: user.posts.length, posts: user.posts })); // Map parent
+
+	const result = await hydrateData(rows, hydrator);
+
+	assert.strictEqual(result.length, 1);
+	assert.deepStrictEqual(result[0], {
+		userName: "Alice",
+		postCount: 2,
+		posts: [
+			{ postId: 10, postTitle: "POST 1" },
+			{ postId: 11, postTitle: "POST 2" },
+		],
+	});
+});
+
+test("map: works with attached collections", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	interface Post {
+		id: number;
+		userId: number;
+		title: string;
+	}
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			async () =>
+				[
+					{ id: 10, userId: 1, title: "Post 1" },
+					{ id: 11, userId: 1, title: "Post 2" },
+				] as Post[],
+			{ matchChild: "userId" },
+		)
+		.map((user) => ({
+			user: user.name,
+			postTitles: user.posts.map((p) => p.title),
+		}));
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{
+			user: "Alice",
+			postTitles: ["Post 1", "Post 2"],
+		},
+	]);
+});
