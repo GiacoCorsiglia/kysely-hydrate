@@ -16,16 +16,148 @@ import {
 	type Extras,
 	type FetchFn,
 	type FieldMappings,
+	type FullHydrator,
 	type InferExtras,
 	type InferFields,
 	createHydrator,
 	type Hydrator,
 	type InputWithDefaultKey,
+	type MappedHydrator,
+	asFullHydrator,
 } from "./hydrator.ts";
 
 ////////////////////////////////////////////////////////////////////
 // Interfaces.
 ////////////////////////////////////////////////////////////////////
+
+/**
+ * Super type to HydratedQueryBuilder, that has already had a .map() added,
+ * meaning it's no longer safe to continue to chain methods like .mapFields() or
+ * .hasMany(), because those will affect the input type expected by the
+ * transformation function applied to .map().
+ *
+ * The generic parameters are the same as HydratedQueryBuilder.
+ */
+interface MappedHydratedQueryBuilder<
+	Prefix extends string,
+	QueryDB,
+	QueryTB extends keyof QueryDB,
+	QueryRow,
+	LocalDB,
+	LocalRow,
+	HydratedRow,
+	IsNullable extends boolean,
+	HasJoin extends boolean,
+> {
+	/**
+	 * This property exists for complex type reasons and will never be set.
+	 *
+	 * @internal
+	 */
+	// Required so that the type system can infer all the generics the even when
+	// nested collections return a MappedHydratedQueryBuilder instead of a
+	// HydratedQueryBuilder.
+	readonly _generics:
+		| {
+				Prefix: Prefix;
+				QueryDB: QueryDB;
+				QueryTB: QueryTB;
+				QueryRow: QueryRow;
+				LocalRow: LocalRow;
+				HydratedRow: HydratedRow;
+				IsNullable: IsNullable;
+				NestedDB: LocalDB;
+				HasJoin: HasJoin;
+		  }
+		| undefined;
+
+	/**
+	 * Allows you to modify the underlying select query.  Useful for adding
+	 * `where` clauses.  Adding additional SELECTs here is forbidden.
+	 *
+	 * For example:
+	 *
+	 * ```ts
+	 * hydrate(...).modify((qb) => qb.where("isActive", "=", "true"))
+	 * ```
+	 */
+	modify(
+		modifier: (
+			qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
+		) => k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
+	): MappedHydratedQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ HydratedRow,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+
+	/**
+	 * Returns the raw underlying Kysely select query builder.
+	 * Useful for debugging or when you need direct access to the query.
+	 */
+	toQuery(): k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>;
+
+	/**
+	 * Executes the query and returns an array of rows.
+	 *
+	 * Also see the {@link executeTakeFirst} and {@link executeTakeFirstOrThrow} methods.
+	 */
+	execute(): Promise<k.Simplify<HydratedRow>[]>;
+
+	/**
+	 * Executes the query and returns the first result or undefined if the query
+	 * returned no result.
+	 */
+	executeTakeFirst(): Promise<k.Simplify<HydratedRow> | undefined>;
+
+	/**
+	 * Executes the query and returns the first result or throws if the query
+	 * returned no result.
+	 *
+	 * By default an instance of {@link k.NoResultError} is thrown, but you can
+	 * provide a custom error class, or callback to throw a different error.
+	 */
+	executeTakeFirstOrThrow(
+		errorConstructor?: k.NoResultErrorConstructor | ((node: k.QueryNode) => Error),
+	): Promise<k.Simplify<HydratedRow>>;
+
+	/**
+	 * Applies a transformation function to the hydrated output.
+	 *
+	 * This is a terminal operation: after calling `.map()`, only `.map()` and
+	 * `.execute()` are available; you cannot continue to chain methods that
+	 * affect the input type expected by the transformation function.
+	 *
+	 * Use this for more complex transformations, such as:
+	 * - Hydrating into class instances
+	 * - Asserting discriminated union types
+	 * - Complex data reshaping
+	 *
+	 * For simple field transformations, prefer `.fields()` or `.extras()`.
+	 *
+	 * @param transform - A function that transforms the hydrated output
+	 * @returns A MappedHydratedQueryBuilder with the transformation added
+	 */
+	map<NewHydratedRow>(
+		transform: (row: k.Simplify<HydratedRow>) => NewHydratedRow,
+	): MappedHydratedQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ NewHydratedRow,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
+}
 
 /**
  * A query builder that supports both mapping and nested joins.
@@ -60,56 +192,31 @@ interface HydratedQueryBuilder<
 	HydratedRow,
 	IsNullable extends boolean,
 	HasJoin extends boolean,
+> extends MappedHydratedQueryBuilder<
+	Prefix,
+	QueryDB,
+	QueryTB,
+	QueryRow,
+	LocalDB,
+	LocalRow,
+	HydratedRow,
+	IsNullable,
+	HasJoin
 > {
-	/**
-	 * @internal This is is a fake method that does nothing and is only for
-	 * testing types.  The callback will never actually be called.
-	 */
-	_generics(
-		cb: (args: {
-			Prefix: Prefix;
-			QueryDB: QueryDB;
-			QueryTB: QueryTB;
-			QueryRow: QueryRow;
-			LocalRow: LocalRow;
-			HydratedRow: HydratedRow;
-			IsNullable: IsNullable;
-			NestedDB: LocalDB;
-			HasJoin: HasJoin;
-		}) => void,
-	): this;
-
-	/**
-	 * Allows you to modify the underlying select query.  Useful for adding
-	 * `where` clauses.  Adding additional SELECTs here is discouraged.
-	 *
-	 * ### Examples
-	 *
-	 * ```ts
-	 * nestableQuery.modify((qb) => qb.where("isActive", "=", "true"))
-	 * ```
-	 */
-	modify<
-		NewQueryDB,
-		NewQueryTB extends keyof NewQueryDB,
-		// Enforce that you only expand the output shape.  Otherwise joins will fail!
-		NewQueryRow extends QueryRow,
-	>(
+	// The same as the parent's modify method, but preserves the
+	// HydratedQueryBuilder return type.
+	modify(
 		modifier: (
 			qb: k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
-		) => k.SelectQueryBuilder<NewQueryDB, NewQueryTB, NewQueryRow>,
+		) => k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>,
 	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
-		/* QueryDB:     */ NewQueryDB,
-		/* QueryTB:     */ NewQueryTB,
-		/* QueryRow:    */ NewQueryRow,
-		// TODO: This is wrong if NewQueryDB is different from QueryDB!
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
 		/* LocalDB:     */ LocalDB,
-		// Not modifying the local row because that would require un-prefixing.  We
-		// generally do not expect modifications to the row shape here anyway.
 		/* LocalRow:    */ LocalRow,
-		// TODO: This extension might be wrong!
-		/* HydratedRow: */ Extend<NewQueryRow, HydratedRow>,
+		/* HydratedRow: */ HydratedRow,
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
 	>;
@@ -251,7 +358,7 @@ interface HydratedQueryBuilder<
 	 * @returns A new HydratedQueryBuilder with merged hydration configuration.
 	 */
 	with<OtherInput extends StrictSubset<LocalRow, OtherInput>, OtherOutput>(
-		hydrator: Hydrator<OtherInput, OtherOutput>,
+		hydrator: FullHydrator<OtherInput, OtherOutput>,
 	): HydratedQueryBuilder<
 		/* Prefix:      */ Prefix,
 		/* QueryDB:     */ QueryDB,
@@ -263,36 +370,21 @@ interface HydratedQueryBuilder<
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
 	>;
-
-	/**
-	 * Returns the raw underlying Kysely select query builder.
-	 * Useful for debugging or when you need direct access to the query.
-	 */
-	toQuery(): k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>;
-
-	/**
-	 * Executes the query and returns an array of rows.
-	 *
-	 * Also see the {@link executeTakeFirst} and {@link executeTakeFirstOrThrow} methods.
-	 */
-	execute(): Promise<k.Simplify<HydratedRow>[]>;
-
-	/**
-	 * Executes the query and returns the first result or undefined if the query
-	 * returned no result.
-	 */
-	executeTakeFirst(): Promise<k.Simplify<HydratedRow> | undefined>;
-
-	/**
-	 * Executes the query and returns the first result or throws if the query
-	 * returned no result.
-	 *
-	 * By default an instance of {@link k.NoResultError} is thrown, but you can
-	 * provide a custom error class, or callback to throw a different error.
-	 */
-	executeTakeFirstOrThrow(
-		errorConstructor?: k.NoResultErrorConstructor | ((node: k.QueryNode) => Error),
-	): Promise<k.Simplify<HydratedRow>>;
+	// If you pass a Hydrator with a map applied, we must return a
+	// MappedHydratedQueryBuilder.
+	with<OtherInput extends StrictSubset<LocalRow, OtherInput>, OtherOutput>(
+		hydrator: MappedHydrator<OtherInput, OtherOutput>,
+	): MappedHydratedQueryBuilder<
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow,
+		/* HydratedRow: */ Extend<HydratedRow, OtherOutput>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
+	>;
 
 	/**
 	 * Adds a join to the query that will hydrate into a nested collection.
@@ -351,7 +443,7 @@ interface HydratedQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratedQueryBuilder<
+		) => MappedHydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -398,7 +490,7 @@ interface HydratedQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratedQueryBuilder<
+		) => MappedHydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -482,7 +574,7 @@ interface HydratedQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratedQueryBuilder<
+		) => MappedHydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -532,7 +624,7 @@ interface HydratedQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratedQueryBuilder<
+		) => MappedHydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -590,7 +682,7 @@ interface HydratedQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratedQueryBuilder<
+		) => MappedHydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -636,7 +728,7 @@ interface HydratedQueryBuilder<
 				/* IsNullable:  */ false,
 				/* HasJoin:     */ false
 			>,
-		) => HydratedQueryBuilder<
+		) => MappedHydratedQueryBuilder<
 			/* Prefix:      */ MakePrefix<Prefix, NoInfer<K>>,
 			/* QueryDB:     */ JoinedQueryDB,
 			/* QueryTB:     */ JoinedQueryTB,
@@ -1111,9 +1203,8 @@ interface HydratedQueryBuilderProps {
 }
 
 /**
- * Implementation of the {@link HydratedQueryBuilder} interface.
- *
- * @internal
+ * Implementation of the {@link HydratedQueryBuilder} interface as well as the
+ * {@link MappedHydratedQueryBuilder} interface; there is no runtime distinction.
  */
 class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	#props: HydratedQueryBuilderProps;
@@ -1147,11 +1238,11 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	}
 
 	//
-	// NestableQueryBuilder methods.
+	// MappedHydratedQueryBuilder methods.
 	//
 
-	_generics(): this {
-		return this;
+	get _generics() {
+		return undefined;
 	}
 
 	modify(modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder): any {
@@ -1165,31 +1256,10 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		return this.#props.qb;
 	}
 
-	extras(extras: Extras<any>) {
+	map(transform: (row: any) => any): any {
 		return new HydratedQueryBuilderImpl({
 			...this.#props,
-			hydrator: this.#props.hydrator.extras(extras),
-		});
-	}
-
-	mapFields(mappings: FieldMappings<any>): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
-			hydrator: this.#props.hydrator.fields(mappings),
-		});
-	}
-
-	omit(keys: readonly PropertyKey[]): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
-			hydrator: this.#props.hydrator.omit(keys),
-		});
-	}
-
-	with(hydrator: Hydrator<any, any>): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
-			hydrator: this.#props.hydrator.extend(hydrator),
+			hydrator: this.#props.hydrator.map(transform),
 		});
 	}
 
@@ -1237,6 +1307,38 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		return this.#hydrate(result);
 	}
 
+	//
+	// HydratedQueryBuilder methods.
+	//
+
+	extras(extras: Extras<any>) {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: asFullHydrator(this.#props.hydrator).extras(extras),
+		});
+	}
+
+	mapFields(mappings: FieldMappings<any>): any {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: asFullHydrator(this.#props.hydrator).fields(mappings),
+		});
+	}
+
+	omit(keys: readonly PropertyKey[]): any {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: asFullHydrator(this.#props.hydrator).omit(keys),
+		});
+	}
+
+	with(hydrator: Hydrator<any, any>): any {
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+			hydrator: asFullHydrator(this.#props.hydrator).extend(hydrator),
+		});
+	}
+
 	#addJoin(
 		mode: CollectionMode,
 		key: string,
@@ -1256,7 +1358,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 
 			qb: outputNb.#props.qb,
 
-			hydrator: this.#props.hydrator.has(
+			hydrator: asFullHydrator(this.#props.hydrator).has(
 				mode,
 				key,
 				// Hydratables do their own job of handling nested prefixes.
@@ -1294,7 +1396,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	) {
 		return new HydratedQueryBuilderImpl({
 			...this.#props,
-			hydrator: this.#props.hydrator.attach(mode, key, fetchFn, keys),
+			hydrator: asFullHydrator(this.#props.hydrator).attach(mode, key, fetchFn, keys),
 		});
 	}
 
@@ -1324,7 +1426,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			qb: this.#props.qb.select(prefixedSelections as any),
 
 			// Ensure all selected fields are included in the hydrated output.
-			hydrator: this.#props.hydrator.fields(
+			hydrator: asFullHydrator(this.#props.hydrator).fields(
 				Object.fromEntries(
 					prefixedSelections.map((selection) => [selection.originalName, true as const]),
 				),
@@ -1421,7 +1523,6 @@ export function hydrate(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
 	return new HydratedQueryBuilderImpl({
 		qb,
 		prefix: "",
-
 		hydrator: createHydrator<any>(keyBy),
 	});
 }

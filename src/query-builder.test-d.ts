@@ -813,3 +813,225 @@ declare const db: DB;
 	// @ts-expect-error - invalid table in selectFrom
 	hydrate(db.selectFrom("nonExistentTable").select(["id"]));
 }
+
+//
+// map(): transformations
+//
+
+{
+	// Basic map: transforms output type
+	const result1 = hydrate(db.selectFrom("users").select(["id", "username"]), "id")
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string }>();
+			return { userId: user.id, userName: user.username };
+		})
+		.execute();
+
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ userId: number; userName: string }[]>();
+
+	// Chaining maps
+	const result2 = hydrate(db.selectFrom("users").select(["id", "username"]), "id")
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string }>();
+			return { ...user, upper: user.username.toUpperCase() };
+		})
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string; upper: string }>();
+			return { final: user.upper };
+		})
+		.execute();
+
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ final: string }[]>();
+
+	// After map, only map(), modify(), toQuery() and execute methods are available
+	const mapped = hydrate(db.selectFrom("users").select(["id", "username"]), "id").map((u) => u.id);
+
+	// These should still be available
+	const stillMapped = mapped.map((id) => ({ transformed: id }));
+	expectTypeOf(stillMapped.execute()).resolves.toEqualTypeOf<{ transformed: number }[]>();
+
+	// @ts-expect-error - cannot call mapFields() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.mapFields;
+
+	// @ts-expect-error - cannot call extras() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.extras;
+
+	// @ts-expect-error - cannot call omit() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.omit;
+
+	// @ts-expect-error - cannot call with() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.with;
+
+	// @ts-expect-error - cannot call hasMany() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.hasMany;
+
+	// @ts-expect-error - cannot call hasOne() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.hasOne;
+
+	// @ts-expect-error - cannot call hasOneOrThrow() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.hasOneOrThrow;
+
+	// @ts-expect-error - cannot call attachMany() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.attachMany;
+
+	// @ts-expect-error - cannot call attachOne() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.attachOne;
+
+	// @ts-expect-error - cannot call attachOneOrThrow() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.attachOneOrThrow;
+
+	// @ts-expect-error - cannot call select() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.select;
+
+	// @ts-expect-error - cannot call innerJoin() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.innerJoin;
+
+	// @ts-expect-error - cannot call leftJoin() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.leftJoin;
+
+	// @ts-expect-error - cannot call crossJoin() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.crossJoin;
+
+	// @ts-expect-error - cannot call innerJoinLateral() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.innerJoinLateral;
+
+	// @ts-expect-error - cannot call leftJoinLateral() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.leftJoinLateral;
+
+	// @ts-expect-error - cannot call crossJoinLateral() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.crossJoinLateral;
+}
+
+//
+// map() with nested collections
+//
+
+{
+	// Nested map
+	const result = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+		.hasMany("posts", (qb) =>
+			qb
+				.innerJoin("posts", "posts.user_id", "users.id")
+				.select(["posts.id", "posts.title"])
+				// Map child
+				.map((post) => {
+					expectTypeOf(post).toEqualTypeOf<{ id: number; title: string }>();
+					return { postId: post.id, postTitle: post.title };
+				}),
+		)
+		// Map parent
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{
+				id: number;
+				username: string;
+				// The mapped post type:
+				posts: { postId: number; postTitle: string }[];
+			}>();
+			return { userName: user.username, postCount: user.posts.length };
+		})
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ userName: string; postCount: number }[]>();
+}
+
+//
+// map() with attached collections
+//
+
+{
+	interface Post {
+		id: number;
+		user_id: number;
+		title: string;
+	}
+
+	const result = hydrate(db.selectFrom("users").select(["id", "username"]), "id")
+		.attachMany(
+			"posts",
+			async (users): Promise<Post[]> => {
+				expectTypeOf(users).toEqualTypeOf<{ id: number; username: string }[]>();
+				return [];
+			},
+			{ matchChild: "user_id" },
+		)
+		.map((user) => {
+			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string; posts: Post[] }>();
+			return { userName: user.username, postTitles: user.posts.map((p) => p.title) };
+		})
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ userName: string; postTitles: string[] }[]>();
+}
+
+//
+// map() with extend/with()
+//
+
+{
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	// Cannot call with() on a mapped query builder
+	const baseQb = hydrate(db.selectFrom("users").select(["id", "username", "email"]), "id");
+
+	const mappedQb = baseQb.map((u) => ({ userId: u.id }));
+
+	// @ts-expect-error - cannot call with() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mappedQb.with;
+
+	// Extending with a mapped hydrator returns MappedHydratedQueryBuilder
+	const mappedHydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.map((u) => ({ userId: u.id }));
+
+	const extendedWithMapped = baseQb.with(mappedHydrator);
+	const result1 = extendedWithMapped.execute();
+	expectTypeOf(result1).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string; userId: number }[]
+	>();
+
+	// @ts-expect-error - cannot call extras() after with() using a mapped hydrator
+	// oxlint-disable-next-line no-unused-expressions
+	extendedWithMapped.extras;
+
+	// Extending with a full hydrator returns HydratedQueryBuilder
+	const fullHydrator = createHydrator<User>("id").extras({ displayName: (u) => u.username });
+
+	const extendedWithFull = baseQb.with(fullHydrator);
+	expectTypeOf(extendedWithFull.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string; displayName: string }[]
+	>();
+
+	// This is allowed - can call extras() after with() when using a full hydrator
+	const extendedWithExtras = extendedWithFull.extras({ idSquared: (u) => u.id ** 2 });
+	expectTypeOf(extendedWithExtras.execute()).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			email: string;
+			displayName: string;
+			idSquared: number;
+		}[]
+	>();
+}

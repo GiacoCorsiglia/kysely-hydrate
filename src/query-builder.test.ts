@@ -785,6 +785,119 @@ test("extras: work with nested collections", async () => {
 });
 
 //
+// map()
+//
+
+test("map: transforms hydrated output", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.map((user) => ({ userId: user.id, userName: user.username }))
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.userId, 1);
+	assert.strictEqual(users[0]?.userName, "alice");
+	assert.strictEqual("id" in users[0]!, false);
+	assert.strictEqual("username" in users[0]!, false);
+});
+
+test("map: allows chaining multiple transformations", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.map((user) => ({ ...user, upper: user.username.toUpperCase() }))
+		.map((user) => ({ final: user.upper }))
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.final, "ALICE");
+	assert.strictEqual("id" in users[0]!, false);
+	assert.strictEqual("username" in users[0]!, false);
+	assert.strictEqual("upper" in users[0]!, false);
+});
+
+test("map: transforms into class instances", async () => {
+	class UserModel {
+		id: number;
+		name: string;
+
+		constructor(id: number, name: string) {
+			this.id = id;
+			this.name = name;
+		}
+
+		getDisplayName() {
+			return `User: ${this.name}`;
+		}
+	}
+
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 1))
+		.map((user) => new UserModel(user.id, user.username))
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.ok(users[0] instanceof UserModel);
+	assert.strictEqual(users[0]?.getDisplayName(), "User: alice");
+});
+
+test("map: works with nested collections", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id")
+					.select(["posts.id", "posts.title"])
+					.map((post) => ({ postId: post.id, postTitle: post.title })),
+			"id",
+		)
+		.map((user) => {
+			const [firstPost] = user.posts;
+			assert.ok(firstPost !== undefined);
+			assert.deepStrictEqual(firstPost, {
+				postId: 1,
+				postTitle: "Post 1",
+			});
+
+			return { userName: user.username, postCount: user.posts.length };
+		})
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.userName, "bob");
+	assert.strictEqual(users[0]?.postCount, 4);
+	assert.strictEqual("id" in users[0]!, false);
+	assert.strictEqual("posts" in users[0]!, false);
+});
+
+test("map: works with attached collections", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.attachMany(
+			"posts",
+			async (userRows) => {
+				const userIds = userRows.map((u) => u.id);
+				return db
+					.selectFrom("posts")
+					.select(["posts.id", "posts.user_id", "posts.title"])
+					.where("posts.user_id", "in", userIds)
+					.execute();
+			},
+			{ matchChild: "user_id" },
+		)
+		.map((user) => ({
+			userName: user.username,
+			postTitles: user.posts.map((p) => p.title),
+		}))
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.userName, "bob");
+	assert.strictEqual(users[0]?.postTitles.length, 4);
+	assert.strictEqual(users[0]?.postTitles[0], "Post 1");
+});
+
+//
 // Join Types
 //
 

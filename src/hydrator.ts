@@ -366,7 +366,7 @@ export interface MappedHydrator<Input, Output> {
  * Full hydrator interface with all configuration methods.
  * Extends MappedHydrator but `.map()` returns MappedHydrator to make it terminal.
  */
-interface FullHydrator<Input, Output> extends MappedHydrator<Input, Output> {
+export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Output> {
 	[IsFullHydrator]: true;
 
 	/**
