@@ -138,8 +138,8 @@ By design, Kysely has the following constraints:
   - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
   - [Computed properties with `.extras()`](#computed-properties-with-extras)
   - [Excluded properties with `.omit()`](#excluded-properties-with-omit)
-  - [Composable mappings with `.with()`](#composable-mappings-with-with)
   - [Output transformations with `.map()`](#output-transformations-with-map)
+  - [Composable mappings with `.with()`](#composable-mappings-with-with)
   - [Execution](#execution)
 - [Hydrators](#hydrators)
   - [Creating hydrators with `createHydrator()`](#creating-hydrators-with-createhydrator)
@@ -147,10 +147,10 @@ By design, Kysely has the following constraints:
   - [Selecting and mapping fields with `.fields()`](#selecting-and-mapping-fields-with-fields)
   - [Computed properties with `.extras()`](#computed-properties-with-extras-1)
   - [Excluding fields with `.omit()`](#excluding-fields-with-omit)
+  - [Output transformations with `.map()`](#output-transformations-with-map-1)
   - [Attached collections with `.attach*()`](#attached-collections-with-attach)
   - [Prefixed collections with `.has*()`](#prefixed-collections-with-has)
   - [Composing hydrators with `.extend()`](#composing-hydrators-with-extend)
-  - [Output transformations with `.map()`](#output-transformations-with-map-1)
 - [Kysely plugin](#kysely-plugin)
   - [Runtime schema definition](#runtime-schema-definition)
   - [Automatic per-column hydration](#automatic-per-column-hydration)
@@ -781,50 +781,6 @@ const users = await hydrate(
 type Result = Array<{ id: number; fullName: string }>;
 ```
 
-### Composable mappings with `.with()`
-
-Re-use hydration logic by importing it from another `Hydrator`.  This is great for
-sharing consistent formatting logic across different queries.  `.with()` does
-**not** change the underlying SQL; it only composes hydration configuration
-(see [Hydrators](#hydrators) below).
-
-```ts
-import { createHydrator } from "kysely-hydrate";
-
-// Define once:
-const userHydrator = createHydrator<{
-  id: number;
-  username: string;
-  email: string;
-}>("id")
-  .extras({
-    displayName: (u) => `${u.username} <${u.email}>`,
-  })
-  .omit(["email"]);
-
-// Reuse in query #1:
-const users = await hydrate(
-  db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
-)
-  .with(userHydrator)
-  .execute();
-// ⬇
-type Result1 = Array<{ id: number; username: string; displayName: string }>;
-
-// Reuse in query #2 (different root query, same hydration rules):
-const author = await hydrate(
-  db
-    .selectFrom("posts")
-    .innerJoin("users", "users.id", "posts.authorId")
-    .select(["users.id", "users.username", "users.email"])
-    .where("posts.id", "=", 123),
-)
-  .with(userHydrator)
-  .executeTakeFirst();
-// ⬇
-type Result2 = { id: number; username: string; displayName: string } | undefined;
-```
-
 ### Output transformations with `.map()`
 
 The `.map()` method transforms the hydrated output into a different shape.  Use
@@ -944,6 +900,50 @@ When should you use `.map()` vs the more targeted methods?
 
 The targeted methods are more composable, because they can be interleaved with
 joins, unlike `.map()`.
+
+### Composable mappings with `.with()`
+
+Re-use hydration logic by importing it from another `Hydrator`.  This is great for
+sharing consistent formatting logic across different queries.  `.with()` does
+**not** change the underlying SQL; it only composes hydration configuration
+(see [Hydrators](#hydrators) below).
+
+```ts
+import { createHydrator } from "kysely-hydrate";
+
+// Define once:
+const userHydrator = createHydrator<{
+  id: number;
+  username: string;
+  email: string;
+}>("id")
+  .extras({
+    displayName: (u) => `${u.username} <${u.email}>`,
+  })
+  .omit(["email"]);
+
+// Reuse in query #1:
+const users = await hydrate(
+  db.selectFrom("users").select(["users.id", "users.username", "users.email"]),
+)
+  .with(userHydrator)
+  .execute();
+// ⬇
+type Result1 = Array<{ id: number; username: string; displayName: string }>;
+
+// Reuse in query #2 (different root query, same hydration rules):
+const author = await hydrate(
+  db
+    .selectFrom("posts")
+    .innerJoin("users", "users.id", "posts.authorId")
+    .select(["users.id", "users.username", "users.email"])
+    .where("posts.id", "=", 123),
+)
+  .with(userHydrator)
+  .executeTakeFirst();
+// ⬇
+type Result2 = { id: number; username: string; displayName: string } | undefined;
+```
 
 ### Execution
 
@@ -1070,20 +1070,16 @@ Computes new fields from the input row.
 type UserRow = { id: number; username: string; email: string };
 
 const hydrator = createHydrator<UserRow>()
-  .fields({ id: true, username: true, email: true })
   .extras({
     displayName: (u) => `${u.username} <${u.email}>`,
   })
-  .omit(["email"]);
 // ⬇
-type Result = Array<{ id: number; username: string; displayName: string }>;
+type Result = Array<{ displayName: string }>;
 ```
 
 ### Excluding fields with `.omit()`
 
-Excludes fields from the output that were already included.  This method
-primarily exists for use by the `HydratedQueryBuilder`, which includes all
-fields by default.
+Excludes fields from the output that were already included.
 
 ```ts
 type UserRow = { id: number; passwordHash: string };
@@ -1093,6 +1089,53 @@ const hydrator = createHydrator<UserRow>()
   .omit(["passwordHash"]);
 // ⬇
 type Result = Array<{ id: number }>;
+```
+
+This method primarily exists for use by the `HydratedQueryBuilder`, which
+includes all fields by default.  It's not so useful in standalone Hydrators, in
+which you must explicitly name the fields to include.  The example above is
+equivalent to `createHydrator<UserRow>().fields({ id: true })`.
+
+### Output transformations with `.map()`
+
+The `.map()` method works the same way as described in the
+[`hydrate()` API section](#output-transformations-with-map) above: it
+transforms the hydrated output into a different shape, such as class instances
+or discriminated union types.
+
+```ts
+class UserModel {
+  constructor(
+    public id: number,
+    public name: string,
+  ) {}
+}
+
+const hydrator = createHydrator<{ id: number; name: string }>()
+  .fields({ id: true, name: true })
+  .map((user) => new UserModel(user.id, user.name));
+
+const users = await hydrateData(rows, hydrator);
+// ⬇
+type Result = UserModel[];
+```
+
+Like with `HydratedQueryBuilder`, `.map()` is a terminal operation—after
+calling it, you can only call `.map()` again or `.hydrate()`. You cannot call
+configuration methods like `.fields()`, `.extras()`, `.has*()`, or `.extend()`.
+
+```ts
+const mapped = createHydrator<User>()
+  .fields({ id: true })
+  .map((u) => ({ userId: u.id }));
+
+// ✅ These work:
+mapped.map((data) => ({ transformed: data.userId }));
+mapped.hydrate(rows);
+
+// ❌ These don't compile:
+mapped.fields({ ... });   // Error: Property 'fields' does not exist
+mapped.extend(...);       // Error: Property 'extend' does not exist
 ```
 
 ### Attached collections with `.attach*()`
@@ -1163,55 +1206,11 @@ type UserRow = { id: number; username: string; email: string };
 const base = createHydrator<UserRow>().fields({ id: true, username: true });
 
 const withDisplayName = createHydrator<UserRow>()
-  .fields({ email: true })
-  .extras({ displayName: (u) => `${u.username} <${u.email}>` })
-  .omit(["email"]);
+  .extras({ displayName: (u) => `${u.username} <${u.email}>` });
 
 const combined = base.extend(withDisplayName);
 // ⬇
 type Result = Hydrator<UserRow, { id: number; username: string; displayName: string }>;
-```
-
-### Output transformations with `.map()`
-
-The `.map()` method works the same way as described in the
-[`hydrate()` API section](#output-transformations-with-map) above: it
-transforms the hydrated output into a different shape, such as class instances
-or discriminated union types.
-
-```ts
-class UserModel {
-  constructor(
-    public id: number,
-    public name: string,
-  ) {}
-}
-
-const hydrator = createHydrator<{ id: number; name: string }>()
-  .fields({ id: true, name: true })
-  .map((user) => new UserModel(user.id, user.name));
-
-const users = await hydrateData(rows, hydrator);
-// ⬇
-type Result = UserModel[];
-```
-
-Like with `HydratedQueryBuilder`, `.map()` is a terminal operation—after
-calling it, you can only call `.map()` again or `.hydrate()`. You cannot call
-configuration methods like `.fields()`, `.extras()`, `.has*()`, or `.extend()`.
-
-```ts
-const mapped = createHydrator<User>()
-  .fields({ id: true })
-  .map((u) => ({ userId: u.id }));
-
-// ✅ These work:
-mapped.map((data) => ({ transformed: data.userId }));
-mapped.hydrate(rows);
-
-// ❌ These don't compile:
-mapped.fields({ ... });   // Error: Property 'fields' does not exist
-mapped.extend(...);       // Error: Property 'extend' does not exist
 ```
 
 ## Kysely plugin
