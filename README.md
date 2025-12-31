@@ -139,6 +139,7 @@ By design, Kysely has the following constraints:
   - [Computed properties with `.extras()`](#computed-properties-with-extras)
   - [Excluded properties with `.omit()`](#excluded-properties-with-omit)
   - [Composable mappings with `.with()`](#composable-mappings-with-with)
+  - [Output transformations with `.map()`](#output-transformations-with-map)
   - [Execution](#execution)
 - [Hydrators](#hydrators)
   - [Creating hydrators with `createHydrator()`](#creating-hydrators-with-createhydrator)
@@ -149,6 +150,7 @@ By design, Kysely has the following constraints:
   - [Attached collections with `.attach*()`](#attached-collections-with-attach)
   - [Prefixed collections with `.has*()`](#prefixed-collections-with-has)
   - [Composing hydrators with `.extend()`](#composing-hydrators-with-extend)
+  - [Output transformations with `.map()`](#output-transformations-with-map-1)
 - [Kysely plugin](#kysely-plugin)
   - [Runtime schema definition](#runtime-schema-definition)
   - [Automatic per-column hydration](#automatic-per-column-hydration)
@@ -823,6 +825,126 @@ const author = await hydrate(
 type Result2 = { id: number; username: string; displayName: string } | undefined;
 ```
 
+### Output transformations with `.map()`
+
+The `.map()` method transforms the hydrated output into a different shape.  Use
+it for complex transformations like:
+
+- Converting plain objects into class instances
+- Asserting discriminated union types
+- Restructuring or reshaping data
+
+Unlike `.mapFields()` and `.extras()`, which operate on individual fields,
+`.map()` receives the complete hydrated result and can transform it however you
+want.
+
+```ts
+// Transform into class instances
+class UserModel {
+  constructor(
+    public id: number,
+    public name: string,
+  ) {}
+
+  getDisplayName() {
+    return `User: ${this.name}`;
+  }
+}
+
+const users = await hydrate(
+  db.selectFrom("users").select(["users.id", "users.name"]),
+)
+  .map((user) => new UserModel(user.id, user.name))
+  .execute();
+// ⬇
+type Result = UserModel[];
+```
+
+#### Chaining transformations
+
+You can chain multiple `.map()` calls to compose transformations.  Each function
+receives the output of the previous transformation.
+
+```ts
+const users = await hydrate(
+  db.selectFrom("users").select(["users.id", "users.name"]),
+)
+  .map((user) => ({ ...user, nameUpper: user.name.toUpperCase() }))
+  .map((user) => ({ id: user.id, display: user.nameUpper }))
+  .execute();
+// ⬇
+type Result = Array<{ id: number; display: string }>;
+```
+
+#### Transforming nested collections
+
+`.map()` works with nested collections too. You can apply transformations to
+child entities and then to parents:
+
+```ts
+const users = await hydrate(db.selectFrom("users").select(["users.id"]))
+  .hasMany("posts", ({ leftJoin }) =>
+    leftJoin("posts", "posts.userId", "users.id")
+      .select(["posts.id", "posts.title"])
+      // Transform child:
+      .map((post) => ({ postId: post.id, postTitle: post.title })),
+  )
+  // Transform parent:
+  .map((user) => ({
+    userId: user.id,
+    postCount: user.posts.length,
+  }))
+  .execute();
+// ⬇
+type Result = Array<{ userId: number; postCount: number }>;
+```
+
+#### Terminal operation
+
+`.map()` is a **terminal operation**. After you call `.map()`, you can only:
+
+- Call `.map()` again to chain another transformation
+- Call `.modify()` to adjust the underlying SQL query
+- Call execution methods (`.execute()`, `.executeTakeFirst()`, etc.)
+
+You **cannot** call configuration methods like `.mapFields()`, `.extras()`,
+`.hasMany()`, or `.with()` after `.map()`.
+
+This is intentional: those methods would affect the *input* type expected by
+your transformation function, which would break your mapping logic. By
+preventing further configuration, the type system protects you from this class
+of bugs.
+
+```ts
+const mapped = hydrate(db.selectFrom("users").select(["users.id"]))
+  .map((user) => ({ userId: user.id }));
+
+// ✅ These work:
+mapped.map((data) => ({ transformed: data.userId }));
+mapped.execute();
+
+// ❌ These don't compile:
+mapped.mapFields({ ... });  // Error: Property 'mapFields' does not exist
+mapped.hasMany(...);        // Error: Property 'hasMany' does not exist
+```
+
+#### `.map()` vs `.mapFields()` and `.extras()`
+
+When should you use `.map()` vs the more targeted methods?
+
+- **Use `.mapFields()`** when you want to transform individual fields by name
+  (e.g., normalizing strings)
+- **Use `.extras()`** when you want to add computed fields while keeping the
+  existing structure
+- **Use `.map()`** when you need to:
+  - Convert to class instances
+  - Completely reshape the output
+  - Apply transformations that depend on the full hydrated result
+  - Assert or narrow types on the entire output shape
+
+The targeted methods are more composable, because they can be interleaved with
+joins, unlike `.map()`.
+
 ### Execution
 
 To run the query and get the hydrated results, use one of the standard execution methods.
@@ -1048,6 +1170,48 @@ const withDisplayName = createHydrator<UserRow>()
 const combined = base.extend(withDisplayName);
 // ⬇
 type Result = Hydrator<UserRow, { id: number; username: string; displayName: string }>;
+```
+
+### Output transformations with `.map()`
+
+The `.map()` method works the same way as described in the
+[`hydrate()` API section](#output-transformations-with-map) above: it
+transforms the hydrated output into a different shape, such as class instances
+or discriminated union types.
+
+```ts
+class UserModel {
+  constructor(
+    public id: number,
+    public name: string,
+  ) {}
+}
+
+const hydrator = createHydrator<{ id: number; name: string }>()
+  .fields({ id: true, name: true })
+  .map((user) => new UserModel(user.id, user.name));
+
+const users = await hydrateData(rows, hydrator);
+// ⬇
+type Result = UserModel[];
+```
+
+Like with `HydratedQueryBuilder`, `.map()` is a terminal operation—after
+calling it, you can only call `.map()` again or `.hydrate()`. You cannot call
+configuration methods like `.fields()`, `.extras()`, `.has*()`, or `.extend()`.
+
+```ts
+const mapped = createHydrator<User>()
+  .fields({ id: true })
+  .map((u) => ({ userId: u.id }));
+
+// ✅ These work:
+mapped.map((data) => ({ transformed: data.userId }));
+mapped.hydrate(rows);
+
+// ❌ These don't compile:
+mapped.fields({ ... });   // Error: Property 'fields' does not exist
+mapped.extend(...);       // Error: Property 'extend' does not exist
 ```
 
 ## Kysely plugin
