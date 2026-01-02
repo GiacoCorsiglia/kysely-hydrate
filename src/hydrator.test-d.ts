@@ -39,6 +39,45 @@ import { createHydrator, hydrateData } from "./hydrator.ts";
 }
 
 //
+// Fields: array shorthand
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+		email: string;
+		age: number;
+	}
+
+	// Array shorthand is equivalent to { field: true } for each field
+	const hydrator1 = createHydrator<User>("id").fields(["id", "name", "email"]);
+
+	const result1 = hydrator1.hydrate([] as User[]);
+
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; name: string; email: string }[]>();
+
+	// Single field in array
+	const hydrator2 = createHydrator<User>("id").fields(["name"]);
+
+	const result2 = hydrator2.hydrate([] as User[]);
+
+	expectTypeOf(result2).resolves.toEqualTypeOf<{ name: string }[]>();
+
+	// Can chain array shorthand with object fields
+	const hydrator3 = createHydrator<User>("id")
+		.fields(["id", "name"])
+		.fields({ email: true, age: (age) => age.toString() });
+
+	const result3 = hydrator3.hydrate([] as User[]);
+
+	expectTypeOf(result3).resolves.toEqualTypeOf<{ id: number; name: string; email: string; age: string }[]>();
+
+	// @ts-expect-error - cannot use non-existent field in array
+	createHydrator<User>("id").fields(["nonExistent"]);
+}
+
+//
 // Extras: computed fields
 //
 

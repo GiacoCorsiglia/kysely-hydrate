@@ -373,9 +373,12 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * Configures which fields to include in the hydrated output.
 	 *
 	 * @param fields - An object mapping field names to either `true` (include as-is)
-	 *   or a transformation function
+	 *   or a transformation function.  Also accepts an array of field names to include.
 	 * @returns A new Hydrator with the fields configuration merged
 	 */
+	fields<F extends readonly (keyof Input)[]>(
+		fields: F,
+	): FullHydrator<Input, Extend<Output, Pick<Input, F[number]>>>;
 	fields<F extends Fields<Input>>(
 		fields: F,
 	): FullHydrator<Input, Extend<Output, InferFields<Input, F>>>;
@@ -630,11 +633,16 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		return !this.#props.mapFns?.length as true;
 	}
 
-	fields(fields: Fields<any>): any {
+	fields(fields: Fields<any> | readonly string[]): any {
 		return new HydratorImpl({
 			...this.#props,
 
-			fields: addObjectToMap(this.#props.fields, fields),
+			fields: Array.isArray(fields)
+				? fields.reduce<FieldsMap>(
+						(map, field) => map.set(field, true),
+						new Map(this.#props.fields),
+					)
+				: addObjectToMap(this.#props.fields, fields as Fields<any>),
 		}) as any;
 	}
 

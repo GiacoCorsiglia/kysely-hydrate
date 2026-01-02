@@ -33,6 +33,22 @@ test("fields: includes specified fields as-is", async () => {
 	]);
 });
 
+test("fields: accepts array shorthand for including fields", async () => {
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const hydrator = createHydrator<User>("id").fields(["id", "name"]);
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	]);
+});
+
 test("fields: transforms field values with functions", async () => {
 	const users: User[] = [{ id: 1, name: "alice" }];
 
