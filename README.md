@@ -131,6 +131,7 @@ By design, Kysely has the following constraints:
     - [`.hasMany()`](#hasmany)
     - [`.hasOne()`](#hasone)
     - [`.hasOneOrThrow()`](#hasoneorthrow)
+    - [Hydrated lateral joins](#hydrated-lateral-joins)
   - [Application-level joins with `.attach*()`](#application-level-joins-with-attach)
     - [`.attachMany()`](#attachmany)
     - [`.attachOne()`](#attachone)
@@ -465,12 +466,86 @@ but you know the record must exist.
 
 > [!NOTE]
 > Like `hydrate()`, `hasOneOrThrow()` also accepts an optional final `keyBy` argument with the
-> same semantics (see [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)).
+> same semantics (see [Keying and deduplication with
+> `keyBy`](#keying-and-deduplication-with-keyby)).
+
+#### Hydrated lateral joins
+
+Kysely supports lateral joins by passing a subquery to methods like
+`innerJoinLateral`, `leftJoinLateral`, etc.
+
+In addition to Kysely's default behavior, Kysely Hydrate also lets you pass an
+**aliased hydrated subquery** to these methods. When you do, the subquery’s
+selections are automatically added to the parent query (with the usual
+prefixing), and the nested result is hydrated according to the nested hydration
+config. This makes it possible to compose hydrated queries through lateral
+joins.
+
+Here’s an example selecting each user and their latest post (scoped per-user
+inside the lateral subquery):
+
+```ts
+const query = hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+  .hasOne("latestPost", ({ innerJoinLateral }) =>
+    innerJoinLateral((db) =>
+      hydrate(
+        db
+          .selectFrom("posts")
+          .select(["posts.id", "posts.title"])
+          .whereRef("posts.user_id", "=", "users.id")
+          .orderBy("posts.id", "desc")
+          .limit(1),
+        "id",
+      ).as("latest_post_subquery"),
+      // You can omit `(join) => join.onTrue()` for the hydrated-subquery overload.
+    ),
+  );
+
+const result = await query.execute();
+// ⬇
+type Result = Array<{
+  id: number;
+  username: string;
+  latestPost: { id: number; title: string };
+}>;
+```
+
+The hydrated lateral subquery is “hoisted” into the parent select list, and its
+columns are prefixed under the relation key (e.g. `latestPost$$id`,
+`latestPost$$title`) so the hydration layer can un-flatten them.
+
+```sql
+select
+  "users"."id",
+  "users"."username",
+  "latest_post_subquery"."id" as "latestPost$$id",
+  "latest_post_subquery"."title" as "latestPost$$title"
+from "users"
+inner join lateral (
+  select "posts"."id", "posts"."title"
+  from "posts"
+  where "posts"."user_id" = "users"."id"
+  limit ?
+) as "latest_post_subquery" on true
+```
+
+> [!WARNING]
+> You cannot use `.selectAll()` in cases where Kysely Hydrate needs to resolve
+> and rewrite nested selections for prefixing. Prefer explicit `.select([...])`
+> (it will throw if selections can’t be resolved).
+
+> [!WARNING]
+> You're still writing SQL.  Lateral joins are powerful, but it’s easy to build
+> queries that don’t compose the way you expect (limits/order-by scopes,
+> correlation, etc). When in doubt, inspect the output with
+> `.toQuery().compile()`.
 
 #### SQL output
 
 Kysely Hydrate produces the SQL you tell it to with exactly one exception: it
-aliases nested selections to avoid naming collisions.
+aliases nested selections to avoid naming collisions.  (Kysely Hydrate also
+hoists selections from hydrated lateral join subqueries, as described
+[above](#hydrated-lateral-joins)—but only if you use that feature.)
 
 For example, `users.id` remains `users.id`, but `posts.id` nested under "posts"
 becomes `posts$$id`.  The hydration layer then un-flattens these aliases back
