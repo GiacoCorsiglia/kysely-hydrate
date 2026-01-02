@@ -71,7 +71,9 @@ import { createHydrator, hydrateData } from "./hydrator.ts";
 
 	const result3 = hydrator3.hydrate([] as User[]);
 
-	expectTypeOf(result3).resolves.toEqualTypeOf<{ id: number; name: string; email: string; age: string }[]>();
+	expectTypeOf(result3).resolves.toEqualTypeOf<
+		{ id: number; name: string; email: string; age: string }[]
+	>();
 
 	// @ts-expect-error - cannot use non-existent field in array
 	createHydrator<User>("id").fields(["nonExistent"]);
