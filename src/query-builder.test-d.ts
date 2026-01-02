@@ -722,6 +722,59 @@ declare const db: DB;
 }
 
 //
+// Joins with aliased hydrated subqueries
+//
+
+{
+	// These should automatically select all of the columns from the aliased
+	// subquery into the parent query (with prefixing).
+
+	const query = hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasMany(
+		"posts",
+		({ innerJoinLateral }) =>
+			innerJoinLateral(
+				(eb) =>
+					hydrate(eb.selectFrom("posts").select(["posts.id", "posts.title"]))
+						.hasOne("author", (qb) =>
+							qb
+								.innerJoin("users", "users.id", "posts.user_id")
+								.select(["users.id", "users.username"]),
+						)
+						.as("posts"),
+				(join) => join.onTrue(),
+			),
+		"id",
+	);
+
+	const flatResult = query.toQuery().execute();
+
+	expectTypeOf(flatResult).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			posts$$id: number;
+			posts$$title: string;
+			posts$$author$$id: number;
+			posts$$author$$username: string;
+		}[]
+	>();
+
+	const result = query.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			posts: {
+				id: number;
+				title: string;
+				author: { id: number; username: string };
+			}[];
+		}[]
+	>();
+}
+
+//
 // Invalid keys: reject nonsense keys
 //
 

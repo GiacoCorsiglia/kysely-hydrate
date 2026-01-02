@@ -10,7 +10,9 @@
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Bash(npx tsgo:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(npx tsc:*)",
+      "Bash(RUN_POSTGRES_TESTS=true npm test:*)"
     ],
     "deny": [],
     "ask": []

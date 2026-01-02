@@ -30,6 +30,7 @@
     "build": "tsdown",
     "release": "./scripts/release.sh",
     "test": "node --test",
+    "test:postgres": "RUN_POSTGRES_TESTS=1 node --test src/query-builder.postgres.test.ts",
     "typecheck": "tsgo",
     "typecheck:tsc": "tsc",
     "lint": "oxlint",
@@ -46,12 +47,14 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22",
+    "@types/pg": "^8.16.0",
     "@typescript/native-preview": "^7.0.0-dev.20251207.1",
     "better-sqlite3": "^12.4.1",
     "expect-type": "^1.3.0",
     "kysely": "^0.28.7",
     "oxfmt": "^0.16.0",
     "oxlint": "^1.31.0",
+    "pg": "^8.16.3",
     "postgres-array": "^3.0.4",
     "tsdown": "^0.17.1",
     "typescript": "^5.9.3"

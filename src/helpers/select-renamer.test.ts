@@ -4,7 +4,8 @@ import { test } from "node:test";
 import * as k from "kysely";
 
 import { db } from "../__tests__/sqlite.ts";
-import { prefixSelectArg } from "./select-renamer.ts";
+import { UnexpectedComplexAliasError } from "./errors.ts";
+import { type AnySelectArg, hoistAndPrefixSelections, prefixSelectArg } from "./select-renamer.ts";
 
 /**
  * Validates that prefixSelectArg correctly prefixes aliases while preserving
@@ -17,7 +18,7 @@ function assertCorrectPrefixing(
 	expectedOriginalNames: string[],
 ): void {
 	// Get the prefixed version
-	const prefixed = prefixSelectArg(prefix, selection);
+	const prefixed = prefixSelectArg(prefix, selection as AnySelectArg);
 
 	// Get Kysely's unprefixed version as ground truth
 	const kyselyQuery = db.selectFrom("users" as any).select(selection as any);
@@ -101,4 +102,112 @@ test("prefixSelectArg: expression builder callback", () => {
 
 test("prefixSelectArg: returns empty array for empty selection", () => {
 	assertCorrectPrefixing("p$$", [], [], []);
+});
+
+test("prefixSelectArg: schema-qualified column reference", () => {
+	assertCorrectPrefixing("u$$", "public.users.id", ["u$$id"], ["id"]);
+});
+
+test("prefixSelectArg: schema-qualified column with alias", () => {
+	assertCorrectPrefixing("u$$", "public.users.username as name", ["u$$name"], ["name"]);
+});
+
+test("hoistAndPrefixSelections: basic subquery with simple selections", () => {
+	const subquery = db.selectFrom("users").select(["id", "username", "email"]).as("u");
+
+	const hoisted = hoistAndPrefixSelections("user$$", subquery);
+
+	assert.strictEqual(hoisted.length, 3);
+	assert.strictEqual(hoisted[0]!.alias, "user$$id");
+	assert.strictEqual(hoisted[0]!.originalName, "id");
+	assert.strictEqual(hoisted[1]!.alias, "user$$username");
+	assert.strictEqual(hoisted[1]!.originalName, "username");
+	assert.strictEqual(hoisted[2]!.alias, "user$$email");
+	assert.strictEqual(hoisted[2]!.originalName, "email");
+
+	// Verify the expressions reference the correct table.column
+	const node0 = hoisted[0]!.expression.toOperationNode() as k.ReferenceNode;
+	assert.strictEqual(node0.kind, "ReferenceNode");
+	assert.strictEqual((node0.column as k.ColumnNode).column.name, "id");
+
+	const node1 = hoisted[1]!.expression.toOperationNode() as k.ReferenceNode;
+	assert.strictEqual(node1.kind, "ReferenceNode");
+	assert.strictEqual((node1.column as k.ColumnNode).column.name, "username");
+});
+
+test("hoistAndPrefixSelections: subquery with aliased selections", () => {
+	const subquery = db.selectFrom("users").select(["id", "username as name"]).as("u");
+
+	const hoisted = hoistAndPrefixSelections("user$$", subquery);
+
+	assert.strictEqual(hoisted.length, 2);
+	assert.strictEqual(hoisted[0]!.alias, "user$$id");
+	assert.strictEqual(hoisted[0]!.originalName, "id");
+	assert.strictEqual(hoisted[1]!.alias, "user$$name");
+	assert.strictEqual(hoisted[1]!.originalName, "name");
+});
+
+test("hoistAndPrefixSelections: subquery with expression builder", () => {
+	const subquery = db
+		.selectFrom("users")
+		.select((eb) => [eb.ref("id").as("user_id"), eb.ref("username").as("username")])
+		.as("u");
+
+	const hoisted = hoistAndPrefixSelections("u$$", subquery);
+
+	assert.strictEqual(hoisted.length, 2);
+	assert.strictEqual(hoisted[0]!.alias, "u$$user_id");
+	assert.strictEqual(hoisted[0]!.originalName, "user_id");
+	assert.strictEqual(hoisted[1]!.alias, "u$$username");
+	assert.strictEqual(hoisted[1]!.originalName, "username");
+});
+
+test("hoistAndPrefixSelections: empty prefix", () => {
+	const subquery = db.selectFrom("users").select(["id", "username"]).as("u");
+
+	const hoisted = hoistAndPrefixSelections("", subquery);
+
+	assert.strictEqual(hoisted.length, 2);
+	assert.strictEqual(hoisted[0]!.alias, "id");
+	assert.strictEqual(hoisted[0]!.originalName, "id");
+	assert.strictEqual(hoisted[1]!.alias, "username");
+	assert.strictEqual(hoisted[1]!.originalName, "username");
+});
+
+test("hoistAndPrefixSelections: returns empty array for subquery with no selections", () => {
+	// Create a subquery node with no selections
+	const subquery = db.selectFrom("users").as("u");
+
+	const hoisted = hoistAndPrefixSelections("u$$", subquery);
+
+	assert.strictEqual(hoisted.length, 0);
+});
+
+test("hoistAndPrefixSelections: subquery with schema-qualified selections", () => {
+	const subquery = db
+		.selectFrom("users")
+		.select([
+			"public.users.id as id",
+			"public.users.username as username",
+			"public.users.email as email",
+			// I'm not actually sure how to configure Kysely to understand
+			// schema-qualified columns at the type-level, but this works well enough
+			// for the test.
+		] as any)
+		.as("u");
+
+	const hoisted = hoistAndPrefixSelections("user$$", subquery);
+
+	assert.strictEqual(hoisted.length, 3);
+	assert.strictEqual(hoisted[0]!.alias, "user$$id");
+	assert.strictEqual(hoisted[0]!.originalName, "id");
+	assert.strictEqual(hoisted[1]!.alias, "user$$username");
+	assert.strictEqual(hoisted[1]!.originalName, "username");
+	assert.strictEqual(hoisted[2]!.alias, "user$$email");
+	assert.strictEqual(hoisted[2]!.originalName, "email");
+
+	// Verify the expressions reference the correct table.column from the subquery alias
+	const node0 = hoisted[0]!.expression.toOperationNode() as k.ReferenceNode;
+	assert.strictEqual(node0.kind, "ReferenceNode");
+	assert.strictEqual((node0.column as k.ColumnNode).column.name, "id");
 });

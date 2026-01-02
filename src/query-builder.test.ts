@@ -1074,62 +1074,225 @@ test("crossJoin: adds cross join to query", async () => {
 });
 
 //
-// Lateral Joins (skip for SQLite)
+// innerJoinLateral with HydratedQueryBuilder
 //
 
-test.skip("innerJoinLateral: adds inner join lateral", async () => {
-	// SQLite does not support lateral joins
-	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
-		.innerJoinLateral(
+test("innerJoinLateral with hydrated subquery: generates correct SQL with prefixed columns", async () => {
+	const builder = hydrate(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	).hasOne("latestPost", ({ innerJoinLateral }) =>
+		innerJoinLateral(
 			(db) =>
-				db
-					.selectFrom("posts")
-					.select(["posts.id", "posts.title"])
-					.whereRef("posts.user_id", "=", "users.id")
-					.limit(1)
-					.as("latest_post"),
-			(join) => join.onTrue(),
-		)
-		.select(["latest_post.title"])
-		.execute();
+				hydrate(
+					db
+						.selectFrom("posts")
+						.select(["posts.id", "posts.title"])
+						.whereRef("posts.user_id", "=", "users.id")
+						.limit(1),
+					"id",
+				).as("latest_post"),
+			// Omitting `(join) => join.onTrue()` as it should be the default.
+		),
+	);
 
-	assert.ok(users.length > 0);
+	const compiled = builder.toQuery().compile();
+
+	assert.strictEqual(
+		compiled.sql,
+		[
+			"select ",
+			'"users"."id", ',
+			'"users"."username", ',
+			'"latest_post"."id" as "latestPost$$id", ',
+			'"latest_post"."title" as "latestPost$$title" ',
+			'from "users" ',
+			"inner join lateral (",
+			'select "posts"."id", "posts"."title" ',
+			'from "posts" ',
+			'where "posts"."user_id" = "users"."id" ',
+			"limit ?",
+			') as "latest_post" on true',
+		].join(""),
+	);
 });
 
-test.skip("leftJoinLateral: adds left join lateral", async () => {
-	// SQLite does not support lateral joins
-	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
-		.leftJoinLateral(
-			(db) =>
-				db
-					.selectFrom("posts")
-					.select(["posts.id", "posts.title"])
-					.whereRef("posts.user_id", "=", "users.id")
-					.limit(1)
-					.as("latest_post"),
-			(join) => join.onTrue(),
-		)
-		.select(["latest_post.title"])
-		.execute();
+test("innerJoinLateral with hydrated subquery: handles column aliases", async () => {
+	const builder = hydrate(
+		db.selectFrom("users").select(["users.id", "users.username as userName"]),
+		"id",
+	).hasOne(
+		"latestPost",
+		({ innerJoinLateral }) =>
+			innerJoinLateral(
+				(db) =>
+					hydrate(
+						db
+							.selectFrom("posts")
+							.select(["posts.id as postId", "posts.title", "posts.content as postContent"])
+							.whereRef("posts.user_id", "=", "users.id")
+							.orderBy("posts.id", "desc")
+							.limit(1),
+						"postId",
+					).as("latest_post"),
+				(join) => join.onTrue(),
+			),
+		"postId",
+	);
 
-	assert.ok(users.length > 0);
+	const compiled = builder.toQuery().compile();
+
+	assert.strictEqual(
+		compiled.sql,
+		[
+			"select ",
+			'"users"."id", ',
+			'"users"."username" as "userName", ',
+			'"latest_post"."postId" as "latestPost$$postId", ',
+			'"latest_post"."title" as "latestPost$$title", ',
+			'"latest_post"."postContent" as "latestPost$$postContent" ',
+			'from "users" ',
+			"inner join lateral (",
+			"select ",
+			'"posts"."id" as "postId", ',
+			'"posts"."title", ',
+			'"posts"."content" as "postContent" ',
+			'from "posts" ',
+			'where "posts"."user_id" = "users"."id" ',
+			'order by "posts"."id" desc ',
+			"limit ?",
+			') as "latest_post" on true',
+		].join(""),
+	);
 });
 
-test.skip("crossJoinLateral: adds cross join lateral", async () => {
-	// SQLite does not support lateral joins
-	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
-		.crossJoinLateral((db) =>
-			db
-				.selectFrom("posts")
-				.select(["posts.id", "posts.title"])
-				.whereRef("posts.user_id", "=", "users.id")
-				.limit(1)
-				.as("latest_post"),
-		)
-		.select(["latest_post.title"])
-		.execute();
+test("innerJoinLateral with nested hydrated subquery: generates doubly-prefixed columns", async () => {
+	const builder = hydrate(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	).hasOne("latestPost", ({ innerJoinLateral }) =>
+		innerJoinLateral(
+			(db) =>
+				hydrate(
+					db
+						.selectFrom("posts")
+						.select(["posts.id", "posts.title"])
+						.whereRef("posts.user_id", "=", "users.id")
+						.limit(1),
+					"id",
+				)
+					.hasMany(
+						"comments",
+						({ leftJoin }) =>
+							leftJoin("comments", "comments.post_id", "posts.id").select([
+								"comments.id",
+								"comments.content as commentText",
+							]),
+						"id",
+					)
+					.as("latest_post"),
+			(join) => join.onTrue(),
+		),
+	);
 
-	assert.ok(users.length > 0);
+	const compiled = builder.toQuery().compile();
+
+	assert.strictEqual(
+		compiled.sql,
+		[
+			"select ",
+			'"users"."id", ',
+			'"users"."username", ',
+			'"latest_post"."id" as "latestPost$$id", ',
+			'"latest_post"."title" as "latestPost$$title", ',
+			'"latest_post"."comments$$id" as "latestPost$$comments$$id", ',
+			'"latest_post"."comments$$commentText" as "latestPost$$comments$$commentText" ',
+			'from "users" ',
+			"inner join lateral (",
+			"select ",
+			'"posts"."id", ',
+			'"posts"."title", ',
+			'"comments"."id" as "comments$$id", ',
+			'"comments"."content" as "comments$$commentText" ',
+			'from "posts" ',
+			'left join "comments" on "comments"."post_id" = "posts"."id" ',
+			'where "posts"."user_id" = "users"."id" ',
+			"limit ?",
+			') as "latest_post" on true',
+		].join(""),
+	);
+});
+
+test("innerJoinLateral with multiple hydrated subqueries: prefixes each independently", async () => {
+	const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.hasOne(
+			"firstPost",
+			({ innerJoinLateral }) =>
+				innerJoinLateral(
+					(db) =>
+						hydrate(
+							db
+								.selectFrom("posts")
+								.select(["posts.id as firstId", "posts.title as firstTitle"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.orderBy("posts.id", "asc")
+								.limit(1),
+							"firstId",
+						).as("first_post"),
+					(join) => join.onTrue(),
+				),
+			"firstId",
+		)
+		.hasOne(
+			"lastPost",
+			({ innerJoinLateral }) =>
+				innerJoinLateral(
+					(db) =>
+						hydrate(
+							db
+								.selectFrom("posts")
+								.select(["posts.id as lastId", "posts.title as lastTitle"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.orderBy("posts.id", "desc")
+								.limit(1),
+							"lastId",
+						).as("last_post"),
+					(join) => join.onTrue(),
+				),
+			"lastId",
+		);
+
+	const compiled = builder.toQuery().compile();
+
+	assert.strictEqual(
+		compiled.sql,
+		[
+			"select ",
+			'"users"."id", ',
+			'"users"."username", ',
+			'"first_post"."firstId" as "firstPost$$firstId", ',
+			'"first_post"."firstTitle" as "firstPost$$firstTitle", ',
+			'"last_post"."lastId" as "lastPost$$lastId", ',
+			'"last_post"."lastTitle" as "lastPost$$lastTitle" ',
+			'from "users" ',
+			"inner join lateral (",
+			'select "posts"."id" as "firstId", ',
+			'"posts"."title" as "firstTitle" ',
+			'from "posts" ',
+			'where "posts"."user_id" = "users"."id" ',
+			'order by "posts"."id" asc ',
+			"limit ?",
+			') as "first_post" on true ',
+			"inner join lateral (",
+			'select "posts"."id" as "lastId", ',
+			'"posts"."title" as "lastTitle" ',
+			'from "posts" ',
+			'where "posts"."user_id" = "users"."id" ',
+			'order by "posts"."id" desc ',
+			"limit ?",
+			') as "last_post" on true',
+		].join(""),
+	);
 });
 
 //

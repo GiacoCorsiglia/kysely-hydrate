@@ -6,7 +6,11 @@ import {
 	type MakePrefix,
 	makePrefix,
 } from "./helpers/prefixes.ts";
-import { prefixSelectArg } from "./helpers/select-renamer.ts";
+import {
+	type AnySelectArg,
+	hoistAndPrefixSelections,
+	prefixSelectArg,
+} from "./helpers/select-renamer.ts";
 import { type Extend, type KeyBy, type StrictSubset } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
@@ -63,10 +67,10 @@ interface MappedHydratedQueryBuilder<
 				QueryDB: QueryDB;
 				QueryTB: QueryTB;
 				QueryRow: QueryRow;
+				LocalDB: LocalDB;
 				LocalRow: LocalRow;
 				HydratedRow: HydratedRow;
 				IsNullable: IsNullable;
-				NestedDB: LocalDB;
 				HasJoin: HasJoin;
 		  }
 		| undefined;
@@ -157,6 +161,25 @@ interface MappedHydratedQueryBuilder<
 		/* IsNullable:  */ IsNullable,
 		/* HasJoin:     */ HasJoin
 	>;
+
+	/**
+	 * Creates an aliased version of this query builder, suitable for use in join
+	 * subqueries.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * .hasMany('pets', ({ innerJoinLateral }) =>
+	 *   innerJoinLateral(
+	 *     (eb) => hydrate(eb.selectFrom('pet').select(['id', 'name'])).as('p'),
+	 *     (join) => join.onTrue()
+	 *   )
+	 * )
+	 * ```
+	 *
+	 * @param alias - The alias for this subquery
+	 * @returns An AliasedHydratedExpression that can be used in lateral joins
+	 */
+	as<Alias extends string>(alias: Alias): AliasedHydratedQueryBuilder<QueryRow, HydratedRow, Alias>;
 }
 
 /**
@@ -881,14 +904,15 @@ interface HydratedQueryBuilder<
 		k1: K1,
 		k2: K2,
 	): HydratedQueryBuilderWithInnerJoin<
-		/* Prefix:      */ Prefix,
-		/* QueryDB:     */ QueryDB,
-		/* QueryTB:     */ QueryTB,
-		/* QueryRow:    */ QueryRow,
-		/* LocalDB:     */ LocalDB,
-		/* LocalRow:    */ LocalRow,
-		/* HydratedRow: */ HydratedRow,
-		/* IsNullable:  */ IsNullable,
+		Prefix,
+		QueryDB,
+		QueryTB,
+		QueryRow,
+		LocalDB,
+		LocalRow,
+		HydratedRow,
+		IsNullable,
+		//
 		TE
 	>;
 	innerJoin<
@@ -898,14 +922,15 @@ interface HydratedQueryBuilder<
 		table: TE,
 		callback: FN,
 	): HydratedQueryBuilderWithInnerJoin<
-		/* Prefix:      */ Prefix,
-		/* QueryDB:     */ QueryDB,
-		/* QueryTB:     */ QueryTB,
-		/* QueryRow:    */ QueryRow,
-		/* LocalDB:     */ LocalDB,
-		/* LocalRow:    */ LocalRow,
-		/* HydratedRow: */ HydratedRow,
-		/* IsNullable:  */ IsNullable,
+		Prefix,
+		QueryDB,
+		QueryTB,
+		QueryRow,
+		LocalDB,
+		LocalRow,
+		HydratedRow,
+		IsNullable,
+		//
 		TE
 	>;
 
@@ -931,6 +956,7 @@ interface HydratedQueryBuilder<
 		HydratedRow,
 		IsNullable,
 		HasJoin,
+		//
 		TE
 	>;
 	leftJoin<
@@ -949,6 +975,7 @@ interface HydratedQueryBuilder<
 		HydratedRow,
 		IsNullable,
 		HasJoin,
+		//
 		TE
 	>;
 
@@ -967,12 +994,39 @@ interface HydratedQueryBuilder<
 		LocalRow,
 		HydratedRow,
 		IsNullable,
+		//
 		TE
 	>;
 
 	/**
 	 * Just like {@link innerJoin} but adds an `inner join lateral` instead of an
 	 * `inner join`.
+	 *
+	 * In addition to matching Kysely's allowed arguments, you may also pass a
+	 * `HydratedQueryBuilder` as your subquery.  If you do, anything it selects
+	 * will automatically be added to the parent query's selections (with
+	 * prefixing).  This allows you to compose hydrated queries.
+	 *
+	 * @example
+	 * ```ts
+	 * const query = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+	 *  .hasMany("posts", ({ innerJoinLateral }) =>
+	 *    innerJoinLateral(hydrate(db.selectFrom("posts").select(["posts.id", "posts.title"])))
+	 *  );
+	 *
+	 * const result = await query.execute();
+	 *
+	 * // result is an array of objects with the following shape:
+	 * {
+	 *   id: number;
+	 *   username: string;
+	 *   posts: Array<{ id: number; title: string }>;
+	 * }
+	 * ```
+	 *
+	 * For the hydrated subquery case, you may omit the second "join builder" argument.
+	 * By default, it will be `(join) => join.onTrue()`, which is typically what you want
+	 * for a lateral join.
 	 */
 	innerJoinLateral<
 		TE extends k.TableExpression<QueryDB, QueryTB>,
@@ -991,11 +1045,12 @@ interface HydratedQueryBuilder<
 		LocalRow,
 		HydratedRow,
 		IsNullable,
+		//
 		TE
 	>;
 	innerJoinLateral<
 		TE extends k.TableExpression<QueryDB, QueryTB>,
-		FN extends k.JoinCallbackExpression<QueryDB, QueryTB, TE>,
+		FN extends k.JoinCallbackExpression<QueryDB, QueryTB, NoInfer<TE>>,
 	>(
 		table: TE,
 		callback: FN,
@@ -1008,12 +1063,41 @@ interface HydratedQueryBuilder<
 		LocalRow,
 		HydratedRow,
 		IsNullable,
+		//
 		TE
+	>;
+	innerJoinLateral<
+		Alias extends string,
+		NestedQueryRow,
+		NestedHydratedRow,
+		FN extends HydratedJoinCallbackExpression<QueryDB, QueryTB, Alias, NoInfer<NestedQueryRow>>,
+	>(
+		hydratedTable: AliasedHydratedQueryBuilderOrFactory<
+			QueryDB,
+			QueryTB,
+			Alias,
+			NestedQueryRow,
+			NestedHydratedRow
+		>,
+		callback?: FN,
+	): HydratedQueryBuilderWithHydratedInnerJoin<
+		Prefix,
+		QueryDB,
+		QueryTB,
+		QueryRow,
+		LocalDB,
+		LocalRow,
+		HydratedRow,
+		IsNullable,
+		//
+		Alias,
+		NestedQueryRow,
+		NestedHydratedRow
 	>;
 
 	/**
-	 * Just like {@link leftJoin} but adds a `left join lateral` instead of a
-	 * `left join`.
+	 * Just like {@link innerJoinLateral} but adds a `left join lateral` instead of a
+	 * `inner join lateral`.
 	 */
 	leftJoinLateral<
 		TE extends k.TableExpression<QueryDB, QueryTB>,
@@ -1033,11 +1117,12 @@ interface HydratedQueryBuilder<
 		HydratedRow,
 		IsNullable,
 		HasJoin,
+		//
 		TE
 	>;
 	leftJoinLateral<
 		TE extends k.TableExpression<QueryDB, QueryTB>,
-		FN extends k.JoinCallbackExpression<QueryDB, QueryTB, TE>,
+		FN extends k.JoinCallbackExpression<QueryDB, QueryTB, NoInfer<TE>>,
 	>(
 		table: TE,
 		callback: FN,
@@ -1051,12 +1136,42 @@ interface HydratedQueryBuilder<
 		HydratedRow,
 		IsNullable,
 		HasJoin,
+		//
 		TE
+	>;
+	leftJoinLateral<
+		Alias extends string,
+		NestedQueryRow,
+		NestedHydratedRow,
+		FN extends HydratedJoinCallbackExpression<QueryDB, QueryTB, Alias, NoInfer<NestedQueryRow>>,
+	>(
+		hydratedTable: AliasedHydratedQueryBuilderOrFactory<
+			QueryDB,
+			QueryTB,
+			Alias,
+			NestedQueryRow,
+			NestedHydratedRow
+		>,
+		callback?: FN,
+	): HydratedQueryBuilderWithHydratedLeftJoin<
+		Prefix,
+		QueryDB,
+		QueryTB,
+		QueryRow,
+		LocalDB,
+		LocalRow,
+		HydratedRow,
+		IsNullable,
+		HasJoin,
+		//
+		Alias,
+		NestedQueryRow,
+		NestedHydratedRow
 	>;
 
 	/**
-	 * Just like {@link innerJoin} but adds a `cross join lateral` instead of an
-	 * `inner join`.
+	 * Just like {@link innerJoinLateral} but adds a `cross join lateral` instead of an
+	 * `inner join lateral`.
 	 */
 	crossJoinLateral<TE extends k.TableExpression<QueryDB, QueryTB>>(
 		table: TE,
@@ -1069,7 +1184,30 @@ interface HydratedQueryBuilder<
 		LocalRow,
 		HydratedRow,
 		IsNullable,
+		//
 		TE
+	>;
+	crossJoinLateral<Alias extends string, NestedQueryRow, NestedHydratedRow>(
+		hydratedTable: AliasedHydratedQueryBuilderOrFactory<
+			QueryDB,
+			QueryTB,
+			Alias,
+			NestedQueryRow,
+			NestedHydratedRow
+		>,
+	): HydratedQueryBuilderWithHydratedInnerJoin<
+		Prefix,
+		QueryDB,
+		QueryTB,
+		QueryRow,
+		LocalDB,
+		LocalRow,
+		HydratedRow,
+		IsNullable,
+		//
+		Alias,
+		NestedQueryRow,
+		NestedHydratedRow
 	>;
 
 	/**
@@ -1083,41 +1221,41 @@ interface HydratedQueryBuilder<
 	select<SE extends k.SelectExpression<QueryDB, QueryTB>>(
 		selections: ReadonlyArray<SE>,
 	): HydratedQueryBuilder<
-		Prefix,
-		QueryDB,
-		QueryTB,
-		QueryRow & ApplyPrefixes<Prefix, k.Selection<QueryDB, QueryTB, SE>>,
-		LocalDB,
-		LocalRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
-		HydratedRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
-		IsNullable,
-		HasJoin
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow & ApplyPrefixes<Prefix, k.Selection<QueryDB, QueryTB, SE>>,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
+		/* HydratedRow: */ HydratedRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
 	>;
 	select<CB extends k.SelectCallback<QueryDB, QueryTB>>(
 		callback: CB,
 	): HydratedQueryBuilder<
-		Prefix,
-		QueryDB,
-		QueryTB,
-		QueryRow & ApplyPrefixes<Prefix, k.CallbackSelection<QueryDB, QueryTB, CB>>,
-		LocalDB,
-		LocalRow & k.CallbackSelection<LocalDB, QueryTB & keyof LocalDB, CB>,
-		HydratedRow & k.CallbackSelection<LocalDB, QueryTB & keyof LocalDB, CB>,
-		IsNullable,
-		HasJoin
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow & ApplyPrefixes<Prefix, k.CallbackSelection<QueryDB, QueryTB, CB>>,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow & k.CallbackSelection<LocalDB, QueryTB & keyof LocalDB, CB>,
+		/* HydratedRow: */ HydratedRow & k.CallbackSelection<LocalDB, QueryTB & keyof LocalDB, CB>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
 	>;
 	select<SE extends k.SelectExpression<QueryDB, QueryTB>>(
 		selection: SE,
 	): HydratedQueryBuilder<
-		Prefix,
-		QueryDB,
-		QueryTB,
-		QueryRow & ApplyPrefixes<Prefix, k.Selection<QueryDB, QueryTB, SE>>,
-		LocalDB,
-		LocalRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
-		HydratedRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
-		IsNullable,
-		HasJoin
+		/* Prefix:      */ Prefix,
+		/* QueryDB:     */ QueryDB,
+		/* QueryTB:     */ QueryTB,
+		/* QueryRow:    */ QueryRow & ApplyPrefixes<Prefix, k.Selection<QueryDB, QueryTB, SE>>,
+		/* LocalDB:     */ LocalDB,
+		/* LocalRow:    */ LocalRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
+		/* HydratedRow: */ HydratedRow & k.Selection<LocalDB, QueryTB & keyof LocalDB, SE>,
+		/* IsNullable:  */ IsNullable,
+		/* HasJoin:     */ HasJoin
 	>;
 }
 
@@ -1188,6 +1326,153 @@ type HydratedQueryBuilderWithLeftJoin<
 			>
 		: never;
 
+type HydratedJoinCallbackExpression<
+	QueryDB,
+	QueryTB extends keyof QueryDB,
+	Alias extends string,
+	NestedQueryRow,
+> = k.JoinCallbackExpression<
+	QueryDB,
+	QueryTB,
+	AliasedHydratedQueryBuilderTableExpression<NestedQueryRow, Alias>
+>;
+
+type HydratedQueryBuilderWithHydratedInnerJoin<
+	/* Prefix:      */ Prefix extends string,
+	/* QueryDB:     */ QueryDB,
+	/* QueryTB:     */ QueryTB extends keyof QueryDB,
+	/* QueryRow:    */ QueryRow,
+	/* LocalDB:     */ LocalDB,
+	/* LocalRow:    */ LocalRow,
+	/* HydratedRow: */ HydratedRow,
+	/* IsNullable:  */ IsNullable extends boolean,
+	Alias extends string,
+	NestedQueryRow,
+	NestedHydratedRow,
+> = HydratedQueryBuilderWithInnerJoin<
+	/* Prefix:      */ Prefix,
+	/* QueryDB:     */ QueryDB,
+	/* QueryTB:     */ QueryTB,
+	/* QueryRow:    */ Extend<QueryRow, ApplyPrefixes<Prefix, NestedQueryRow>>,
+	/* LocalDB:     */ LocalDB,
+	/* LocalRow:    */ Extend<LocalRow, NestedQueryRow>,
+	/* HydratedRow: */ Extend<HydratedRow, NestedHydratedRow>,
+	/* IsNullable:  */ IsNullable,
+	AliasedHydratedQueryBuilderTableExpression<NestedQueryRow, Alias>
+>;
+
+type HydratedQueryBuilderWithHydratedLeftJoin<
+	/* Prefix:      */ Prefix extends string,
+	/* QueryDB:     */ QueryDB,
+	/* QueryTB:     */ QueryTB extends keyof QueryDB,
+	/* QueryRow:    */ QueryRow,
+	/* LocalDB:     */ LocalDB,
+	/* LocalRow:    */ LocalRow,
+	/* HydratedRow: */ HydratedRow,
+	/* IsNullable:  */ IsNullable extends boolean,
+	/* HasJoin:     */ AlreadyHadJoin extends boolean,
+	Alias extends string,
+	NestedQueryRow,
+	NestedHydratedRow,
+> = HydratedQueryBuilderWithLeftJoin<
+	/* Prefix:      */ Prefix,
+	/* QueryDB:     */ QueryDB,
+	/* QueryTB:     */ QueryTB,
+	/* QueryRow:    */ Extend<QueryRow, ApplyPrefixes<Prefix, NestedQueryRow>>,
+	/* LocalDB:     */ LocalDB,
+	/* LocalRow:    */ Extend<LocalRow, NestedQueryRow>,
+	/* HydratedRow: */ Extend<HydratedRow, NestedHydratedRow>,
+	/* IsNullable:  */ IsNullable,
+	/* HasJoin:     */ AlreadyHadJoin,
+	AliasedHydratedQueryBuilderTableExpression<NestedQueryRow, Alias>
+>;
+
+////////////////////////////////////////////////////////////////////
+// AliasedHydratedExpression
+////////////////////////////////////////////////////////////////////
+
+type AliasedHydratedQueryBuilderOrFactory<
+	QueryDB,
+	QueryTB extends keyof QueryDB,
+	Alias extends string,
+	NestedQueryRow,
+	NestedHydratedRow,
+> =
+	| AliasedHydratedQueryBuilder<NestedQueryRow, NestedHydratedRow, Alias>
+	| AliasedHydratedQueryBuilderFactory<QueryDB, QueryTB, Alias, NestedQueryRow, NestedHydratedRow>;
+
+type AliasedHydratedQueryBuilderFactory<
+	QueryDB,
+	QueryTB extends keyof QueryDB,
+	Alias extends string,
+	NestedQueryRow,
+	NestedHydratedRow,
+> = (
+	eb: k.ExpressionBuilder<QueryDB, QueryTB>,
+) => AliasedHydratedQueryBuilder<NestedQueryRow, NestedHydratedRow, Alias>;
+
+type AliasedHydratedQueryBuilderTableExpression<
+	QueryRow,
+	Alias extends string,
+> = k.AliasedSelectQueryBuilder<QueryRow, Alias>;
+
+// Making this a MappedHydratedQueryBuilder for safety, as we can't tell the
+// difference between a HydratedQueryBuilder and a MappedHydratedQueryBuilder
+// once it has been aliased.  This could be overcome, but
+// `AliasedHydratedQueryBuilder.hydratedQueryBuilder` mostly an implementation
+// detail anyway.
+type HqbForAlias<QueryRow, HydratedRow> = MappedHydratedQueryBuilder<
+	any,
+	any,
+	any,
+	QueryRow,
+	any,
+	any,
+	HydratedRow,
+	any,
+	any
+>;
+
+/**
+ * Represents a {@link HydratedQueryBuilder} that has been aliased with `.as()`.
+ * Analogous to {@link k.AliasedSelectQueryBuilder}.
+ */
+class AliasedHydratedQueryBuilder<QueryRow, HydratedRow, Alias extends string> {
+	readonly isAliasedHydratedQueryBuilder: true = true;
+
+	#alias: Alias;
+
+	#hydratedQueryBuilder: HqbForAlias<QueryRow, HydratedRow>;
+
+	constructor(alias: Alias, hydratedQueryBuilder: HqbForAlias<QueryRow, HydratedRow>) {
+		this.#alias = alias;
+		this.#hydratedQueryBuilder = hydratedQueryBuilder;
+	}
+
+	/**
+	 * The alias!
+	 */
+	get alias(): Alias {
+		return this.#alias;
+	}
+
+	/**
+	 * The underlying {@link HydratedQueryBuilder}, which was aliased with `.as()`.
+	 */
+	get hydratedQueryBuilder(): HqbForAlias<QueryRow, HydratedRow> {
+		return this.#hydratedQueryBuilder;
+	}
+
+	/**
+	 * Produces an {@link k.AliasedSelectQueryBuilder} for the
+	 * {@link k.SelectQueryBuilder} underlying this {@link HydratedQueryBuilder}.
+	 *
+	 */
+	toAliasedQuery(): AliasedHydratedQueryBuilderTableExpression<QueryRow, Alias> {
+		return this.#hydratedQueryBuilder.toQuery().as(this.#alias);
+	}
+}
+
 ////////////////////////////////////////////////////////////////////
 // Implementation.
 ////////////////////////////////////////////////////////////////////
@@ -1196,11 +1481,22 @@ type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
 
 type AnyHydratedQueryBuilder = HydratedQueryBuilder<any, any, any, any, any, any, any, any, any>;
 
+type JoinMethod =
+	| "innerJoin"
+	| "leftJoin"
+	| "crossJoin"
+	| "innerJoinLateral"
+	| "leftJoinLateral"
+	| "crossJoinLateral";
+
 interface HydratedQueryBuilderProps {
 	readonly qb: AnySelectQueryBuilder;
 	readonly prefix: string;
 	readonly hydrator: Hydrator<any, any>;
 }
+
+type AnyJoinArgs = [from: any, callbackOrk1?: any, k2?: any];
+type AnyJoinArgsTail = [callbackOrk1?: any, k2?: any];
 
 /**
  * Implementation of the {@link HydratedQueryBuilder} interface as well as the
@@ -1261,6 +1557,10 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			...this.#props,
 			hydrator: this.#props.hydrator.map(transform),
 		});
+	}
+
+	as<Alias extends string>(alias: Alias): AliasedHydratedQueryBuilder<Alias, any, any> {
+		return new AliasedHydratedQueryBuilder(alias, this);
 	}
 
 	#hydrate(rows: object[]): object[];
@@ -1339,7 +1639,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		});
 	}
 
-	#addJoin(
+	#has(
 		mode: CollectionMode,
 		key: string,
 		jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl,
@@ -1369,7 +1669,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	}
 
 	hasMany(key: string, jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl, keyBy?: any) {
-		return this.#addJoin("many", key, jb, keyBy);
+		return this.#has("many", key, jb, keyBy);
 	}
 
 	hasOne(
@@ -1377,7 +1677,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl,
 		keyBy?: any,
 	): any {
-		return this.#addJoin("one", key, jb, keyBy);
+		return this.#has("one", key, jb, keyBy);
 	}
 
 	hasOneOrThrow(
@@ -1385,7 +1685,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		jb: (nb: AnyHydratedQueryBuilder) => HydratedQueryBuilderImpl,
 		keyBy?: any,
 	): any {
-		return this.#addJoin("oneOrThrow", key, jb, keyBy);
+		return this.#has("oneOrThrow", key, jb, keyBy);
 	}
 
 	#addAttach(
@@ -1413,10 +1713,10 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	}
 
 	//
-	// NestedJoinBuilder methods.
+	// Kysely-like methods.
 	//
 
-	select(selection: k.SelectArg<any, any, any>) {
+	select(selection: AnySelectArg) {
 		const prefixedSelections = prefixSelectArg(this.#props.prefix, selection);
 
 		return new HydratedQueryBuilderImpl({
@@ -1427,35 +1727,101 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 
 			// Ensure all selected fields are included in the hydrated output.
 			hydrator: asFullHydrator(this.#props.hydrator).fields(
-				Object.fromEntries(
-					prefixedSelections.map((selection) => [selection.originalName, true as const]),
-				),
+				prefixedSelections.map((selection) => selection.originalName),
 			),
 		});
 	}
 
-	innerJoin(...args: [any, any]) {
-		return this.modify((qb) => qb.innerJoin(...args));
+	#join(
+		method: JoinMethod,
+		from:
+			| k.TableExpression<any, any>
+			| AliasedHydratedQueryBuilderOrFactory<any, any, any, any, any>,
+		...args: AnyJoinArgsTail
+	): any {
+		// These conditions handle `AliasedHydratedQueryBuilderOrFactory`.
+		if (typeof from === "function") {
+			const result = from(k.expressionBuilder());
+
+			if (result instanceof AliasedHydratedQueryBuilder) {
+				return this.#joinHydrated(method, result, ...args);
+			}
+		} else if (from instanceof AliasedHydratedQueryBuilder) {
+			return this.#joinHydrated(method, from, ...args);
+		}
+
+		// Otherwise, it's just a normal Kysely join.
+		return this.modify((qb) =>
+			// TypeScript can't follow the overloads, so we need to cast to any.
+			(qb[method] as any)(from, ...args),
+		);
 	}
 
-	leftJoin(...args: [any, any]) {
-		return this.modify((qb) => qb.leftJoin(...args));
+	#joinHydrated(
+		method: JoinMethod,
+		from: AliasedHydratedQueryBuilder<any, any, any>,
+		...args: AnyJoinArgsTail
+	) {
+		// In case of lateral joins with just one argument (the subquery), default to joining ON TRUE.
+		// This doesn't apply to cross joins, which always have no ON clause.
+		if (!args.length && (method === "leftJoinLateral" || method === "innerJoinLateral")) {
+			args = [(join: k.JoinBuilder<any, any>) => join.onTrue()];
+		}
+
+		const aliasedQb = from.toAliasedQuery();
+		const hoistedSelections = hoistAndPrefixSelections(this.#props.prefix, aliasedQb);
+
+		const nestedHydratedQueryBuilder = from.hydratedQueryBuilder as HydratedQueryBuilderImpl;
+		const nestedHydrator = nestedHydratedQueryBuilder.#props.hydrator;
+
+		let newQb = this.#props.qb;
+		// This cast to a single method helps TypeScript follow the overloads.
+		newQb = newQb[method as "innerJoinLateral"](aliasedQb, ...args);
+		// This cast to `any` is needed because TS can't follow the overloads.
+		newQb = newQb.select(hoistedSelections as any);
+
+		// This works because Hydrators are composable and do not need to know
+		// about their parent's prefix.
+		let newHydrator = asFullHydrator(this.#props.hydrator).extend(nestedHydrator);
+		// We also must ensure all root fields from the subquery are accounted for.
+		newHydrator = ensureFields(
+			newHydrator,
+			hoistedSelections
+				.map((selection) => selection.originalName)
+				.filter((name) => !hasAnyPrefix(name)),
+		);
+
+		return new HydratedQueryBuilderImpl({
+			...this.#props,
+
+			qb: newQb,
+
+			hydrator: newHydrator,
+		});
 	}
 
-	crossJoin(...args: [any]) {
-		return this.modify((qb) => qb.crossJoin(...args));
+	innerJoin(...args: AnyJoinArgs) {
+		return this.#join("innerJoin", ...args);
 	}
 
-	innerJoinLateral(...args: [any, any]) {
-		return this.modify((qb) => qb.innerJoinLateral(...args));
+	leftJoin(...args: AnyJoinArgs) {
+		return this.#join("leftJoin", ...args);
 	}
 
-	leftJoinLateral(...args: [any, any]) {
-		return this.modify((qb) => qb.leftJoinLateral(...args));
+	crossJoin(...args: AnyJoinArgs) {
+		return this.#join("crossJoin", ...args);
 	}
 
-	crossJoinLateral(...args: [any]) {
-		return this.modify((qb) => qb.crossJoinLateral(...args));
+	innerJoinLateral(...args: AnyJoinArgs) {
+		return this.#join("innerJoinLateral", ...args);
+	}
+
+	leftJoinLateral(...args: AnyJoinArgs) {
+		return this.#join("leftJoinLateral", ...args);
+	}
+
+	crossJoinLateral(...args: AnyJoinArgs) {
+		return this.#join("crossJoinLateral", ...args);
 	}
 }
 

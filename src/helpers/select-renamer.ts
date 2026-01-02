@@ -11,11 +11,20 @@ const fakeQb = k.createSelectQueryBuilder({
 });
 
 /**
+ * A generic version of k.SelectArg that isn't identically "any".
+ */
+export type AnySelectArg = k.SelectArg<
+	Record<string, unknown>,
+	string,
+	k.SelectExpression<Record<string, unknown>, string>
+>;
+
+/**
  * Applies a prefix to the argument passed to a query builder's `qb.select()` call.
  */
 export function prefixSelectArg(
 	prefix: string,
-	selection: k.SelectArg<any, any, k.SelectExpression<any, any>>,
+	selection: AnySelectArg,
 ): PrefixedAliasedExpression<any, any, any>[] {
 	// This is pretty hilarious.  We use a separate query builder to parse the
 	// selectArg into operation nodes, then we iterate over those nodes to rename
@@ -27,7 +36,39 @@ export function prefixSelectArg(
 		prefixSelectionNode(selectionNode, prefix),
 	);
 
-	return (prefixedSelections ?? []) satisfies k.SelectArg<any, any, k.SelectExpression<any, any>>;
+	return (prefixedSelections ?? []) satisfies AnySelectArg;
+}
+
+/**
+ * Produces selections for a parent query to select everything selected in a
+ * subquery, but aliased with the given prefix.
+ */
+export function hoistAndPrefixSelections(
+	prefix: string,
+	qb: k.AliasedSelectQueryBuilder<any, string>,
+) {
+	const table = qb.alias;
+
+	if (typeof table !== "string") {
+		throw new UnexpectedComplexAliasError();
+	}
+
+	// This should always be true, it's just lost when calling `k.SelectQueryBuilder.as()`.
+	const node = qb.expression.toOperationNode() as k.SelectQueryNode;
+
+	if (!node.selections) {
+		return [];
+	}
+
+	const eb = k.expressionBuilder<any, any>();
+
+	return node.selections.map((selectionNode) => {
+		const name = extractSelectionName(selectionNode);
+
+		const referenceExpression = eb.ref(`${table}.${name}`);
+
+		return new PrefixedAliasedExpression(referenceExpression, prefix, name);
+	});
 }
 
 class PrefixedAliasedExpression<
@@ -37,10 +78,15 @@ class PrefixedAliasedExpression<
 > extends k.AliasedExpressionWrapper<T, ApplyPrefix<Prefix, OriginalName>> {
 	readonly originalName: string;
 
-	constructor(node: k.OperationNode, prefix: Prefix, originalName: OriginalName) {
+	constructor(
+		node: k.OperationNode | k.Expression<any>,
+		prefix: Prefix,
+		originalName: OriginalName,
+	) {
 		const alias = applyPrefix(prefix, originalName);
-		// We have to gin up a new expression.
-		super(new k.ExpressionWrapper(node), alias);
+		// We have to gin up a new expression if it isn't one.
+		const expression = k.isExpression(node) ? node : new k.ExpressionWrapper(node);
+		super(expression, alias);
 		this.originalName = originalName;
 	}
 }
