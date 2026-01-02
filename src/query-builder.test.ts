@@ -325,6 +325,32 @@ test("hasMany: produces correctly prefixed columns in raw query", async () => {
 	assert.strictEqual(rows[0]?.["posts$$title"], "Post 1");
 });
 
+test("hasMany: generates SQL with correctly prefixed column aliases", async () => {
+	const builder = hydrate(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+		"id",
+	).hasMany(
+		"posts",
+		({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id").select([
+				"posts.id",
+				"posts.title as postTitle",
+				"posts.content",
+			]),
+		"id",
+	);
+
+	const compiled = builder.toQuery().compile();
+
+	// Verify parent columns are not prefixed and nested columns are prefixed with collection name
+	// Both regular columns and aliased columns should be prefixed
+	assert.ok(
+		compiled.sql.startsWith(
+			'select "users"."id", "users"."username", "posts"."id" as "posts$$id", "posts"."title" as "posts$$postTitle", "posts"."content" as "posts$$content"',
+		),
+	);
+});
+
 test("hasMany: returns empty array when no matches", async () => {
 	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
 		.modify((qb) => qb.where("users.id", "=", 1)) // Alice has no posts
@@ -403,6 +429,38 @@ test("hasMany: multiple nesting produces doubly-prefixed columns", async () => {
 	assert.strictEqual(rowWithComment["posts$$comments$$content"], "Comment 1 on post 1");
 });
 
+test("hasMany: generates SQL with doubly-prefixed aliases for nested collections", async () => {
+	const builder = hydrate(
+		db.selectFrom("users").select(["users.id", "users.username as name"]),
+		"id",
+	).hasMany(
+		"posts",
+		({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id")
+				.select(["posts.id", "posts.title as postTitle"])
+				.hasMany(
+					"comments",
+					({ leftJoin }) =>
+						leftJoin("comments", "comments.post_id", "posts.id").select([
+							"comments.id as commentId",
+							"comments.content",
+						]),
+					"commentId",
+				),
+		"id",
+	);
+
+	const compiled = builder.toQuery().compile();
+
+	// Verify parent aliases not prefixed, first-level uses single prefix, second-level uses double prefix
+	// All user-defined aliases and regular columns should be prefixed appropriately
+	assert.ok(
+		compiled.sql.startsWith(
+			'select "users"."id", "users"."username" as "name", "posts"."id" as "posts$$id", "posts"."title" as "posts$$postTitle", "comments"."id" as "posts$$comments$$commentId", "comments"."content" as "posts$$comments$$content"',
+		),
+	);
+});
+
 //
 // hasOne
 //
@@ -457,6 +515,31 @@ test("hasOne: produces correctly prefixed columns in raw query", async () => {
 	assert.strictEqual(rows[0]?.title, "Post 1");
 	assert.strictEqual(rows[0]?.["author$$id"], 2);
 	assert.strictEqual(rows[0]?.["author$$username"], "bob");
+});
+
+test("hasOne: generates SQL with correctly prefixed column aliases", async () => {
+	const builder = hydrate(
+		db.selectFrom("posts").select(["posts.id", "posts.title as postTitle"]),
+		"id",
+	).hasOne(
+		"author",
+		({ innerJoin }) =>
+			innerJoin("users", "users.id", "posts.user_id").select([
+				"users.id as userId",
+				"users.username",
+				"users.email as authorEmail",
+			]),
+		"userId",
+	);
+
+	const compiled = builder.toQuery().compile();
+
+	// Verify parent aliases not prefixed and nested columns/aliases prefixed with relation name
+	assert.ok(
+		compiled.sql.startsWith(
+			'select "posts"."id", "posts"."title" as "postTitle", "users"."id" as "author$$userId", "users"."username" as "author$$username", "users"."email" as "author$$authorEmail"',
+		),
+	);
 });
 
 test("hasOne: returns null when no match with left join", async () => {
@@ -742,6 +825,42 @@ test("mixing hasOne and hasMany", async () => {
 
 	assert.strictEqual(users[0]?.profile?.bio, "Bio for user 2");
 	assert.strictEqual(users[0]?.posts.length, 4);
+});
+
+test("mixing hasOne and hasMany: generates SQL with correctly prefixed aliases", async () => {
+	const builder = hydrate(
+		db.selectFrom("users").select(["users.id", "users.username as userName"]),
+		"id",
+	)
+		.hasOne(
+			"profile",
+			({ leftJoin }) =>
+				leftJoin("profiles", "profiles.user_id", "users.id").select([
+					"profiles.id as profileId",
+					"profiles.bio",
+				]),
+			"profileId",
+		)
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id").select([
+					"posts.id",
+					"posts.title as postTitle",
+					"posts.content",
+				]),
+			"id",
+		);
+
+	const compiled = builder.toQuery().compile();
+
+	// Verify parent aliases not prefixed, hasOne and hasMany each use their own prefixes
+	// Both user-defined aliases and regular columns should be handled correctly
+	assert.ok(
+		compiled.sql.startsWith(
+			'select "users"."id", "users"."username" as "userName", "profiles"."id" as "profile$$profileId", "profiles"."bio" as "profile$$bio", "posts"."id" as "posts$$id", "posts"."title" as "posts$$postTitle", "posts"."content" as "posts$$content"',
+		),
+	);
 });
 
 //
@@ -1129,3 +1248,11 @@ test("multiple nested levels: keyBy defaults to 'id' at all levels", async () =>
 		content: "Comment 1 on post 1",
 	});
 });
+
+//
+// innerJoinLateral with AliasedHydratedExpression
+//
+
+// Note: Tests for innerJoinLateral with AliasedHydratedExpression are skipped
+// because SQLite does not support lateral joins. The feature can be tested
+// manually with PostgreSQL or similar databases that support lateral joins.
