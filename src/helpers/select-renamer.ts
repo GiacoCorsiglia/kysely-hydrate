@@ -54,7 +54,7 @@ export function hoistAndPrefixSelections(
 	}
 
 	// This should always be true, it's just lost when calling `k.SelectQueryBuilder.as()`.
-	const node = qb.expression.toOperationNode() as k.SelectQueryNode;
+	const node = (qb.expression as k.SelectQueryBuilder<any, any, any>).toOperationNode();
 
 	if (!node.selections) {
 		return [];
