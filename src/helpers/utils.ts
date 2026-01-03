@@ -1,4 +1,4 @@
-import { InvalidInstanceError, UnexpectedCaseError } from "./errors.ts";
+import { UnexpectedCaseError } from "./errors.ts";
 
 export type Prettify<T> = {
 	[K in keyof T]: T[K];
@@ -67,58 +67,4 @@ export function addObjectToMap<K extends string, V>(
 		}
 	}
 	return clone;
-}
-
-/**
- * Creates a pair of functions for accessing private instance methods from outside the class.
- * Uses a WeakMap to store bound methods, ensuring proper memory cleanup.
- *
- * @returns An object with `call` and `register` functions
- *   - call: Calls the private method on an instance
- *   - register: Registers a private method for an instance (call in constructor)
- *
- * @example
- * ```ts
- * const privateAccessor = createPrivateAccessor<
- *   MyClass,
- *   [arg1: string, arg2: number],
- *   ReturnType
- * >();
- *
- * class MyClass {
- *   constructor() {
- *     privateAccessor.register(this, this.#privateMethod.bind(this));
- *   }
- *   #privateMethod(arg1: string, arg2: number): ReturnType { ... }
- * }
- *
- * // External usage with proper JSDoc:
- * \/**
- *  * Documentation here
- *  *\/
- * export const callPrivateMethod = privateAccessor.call;
- * ```
- */
-export function createPrivateAccessor<Instance extends WeakKey, Args extends any[], Return>() {
-	const registry = new WeakMap<Instance, (...args: Args) => Return>();
-
-	return {
-		/**
-		 * Registers a private method for an instance. Call this in the constructor.
-		 */
-		register: (instance: Instance, method: (...args: Args) => Return): void => {
-			registry.set(instance, method);
-		},
-
-		/**
-		 * Calls the private method on an instance.
-		 */
-		call: (instance: Instance, ...args: Args): Return => {
-			const method = registry.get(instance);
-			if (!method) {
-				throw new InvalidInstanceError();
-			}
-			return method(...args);
-		},
-	};
 }

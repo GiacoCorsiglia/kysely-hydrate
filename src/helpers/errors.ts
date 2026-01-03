@@ -78,16 +78,6 @@ export class UnsupportedNodeTypeError extends KyselyHydrateError {
 }
 
 /**
- * Error thrown when attempting to call a private method on an instance that
- * was not properly registered with the private accessor.
- */
-export class InvalidInstanceError extends KyselyHydrateError {
-	constructor() {
-		super("Invalid instance - private method not registered");
-	}
-}
-
-/**
  * Error thrown when attempting to extend a Hydrator with another Hydrator
  * that has a different keyBy configuration.
  */
