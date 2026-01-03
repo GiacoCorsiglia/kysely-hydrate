@@ -10,6 +10,8 @@
 import assert from "node:assert";
 import { after, before, describe, test } from "node:test";
 
+import { CamelCasePlugin } from "kysely";
+
 import { db, setupDatabase, teardownDatabase } from "./__tests__/postgres.ts";
 import { hydrate } from "./query-builder.ts";
 
@@ -426,6 +428,95 @@ describe("PostgreSQL tests", { skip: !shouldRun }, () => {
 					{ id: 2, title: "Post 2" },
 				],
 			},
+		]);
+	});
+
+	test("CamelCasePlugin: basic hydration with camelCase conversion", async () => {
+		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
+			users: { id: number; username: string };
+			posts: { id: number; title: string; userId: number };
+		}>();
+
+		// Use $narrowType to properly type camelCase column names
+		const users = await hydrate(
+			camelDb.selectFrom("users").select(["users.id", "users.username"]),
+			"id",
+		)
+			.modify((qb) => qb.where("users.id", "=", 2))
+			.innerJoinLateral(
+				(eb) =>
+					eb
+						.selectFrom("posts")
+						.select(["posts.id", "posts.title", "posts.userId"])
+						.whereRef("posts.user_id", "=", "users.id")
+						.limit(1)
+						.as("latestPost"),
+				(join) => join.onTrue(),
+			)
+			.select(["latestPost.title", "latestPost.userId"])
+			.execute();
+
+		// With CamelCasePlugin, user_id should be converted to userId
+		assert.deepStrictEqual(users, [{ id: 2, username: "bob", title: "Post 1", userId: 2 }]);
+	});
+
+	test("CamelCasePlugin: hasMany with nested hydrated subquery", async () => {
+		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
+			users: { id: number; username: string };
+			posts: { id: number; title: string; userId: number };
+		}>();
+
+		const users = await hydrate(
+			camelDb.selectFrom("users").select(["users.id", "users.username"]),
+			"id",
+		)
+			.modify((qb) => qb.where("users.id", "=", 2))
+			.hasMany("posts", ({ innerJoinLateral }) =>
+				innerJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title", "posts.userId"])
+								.whereRef("posts.userId", "=", "users.id")
+								.orderBy("posts.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+			)
+			.execute();
+
+		// With CamelCasePlugin, user_id should be converted to userId
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", userId: 2 },
+					{ id: 2, title: "Post 2", userId: 2 },
+				],
+			},
+		]);
+	});
+
+	test("CamelCasePlugin: top-level selection with camelCase selections", async () => {
+		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
+			posts: { id: number; userId: number; title: string; content: string };
+		}>();
+
+		const posts = await hydrate(
+			camelDb.selectFrom("posts").select(["posts.id", "posts.userId", "posts.title"]),
+			"id",
+		)
+			.modify((qb) => qb.where("posts.id", "in", [1, 2]).orderBy("posts.id"))
+			.execute();
+
+		// With CamelCasePlugin, user_id should be converted to userId
+		assert.deepStrictEqual(posts, [
+			{ id: 1, userId: 2, title: "Post 1" },
+			{ id: 2, userId: 2, title: "Post 2" },
 		]);
 	});
 });

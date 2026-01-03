@@ -3,15 +3,11 @@ import {
 	applyPrefix,
 	createdPrefixedAccessor,
 	getPrefixedValue,
+	hasPrefix,
+	removePrefix,
 	type SelectAndStripPrefix,
 } from "./helpers/prefixes.ts";
-import {
-	addObjectToMap,
-	createPrivateAccessor,
-	type Extend,
-	isIterable,
-	type KeyBy,
-} from "./helpers/utils.ts";
+import { addObjectToMap, type Extend, isIterable, type KeyBy } from "./helpers/utils.ts";
 
 ////////////////////////////////////////////////////////////////////
 // Optional keyBy when "id" is a valid key.
@@ -248,33 +244,6 @@ type ChildHydratorArg<P extends string, ParentInput, ChildOutput> =
 	| ((
 			create: CreateHydratorFn<SelectAndStripPrefix<P, ParentInput>>,
 	  ) => MappedHydrator<SelectAndStripPrefix<P, ParentInput>, ChildOutput>);
-
-/**
- * Private accessor for the ensureFields method.
- */
-const ensureFieldsAccessor = createPrivateAccessor<
-	HydratorImpl<any, any>,
-	[fieldNames: readonly string[]],
-	HydratorImpl<any, any>
->();
-
-/**
- * Ensures fields are included in the Hydrator's output if they don't already
- * have an explicit configuration (including explicit omission).
- *
- * This is used internally by `HydratedQueryBuilder` to auto-detect selected
- * fields without overwriting explicit field mappings or omissions from
- * `mapFields()` and `omit()`.
- *
- * @param hydrator - The Hydrator instance
- * @param fieldNames - Field names to ensure are included
- * @returns A new Hydrator with the fields ensured
- * @internal
- */
-export const ensureFields: (
-	hydrator: Hydrator<any, any>,
-	fieldNames: readonly string[],
-) => Hydrator<any, any> = ensureFieldsAccessor.call as any;
 
 const IsFullHydrator = Symbol("HydratorType");
 
@@ -615,6 +584,38 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
 }
 
+////////////////////////////////////////////////////////////////////
+// Implementation
+////////////////////////////////////////////////////////////////////
+
+/**
+ * Special constant to enable auto-inclusion of fields at each level.
+ */
+export const EnableAutoInclusion = Symbol();
+
+/**
+ * Context passed through hydration operations.
+ */
+interface HydrationContext {
+	/**
+	 * When true, automatically includes all fields at each level (excluding
+	 * parent fields and nested collection fields).
+	 */
+	readonly autoIncludeFields: boolean;
+
+	/**
+	 * Map of attached collection data, keyed by prefixed collection key.
+	 * Populated during the initial fetch phase and used during hydration.
+	 */
+	readonly attachedDataMap: Map<string, Map<unknown, any[]>>;
+
+	/**
+	 * Cache for auto-include field names keyed by prefix.
+	 * Maps: prefix -> fieldNames[]
+	 */
+	readonly autoFieldsCache: Map<string, string[]>;
+}
+
 /**
  * Implements the entire inheritance chain of Hydrators.
  */
@@ -623,8 +624,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 	constructor(props: HydratorProps<Input>) {
 		this.#props = props;
-		// Register the bound ensureFields method for internal use
-		ensureFieldsAccessor.register(this as any, this.#ensureFields.bind(this));
 	}
 
 	get [IsFullHydrator]() {
@@ -653,21 +652,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			...this.#props,
 
 			fields: addObjectToMap(this.#props.fields, omitFields),
-		}) as any;
-	}
-
-	#ensureFields(fieldNames: readonly string[]): any {
-		const clone = new Map(this.#props.fields);
-		for (const name of fieldNames) {
-			if (!clone.has(name)) {
-				clone.set(name, true);
-			}
-		}
-
-		return new HydratorImpl({
-			...this.#props,
-
-			fields: clone,
 		}) as any;
 	}
 
@@ -776,9 +760,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * Writes directly to the provided attachedDataMap and fetchPromises array.
 	 */
 	#fetchAllAttachedCollections(
+		ctx: HydrationContext,
 		prefix: string,
 		inputs: Iterable<Input>,
-		attachedDataMap: Map<string, Map<unknown, any[]>>,
 		fetchPromises: Promise<void>[],
 	): void {
 		const { attachedCollections, collections } = this.#props;
@@ -814,7 +798,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 							attachedCollection.matchChild,
 						);
 
-						attachedDataMap.set(mapKey, grouped);
+						ctx.attachedDataMap.set(mapKey, grouped);
 					}),
 				);
 			}
@@ -826,28 +810,80 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Recursively fetch nested attach collections (write directly to the same map).
-				collection.hydrator.#fetchAllAttachedCollections(
-					childPrefix,
-					inputs,
-					attachedDataMap,
-					fetchPromises,
-				);
+				collection.hydrator.#fetchAllAttachedCollections(ctx, childPrefix, inputs, fetchPromises);
 			}
 		}
 	}
 
 	/**
+	 * Gets all the fields belonging to the current prefix level; not to the
+	 * parent, and not to any nested collection.  Does this once per hydration
+	 * (assumes all inputs have the same keys).
+	 */
+	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): string[] {
+		// Have we done this already?
+		const cached = ctx.autoFieldsCache.get(prefix);
+		if (cached) {
+			return cached;
+		}
+
+		// If we get a null for some bizarre reason, I guess we should try again
+		// on the next row.
+		if (typeof input !== "object" || input === null) {
+			return [];
+		}
+
+		const { fields, extras, collections } = this.#props;
+
+		// Get the nested collection prefixes
+		const nestedPrefixes: string[] = [];
+		if (collections) {
+			for (const collection of collections.values()) {
+				nestedPrefixes.push(applyPrefix(prefix, collection.prefix));
+			}
+		}
+
+		const autoFields: string[] = [];
+		for (const inputKey of Object.keys(input)) {
+			// Exclude if its from a parent (not this prefix).
+			if (!hasPrefix(prefix, inputKey)) {
+				continue;
+			}
+			// Exclude if its from a child (this prefix but with an additional prefix).
+			if (nestedPrefixes.some((nestedPrefix) => hasPrefix(nestedPrefix, inputKey))) {
+				continue;
+			}
+
+			const unprefixedKey = removePrefix(prefix, inputKey);
+
+			// Exclude if its explicitly set in the fields or extras.
+			if (fields?.has(unprefixedKey) || extras?.has(unprefixedKey)) {
+				continue;
+			}
+
+			// The autoFields gets the unprefixed key.
+			autoFields.push(unprefixedKey);
+		}
+
+		// Cache and return the auto-include fields
+		ctx.autoFieldsCache.set(prefix, autoFields);
+		return autoFields;
+	}
+
+	/**
 	 * Hydrates a single entity. All attach collections are already fetched and provided in attachedDataMap.
 	 */
-	#hydrateOne(
-		prefix: string,
-		attachedDataMap: Map<string, Map<unknown, any[]>>,
-		input: Input,
-		inputRows: Input[],
-	): Output {
+	#hydrateOne(ctx: HydrationContext, prefix: string, input: Input, inputRows: Input[]): Output {
 		const { fields, extras, collections, attachedCollections } = this.#props;
 
 		const entity: any = {};
+
+		// Auto-include all fields at this prefix level when enabled
+		if (ctx.autoIncludeFields) {
+			for (const key of this.#getAutoFields(ctx, prefix, input)) {
+				entity[key] = getPrefixedValue(prefix, input, key);
+			}
+		}
 
 		if (fields) {
 			for (const [key, field] of fields) {
@@ -873,11 +909,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(
-					childPrefix,
-					inputRows,
-					attachedDataMap,
-				);
+				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, inputRows);
 
 				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
@@ -893,7 +925,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const mapKey = prefix ? applyPrefix(prefix, key) : key;
 
 				// Look up attached rows with matching key (already hydrated)
-				const groupedData = attachedDataMap.get(mapKey);
+				const groupedData = ctx.attachedDataMap.get(mapKey);
 				const attachedRows = groupedData?.get(inputKey);
 
 				entity[key] = applyCollectionMode(attachedRows, collection.mode, key);
@@ -916,11 +948,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates many entities. All attach collections are already fetched and provided in attachedDataMap.
 	 */
-	#hydrateMany(
-		prefix: string,
-		inputs: Iterable<Input>,
-		attachedDataMap: Map<string, Map<unknown, any[]>>,
-	): Output[] {
+	#hydrateMany(ctx: HydrationContext, prefix: string, inputs: Iterable<Input>): Output[] {
 		const { keyBy, collections } = this.#props;
 
 		const result: Output[] = [];
@@ -939,7 +967,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					continue;
 				}
 
-				const entity = this.#hydrateOne(prefix, attachedDataMap, input, [input]);
+				const entity = this.#hydrateOne(ctx, prefix, input, [input]);
 				result.push(entity);
 			}
 
@@ -951,31 +979,35 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// We assume the first row is representative of the group, at least for
 			// the top-level entity (not nested collections).
 			const firstRow = groupRows[0]!;
-			const entity = this.#hydrateOne(prefix, attachedDataMap, firstRow, groupRows);
+			const entity = this.#hydrateOne(ctx, prefix, firstRow, groupRows);
 			result.push(entity);
 		}
 
 		return result;
 	}
 
-	hydrate(input: Input | Iterable<Input>): Promise<any> {
+	hydrate(
+		input: Input | Iterable<Input>,
+		autoIncludeFields?: typeof EnableAutoInclusion,
+	): Promise<any> {
+		// Create hydration context for this operation
+		const ctx: HydrationContext = {
+			autoIncludeFields: autoIncludeFields === EnableAutoInclusion,
+			attachedDataMap: new Map(),
+			autoFieldsCache: new Map(),
+		};
+
 		// Fetch all attach collections upfront (this is the only async operation).
 		// Start with empty prefix for top-level collections.
-		const attachedDataMap = new Map<string, Map<unknown, any[]>>();
 		const fetchPromises: Promise<void>[] = [];
-		this.#fetchAllAttachedCollections(
-			"",
-			isIterable(input) ? input : [input],
-			attachedDataMap,
-			fetchPromises,
-		);
+		this.#fetchAllAttachedCollections(ctx, "", isIterable(input) ? input : [input], fetchPromises);
 
 		const hydrateWithData = () => {
 			if (isIterable(input)) {
-				return this.#hydrateMany("", input, attachedDataMap);
+				return this.#hydrateMany(ctx, "", input);
 			}
 
-			return this.#hydrateOne("", attachedDataMap, input, [input]);
+			return this.#hydrateOne(ctx, "", input, [input]);
 		};
 
 		return fetchPromises.length > 0

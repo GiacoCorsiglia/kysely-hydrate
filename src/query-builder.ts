@@ -1,11 +1,6 @@
 import * as k from "kysely";
 
-import {
-	type ApplyPrefixes,
-	hasAnyPrefix,
-	type MakePrefix,
-	makePrefix,
-} from "./helpers/prefixes.ts";
+import { type ApplyPrefixes, type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
 import {
 	type AnySelectArg,
 	hoistAndPrefixSelections,
@@ -16,7 +11,6 @@ import {
 	type AttachedKeysArg,
 	type CollectionMode,
 	DEFAULT_KEY_BY,
-	ensureFields,
 	type Extras,
 	type FetchFn,
 	type FieldMappings,
@@ -28,6 +22,7 @@ import {
 	type InputWithDefaultKey,
 	type MappedHydrator,
 	asFullHydrator,
+	EnableAutoInclusion,
 } from "./hydrator.ts";
 
 ////////////////////////////////////////////////////////////////////
@@ -1566,25 +1561,14 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	#hydrate(rows: object[]): object[];
 	#hydrate(rows: object | undefined): object | undefined;
 	#hydrate(rows: object | object[] | undefined): object | object[] | undefined {
-		const isArray = Array.isArray(rows);
-		const firstRow = isArray ? rows[0] : rows;
-
-		if (!firstRow) {
-			return isArray ? [] : undefined;
-		}
-
-		// This dance is necessary to ensure the hydrated result actually includes
-		// the selected columns from the top-level select.
-		const fieldNames = Object.keys(firstRow)
-			// To determine if the key is from the top-level selection versus a
-			// nested selection, we simply check if it includes the prefix separator.
-			.filter((key) => !hasAnyPrefix(key));
-
-		// Use ensureFields helper to preserve any explicit field mappings/omissions
-		// from `mapFields()` or `omit()`.
-		const hydratorWithSelection = ensureFields(this.#props.hydrator, fieldNames);
-
-		return hydratorWithSelection.hydrate(rows);
+		return this.#props.hydrator.hydrate(
+			rows,
+			// Auto include fields at all levels, so we don't have to understand the
+			// shape of the selection and can allow it to be inferred by the shape of
+			// the rows.
+			// @ts-expect-error - EnableAutoInclusion is a hidden parameter.
+			EnableAutoInclusion,
+		);
 	}
 
 	async execute(): Promise<any[]> {
@@ -1725,10 +1709,9 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			// This cast to `any` is needed because TS can't follow the overload.
 			qb: this.#props.qb.select(prefixedSelections as any),
 
-			// Ensure all selected fields are included in the hydrated output.
-			hydrator: asFullHydrator(this.#props.hydrator).fields(
-				prefixedSelections.map((selection) => selection.originalName),
-			),
+			// Note: We don't configure fields here. The #hydrate method will
+			// automatically use fields-auto-inclusion to discover fields from actual
+			// result rows, which works correctly with plugins like CamelCasePlugin.
 		});
 	}
 
@@ -1782,14 +1765,11 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 
 		// This works because Hydrators are composable and do not need to know
 		// about their parent's prefix.
-		let newHydrator = asFullHydrator(this.#props.hydrator).extend(nestedHydrator);
-		// We also must ensure all root fields from the subquery are accounted for.
-		newHydrator = ensureFields(
-			newHydrator,
-			hoistedSelections
-				.map((selection) => selection.originalName)
-				.filter((name) => !hasAnyPrefix(name)),
-		);
+		const newHydrator = asFullHydrator(this.#props.hydrator).extend(nestedHydrator);
+		// Note: We don't need to manually ensure fields here. The #hydrate method
+		// will automatically use fields-auto-inclusion to discover fields from
+		// actual result rows, which works correctly with plugins like
+		// CamelCasePlugin.
 
 		return new HydratedQueryBuilderImpl({
 			...this.#props,
