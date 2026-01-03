@@ -1578,17 +1578,27 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	}
 
 	async executeTakeFirst(): Promise<any | undefined> {
-		const result = await this.#props.qb.executeTakeFirst();
-
-		return result ? this.#hydrate(result) : undefined;
+		// We can't use `this.#props.qb.executeTakeFirst()` because it suppresses
+		// rows for nested joins.
+		const [result] = await this.execute();
+		return result;
 	}
 
 	async executeTakeFirstOrThrow(
 		errorConstructor: k.NoResultErrorConstructor | ((node: k.QueryNode) => Error) = k.NoResultError,
 	): Promise<any> {
-		const result = await this.#props.qb.executeTakeFirstOrThrow(errorConstructor);
+		const result = await this.executeTakeFirst();
 
-		return this.#hydrate(result);
+		// This is exactly what Kysely does.
+		if (result === undefined) {
+			const error = k.isNoResultErrorConstructor(errorConstructor)
+				? new errorConstructor(this.toOperationNode())
+				: errorConstructor(this.toOperationNode());
+
+			throw error;
+		}
+
+		return result;
 	}
 
 	//

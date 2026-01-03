@@ -36,6 +36,26 @@ test("executeTakeFirst: returns first result or undefined", async () => {
 	assert.strictEqual(noUser, undefined);
 });
 
+test("executeTakeFirst: works with hasMany (user with 2+ posts)", async () => {
+	// User 2 (bob) has 4 posts in the fixture
+	const user = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username"]).where("users.id", "=", 2),
+		"id",
+	)
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id").select(["posts.id", "posts.title"]),
+			"id",
+		)
+		.executeTakeFirst();
+
+	assert.strictEqual(user?.id, 2);
+	assert.strictEqual(user?.username, "bob");
+	assert.ok(Array.isArray(user?.posts));
+	assert.ok(user!.posts.length >= 2, "User should have at least 2 posts");
+});
+
 test("executeTakeFirstOrThrow: returns first result or throws", async () => {
 	const user = await hydrate(
 		db.selectFrom("users").select(["users.id", "users.username"]).where("users.id", "=", 1),
