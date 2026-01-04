@@ -1356,6 +1356,127 @@ test("toQuery: returns underlying kysely query builder", async () => {
 });
 
 //
+// toRootQuery and executeCountAll
+//
+
+test("toRootQuery: deduplicates rows when using hasMany", async () => {
+	const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id").select(["posts.id", "posts.title"]),
+		);
+
+	// toQuery returns 4 rows (one per post) due to join explosion
+	const flatRows = await builder.toQuery().execute();
+	assert.strictEqual(flatRows.length, 4);
+
+	// toRootQuery returns 1 row (one per user)
+	const rootRows = await builder.toRootQuery().execute();
+	assert.strictEqual(rootRows.length, 1);
+	assert.strictEqual(rootRows[0]?.id, 2);
+});
+
+test("toRootQuery: enables pagination of root entities", async () => {
+	const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasMany(
+		"posts",
+		({ leftJoin }) => leftJoin("posts", "posts.user_id", "users.id").select("posts.id"),
+	);
+
+	const page1 = await builder
+		.toRootQuery()
+		.clearSelect()
+		.select("users.id")
+		.orderBy("users.id", "asc")
+		.limit(2)
+		.execute();
+
+	assert.strictEqual(page1.length, 2);
+	assert.strictEqual(page1[0]?.id, 1);
+	assert.strictEqual(page1[1]?.id, 2);
+});
+
+test("executeCountAll: counts root entities with left-joined collections", async () => {
+	const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id").select("posts.id"),
+		);
+
+	// Without deduplication, toQuery returns 4 rows (join explosion)
+	const flatRows = await builder.toQuery().execute();
+	assert.strictEqual(flatRows.length, 4);
+
+	// With deduplication, executeCountAll returns 1 user
+	const count = await builder.executeCountAll(Number);
+	assert.strictEqual(count, 1);
+});
+
+test("executeCountAll: counts through multiple nested levels", async () => {
+	const count = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id")
+				.select("posts.id")
+				.hasMany("comments", ({ leftJoin }) =>
+					leftJoin("comments", "comments.post_id", "posts.id").select("comments.id"),
+				),
+		)
+		.executeCountAll(Number);
+
+	// Should count 1 user (not 4 posts or multiple comments)
+	assert.strictEqual(count, 1);
+});
+
+test("executeCountAll: respects top-level filters, ignores nested filters", async () => {
+	const withTopFilter = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+		.modify((qb) => qb.where("users.id", "<=", 3))
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id").select("posts.id"),
+		)
+		.executeCountAll(Number);
+
+	assert.strictEqual(withTopFilter, 3);
+
+	const withNestedFilter = await hydrate(
+		db.selectFrom("users").select(["users.id", "users.username"]),
+	)
+		.hasMany("posts", ({ leftJoin }) =>
+			leftJoin("posts", "posts.user_id", "users.id")
+				.select("posts.id")
+				.modify((qb) => qb.where("posts.id", "=", 1)),
+		)
+		.executeCountAll(Number);
+
+	// Nested filter should be ignored for count
+	assert.strictEqual(withNestedFilter, 10);
+});
+
+test("executeCountAll: preserves inner join filtering via EXISTS", async () => {
+	const builder = hydrate(db.selectFrom("posts").select(["posts.id", "posts.title"])).hasOne(
+		"author",
+		({ innerJoin }) =>
+			innerJoin("users", (join) =>
+				join.onRef("users.id", "=", "posts.user_id").on("users.id", "<=", 2),
+			).select(["users.id", "users.username"]),
+	);
+
+	// toQuery returns filtered posts (User 2's 4 posts)
+	const flatRows = await builder.toQuery().execute();
+	assert.strictEqual(flatRows.length, 4);
+
+	// executeCountAll also returns 4 (same posts, deduplicated at root level)
+	const count = await builder.executeCountAll(Number);
+	assert.strictEqual(count, 4);
+
+	// Verify this is different from unfiltered count
+	const totalPosts = await db
+		.selectFrom("posts")
+		.select((eb) => eb.fn.countAll().as("count"))
+		.executeTakeFirstOrThrow();
+	assert.ok(count < Number(totalPosts.count), "Inner join should filter results");
+});
+
+//
 // Optional keyBy (defaults to "id")
 //
 
@@ -1485,10 +1606,4 @@ test("hasOne: overrides previous relation with same key", async () => {
 	assert.strictEqual(posts[0]?.author?.username, "bob"); // Post 1 belongs to bob (user_id = 2)
 });
 
-//
-// innerJoinLateral with AliasedHydratedExpression
-//
-
-// Note: Tests for innerJoinLateral with AliasedHydratedExpression are skipped
-// because SQLite does not support lateral joins. The feature can be tested
-// manually with PostgreSQL or similar databases that support lateral joins.
+// Tests for lateral joins are in query-builder.postgres.test.ts

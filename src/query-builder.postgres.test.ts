@@ -519,4 +519,246 @@ describe("PostgreSQL tests", { skip: !shouldRun }, () => {
 			{ id: 2, userId: 2, title: "Post 2" },
 		]);
 	});
+
+	//
+	// toRootQuery and executeCountAll with lateral joins
+	//
+
+	test("toRootQuery: works with innerJoinLateral", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+			.modify((qb) => qb.where("users.id", "in", [1, 2]))
+			.innerJoinLateral(
+				(eb) =>
+					eb
+						.selectFrom("posts")
+						.select(["posts.id", "posts.title"])
+						.whereRef("posts.user_id", "=", "users.id")
+						.orderBy("posts.id", "desc")
+						.limit(1)
+						.as("lp"),
+				(join) => join.onTrue(),
+			)
+			.select(["lp.title"]);
+
+		// Regular query returns only user 2 (inner join filters out user 1 who has no posts)
+		const regularRows = await builder.toQuery().execute();
+		assert.strictEqual(regularRows.length, 1);
+
+		// toRootQuery should also return 1 (converted to EXISTS)
+		const rootRows = await builder.toRootQuery().execute();
+		assert.strictEqual(rootRows.length, 1);
+		assert.strictEqual(rootRows[0]?.id, 2);
+	});
+
+	test("toRootQuery: works with leftJoinLateral", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+			.modify((qb) => qb.where("users.id", "in", [1, 2]))
+			.hasOne("latestPost", ({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.orderBy("posts.id", "desc")
+								.limit(1),
+							"id",
+						).as("lp"),
+					(join) => join.onTrue(),
+				),
+			);
+
+		// Both queries should return 2 users (left join doesn't filter)
+		const regularRows = await builder.toQuery().execute();
+		assert.strictEqual(regularRows.length, 2);
+
+		const rootRows = await builder.toRootQuery().execute();
+		assert.strictEqual(rootRows.length, 2);
+	});
+
+	test("toRootQuery: enables pagination with lateral joins", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.hasMany("posts", ({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.orderBy("posts.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+			);
+
+		const page1 = await builder
+			.toRootQuery()
+			.clearSelect()
+			.select("users.id")
+			.orderBy("users.id", "asc")
+			.limit(2)
+			.execute();
+
+		assert.strictEqual(page1.length, 2);
+		assert.strictEqual(page1[0]?.id, 1);
+		assert.strictEqual(page1[1]?.id, 2);
+	});
+
+	test("executeCountAll: counts root entities with innerJoinLateral", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.modify((qb) => qb.where("users.id", "in", [1, 2, 3]))
+			.innerJoinLateral(
+				(eb) =>
+					eb
+						.selectFrom("posts")
+						.select(["posts.id", "posts.title"])
+						.whereRef("posts.user_id", "=", "users.id")
+						.limit(1)
+						.as("lp"),
+				(join) => join.onTrue(),
+			)
+			.select(["lp.title"]);
+
+		// Regular query only returns users with posts
+		const regularRows = await builder.toQuery().execute();
+		const regularCount = regularRows.length;
+
+		// executeCountAll should match
+		const count = await builder.executeCountAll(Number);
+		assert.strictEqual(count, regularCount);
+
+		// Should be less than 3 (user 1 has no posts)
+		assert.ok(count < 3, "Inner join lateral should filter users without posts");
+	});
+
+	test("executeCountAll: counts root entities with leftJoinLateral", async () => {
+		const count = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.modify((qb) => qb.where("users.id", "in", [1, 2]))
+			.hasMany("posts", ({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+			)
+			.executeCountAll(Number);
+
+		// Should count 2 users (left join doesn't filter)
+		assert.strictEqual(count, 2);
+	});
+
+	test("executeCountAll: counts through nested collections with lateral joins", async () => {
+		const count = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.modify((qb) => qb.where("users.id", "=", 2))
+			.hasMany("posts", ({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+			)
+			.executeCountAll(Number);
+
+		// Should count 1 user (not posts)
+		assert.strictEqual(count, 1);
+	});
+
+	test("executeCountAll: respects top-level filters with lateral joins", async () => {
+		const count = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.modify((qb) => qb.where("users.id", "<=", 3))
+			.hasMany("posts", ({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(1),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+			)
+			.executeCountAll(Number);
+
+		assert.strictEqual(count, 3);
+	});
+
+	test("toRootQuery: works with hasOne and hydrated innerJoinLateral", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.modify((qb) => qb.where("users.id", "in", [1, 2]))
+			.hasOne("latestPost", ({ innerJoinLateral }) =>
+				innerJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.orderBy("posts.id", "desc")
+								.limit(1),
+							"id",
+						).as("lp"),
+					(join) => join.onTrue(),
+				),
+			);
+
+		// Regular query returns only user 2 (inner join filters out user 1 who has no posts)
+		const regularRows = await builder.toQuery().execute();
+		assert.strictEqual(regularRows.length, 1);
+
+		// toRootQuery should also return 1 (converted to EXISTS)
+		const rootRows = await builder.toRootQuery().execute();
+		assert.strictEqual(rootRows.length, 1);
+		assert.strictEqual(rootRows[0]?.id, 2);
+	});
+
+	test("executeCountAll: with hasMany and hydrated innerJoinLateral", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
+			.modify((qb) => qb.where("users.id", "in", [1, 2, 3]))
+			.hasMany("posts", ({ innerJoinLateral }) =>
+				innerJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+			);
+
+		// Regular query returns exploded rows (users × posts)
+		const regularRows = await builder.toQuery().execute();
+		assert.ok(regularRows.length >= 2, "Should have at least 2 rows from join explosion");
+
+		// executeCountAll returns deduplicated count of users
+		const count = await builder.executeCountAll(Number);
+
+		// Should be less than 3 (user 1 has no posts, filtered by inner join)
+		assert.ok(count < 3, "Inner join lateral should filter users without posts");
+		assert.ok(count < regularRows.length, "Deduplicated count should be less than exploded rows");
+	});
 });

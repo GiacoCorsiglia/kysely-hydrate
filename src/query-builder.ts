@@ -1,6 +1,7 @@
 import * as k from "kysely";
 
 import { type ApplyPrefixes, type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
+import { wrapQuery } from "./helpers/query-wrapper.ts";
 import {
 	type AnySelectArg,
 	hoistAndPrefixSelections,
@@ -101,6 +102,51 @@ interface MappedHydratedQueryBuilder<
 	 * Useful for debugging or when you need direct access to the query.
 	 */
 	toQuery(): k.SelectQueryBuilder<QueryDB, QueryTB, QueryRow>;
+
+	/**
+	 * Produces a query builder that is guaranteed to produce exactly one row per
+	 * entity (instead of N rows, which is generally true for a query with joins).
+	 * This is useful for pagination and counts.
+	 *
+	 * **The types for this are wrong**: This will not include any left joins.
+	 * It's best used with `.clearSelect()`.
+	 *
+	 * @example
+	 * ```ts
+	 * const rootQuery = hydrate(db.selectFrom("users").select(["users.id", "users.name"]))
+	 *   .hasMany("posts", ({ leftJoin }) =>
+	 *     leftJoin("posts", "posts.userId", "users.id").select(["posts.id", "posts.title"]),
+	 *   )
+	 *   .toRootQuery();
+	 *
+	 * const userIds = await rootQuery.clearSelect().select('users.id').execute();
+	 * ````
+	 */
+	toRootQuery(): k.SelectQueryBuilder<
+		QueryDB,
+		QueryTB,
+		// TODO: This will not include columns from left joins.
+		QueryRow
+	>;
+
+	/**
+	 * Executes a modified version the query and returns the number of root entity
+	 * rows.
+	 *
+	 * By default, Kysely's count function returns `string | number | bigint`.
+	 * You can provide a transformation function to convert the count to a number
+	 * or bigint.
+	 *
+	 * @example
+	 * ```ts
+	 * query.executeCountAll(); // string | number | bigint
+	 * query.executeCountAll(Number); // number
+	 * query.executeCountAll(BigInt); // bigint
+	 * ```
+	 */
+	executeCountAll(toBigInt: (count: string | number | bigint) => bigint): Promise<bigint>;
+	executeCountAll(toNumber: (count: string | number | bigint) => number): Promise<number>;
+	executeCountAll(): Promise<string | number | bigint>;
 
 	/**
 	 * Executes the query and returns an array of rows.
@@ -1522,6 +1568,7 @@ type Operation = ModifyOperation | JoinOperation | CollectionOperation;
 
 interface HydratedQueryBuilderProps {
 	readonly qb: AnySelectQueryBuilder;
+	readonly keyBy: KeyBy<any>;
 	readonly prefix: string;
 	readonly hydrator: Hydrator<any, any>;
 	readonly operations: readonly Operation[];
@@ -1633,15 +1680,126 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		return qb;
 	}
 
+	toQuery(): AnySelectQueryBuilder {
+		return this.#applyOperations(this.#props.qb);
+	}
+
+	#applyOperationToRoot(qb: AnySelectQueryBuilder, operation: Operation): AnySelectQueryBuilder {
+		switch (operation.type) {
+			case "modify": {
+				// Don't apply modifications to parents.  The user is responsible for
+				// putting .modify() in the right places.  If they want where clauses on
+				// subqueries, they should use lateral joins.
+				return qb;
+			}
+
+			case "collection": {
+				return operation.nestedBuilder.#applyOperationsToRoot(qb);
+			}
+
+			case "join": {
+				const { method, from, args } = operation;
+
+				switch (method) {
+					// Left joins do not affect the number of rows returned.
+					case "leftJoin":
+					case "leftJoinLateral": {
+						return qb;
+					}
+					case "innerJoin":
+					case "innerJoinLateral":
+					case "crossJoin":
+					case "crossJoinLateral": {
+						let resolvedFrom = resolveJoinFrom(from);
+						if (resolvedFrom instanceof AliasedHydratedQueryBuilder) {
+							resolvedFrom = resolvedFrom.toAliasedQuery();
+						}
+
+						// If we got an aliased select query builder, we can use the expression directly.
+						if (
+							typeof resolvedFrom === "object" &&
+							"isAliasedSelectQueryBuilder" in resolvedFrom &&
+							"expression" in resolvedFrom
+						) {
+							return qb.where(({ exists }) =>
+								exists((resolvedFrom as k.AliasedSelectQueryBuilder).expression),
+							);
+						}
+
+						// Otherwise, build a dummy source and replay the join method onto
+						// it so we don't have to figure out how to convert arbitrary joins
+						// to select queries.
+						return qb.where(({ exists, selectFrom, lit }) =>
+							exists(
+								selectFrom(k.sql`(SELECT 1)`.as("__"))
+									.select(lit(1).as("_"))
+									.$call((qb) => (qb[method] as any)(resolvedFrom, ...args)),
+							),
+						);
+					}
+					default: {
+						assertNever(method);
+					}
+				}
+			}
+
+			default: {
+				assertNever(operation);
+			}
+		}
+	}
+
+	#applyOperationsToRoot(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
+		for (const operation of this.#props.operations) {
+			qb = this.#applyOperationToRoot(qb, operation);
+		}
+
+		return qb;
+	}
+
+	toRootQuery(): k.SelectQueryBuilder<any, any, any> {
+		let qb = this.#props.qb;
+
+		for (const operation of this.#props.operations) {
+			if (operation.type === "collection") {
+				qb = operation.nestedBuilder.#applyOperationsToRoot(qb);
+			} else {
+				// Any operations not nested in collections just get applied to the root
+				// as is!  This will typically just be modifications with where clauses,
+				// but if someone adds a join, it will be applied to the root and change
+				// the root entity in whatever way they want.
+				qb = this.#applyOperation(qb, operation);
+			}
+		}
+
+		return qb;
+	}
+
+	async executeCountAll(cast?: (count: string | number | bigint) => number | bigint): Promise<any> {
+		const result = await wrapQuery(this.toRootQuery(), (eb, query) => {
+			const data = query.as("__data");
+			const distinct = eb
+				.selectFrom(data)
+				.select(this.#props.keyBy as any)
+				.distinct()
+				.as("__");
+
+			return eb.selectFrom(distinct).select((eb) => eb.fn.countAll().as("count"));
+		}).executeTakeFirstOrThrow();
+
+		// const result = await this.toRootQuery()
+		// 	.clearSelect()
+		// 	.select((eb) => eb.fn.countAll().as("count"))
+		// 	.executeTakeFirstOrThrow();
+
+		return cast ? cast(result.count) : result.count;
+	}
+
 	modify(modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder): any {
 		return this.#addOperation({
 			type: "modify",
 			modifier,
 		});
-	}
-
-	toQuery(): AnySelectQueryBuilder {
-		return this.#applyOperations(this.#props.qb);
 	}
 
 	map(transform: (row: any) => any): any {
@@ -1735,6 +1893,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			qb: this.#props.qb,
 			prefix: makePrefix(this.#props.prefix, key),
 			hydrator: createHydrator<any>(keyBy),
+			keyBy,
 			operations: [],
 		});
 		const outputNb = jb(inputNb);
@@ -1960,6 +2119,7 @@ export function hydrate(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
 		qb,
 		prefix: "",
 		hydrator: createHydrator<any>(keyBy),
+		keyBy,
 		operations: [],
 	});
 }
