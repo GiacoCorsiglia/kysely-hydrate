@@ -761,4 +761,97 @@ describe("PostgreSQL tests", { skip: !shouldRun }, () => {
 		assert.ok(count < 3, "Inner join lateral should filter users without posts");
 		assert.ok(count < regularRows.length, "Deduplicated count should be less than exploded rows");
 	});
+
+	test("limit: limits root entities with lateral joins", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasMany(
+			"posts",
+			({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+		);
+
+		// Without limit: returns all 10 users
+		const allUsers = await builder.execute();
+		assert.strictEqual(allUsers.length, 10);
+
+		// With limit: returns only 3 users
+		const limitedUsers = await builder.limit(3).execute();
+		assert.strictEqual(limitedUsers.length, 3);
+		assert.strictEqual(limitedUsers[0]?.id, 1);
+		assert.strictEqual(limitedUsers[1]?.id, 2);
+		assert.strictEqual(limitedUsers[2]?.id, 3);
+	});
+
+	test("offset: skips root entities with lateral joins", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasMany(
+			"posts",
+			({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+		);
+
+		// Without offset: starts from user 1
+		const allUsers = await builder.limit(3).execute();
+		assert.strictEqual(allUsers[0]?.id, 1);
+
+		// With offset: skips first 2 users, starts from user 3
+		const offsetUsers = await builder.offset(2).limit(3).execute();
+		assert.strictEqual(offsetUsers.length, 3);
+		assert.strictEqual(offsetUsers[0]?.id, 3);
+		assert.strictEqual(offsetUsers[1]?.id, 4);
+		assert.strictEqual(offsetUsers[2]?.id, 5);
+	});
+
+	test("limit + offset: enables pagination with lateral joins", async () => {
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasMany(
+			"posts",
+			({ leftJoinLateral }) =>
+				leftJoinLateral(
+					(eb) =>
+						hydrate(
+							eb
+								.selectFrom("posts")
+								.select(["posts.id", "posts.title"])
+								.whereRef("posts.user_id", "=", "users.id")
+								.limit(2),
+							"id",
+						).as("p"),
+					(join) => join.onTrue(),
+				),
+		);
+
+		// Page 1: users 1-2
+		const page1 = await builder.limit(2).execute();
+		assert.strictEqual(page1.length, 2);
+		assert.strictEqual(page1[0]?.id, 1);
+		assert.strictEqual(page1[1]?.id, 2);
+		// User 2 has posts (limited to 2), verify they're included
+		assert.ok(page1[1]?.posts.length > 0);
+
+		// Page 2: users 3-4
+		const page2 = await builder.offset(2).limit(2).execute();
+		assert.strictEqual(page2.length, 2);
+		assert.strictEqual(page2[0]?.id, 3);
+		assert.strictEqual(page2[1]?.id, 4);
+	});
 });

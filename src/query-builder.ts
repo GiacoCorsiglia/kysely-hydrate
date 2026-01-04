@@ -221,6 +221,9 @@ interface MappedHydratedQueryBuilder<
 	 * @returns An AliasedHydratedExpression that can be used in lateral joins
 	 */
 	as<Alias extends string>(alias: Alias): AliasedHydratedQueryBuilder<QueryRow, HydratedRow, Alias>;
+
+	limit(limit: number): this;
+	offset(offset: number): this;
 }
 
 /**
@@ -1572,6 +1575,8 @@ interface HydratedQueryBuilderProps {
 	readonly prefix: string;
 	readonly hydrator: Hydrator<any, any>;
 	readonly operations: readonly Operation[];
+	readonly limit: number | null;
+	readonly offset: number | null;
 }
 
 type AnyJoinArgs = [from: any, callbackOrk1?: any, k2?: any];
@@ -1680,117 +1685,90 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		return qb;
 	}
 
-	toQuery(): AnySelectQueryBuilder {
+	#toBaseQuery(): AnySelectQueryBuilder {
 		return this.#applyOperations(this.#props.qb);
 	}
 
-	#applyOperationToRoot(qb: AnySelectQueryBuilder, operation: Operation): AnySelectQueryBuilder {
-		switch (operation.type) {
-			case "modify": {
-				// Don't apply modifications to parents.  The user is responsible for
-				// putting .modify() in the right places.  If they want where clauses on
-				// subqueries, they should use lateral joins.
-				return qb;
-			}
-
-			case "collection": {
-				return operation.nestedBuilder.#applyOperationsToRoot(qb);
-			}
-
-			case "join": {
-				const { method, from, args } = operation;
-
-				switch (method) {
-					// Left joins do not affect the number of rows returned.
-					case "leftJoin":
-					case "leftJoinLateral": {
-						return qb;
-					}
-					case "innerJoin":
-					case "innerJoinLateral":
-					case "crossJoin":
-					case "crossJoinLateral": {
-						let resolvedFrom = resolveJoinFrom(from);
-						if (resolvedFrom instanceof AliasedHydratedQueryBuilder) {
-							resolvedFrom = resolvedFrom.toAliasedQuery();
-						}
-
-						// If we got an aliased select query builder, we can use the expression directly.
-						if (
-							typeof resolvedFrom === "object" &&
-							"isAliasedSelectQueryBuilder" in resolvedFrom &&
-							"expression" in resolvedFrom
-						) {
-							return qb.where(({ exists }) =>
-								exists((resolvedFrom as k.AliasedSelectQueryBuilder).expression),
-							);
-						}
-
-						// Otherwise, build a dummy source and replay the join method onto
-						// it so we don't have to figure out how to convert arbitrary joins
-						// to select queries.
-						return qb.where(({ exists, selectFrom, lit }) =>
-							exists(
-								selectFrom(k.sql`(SELECT 1)`.as("__"))
-									.select(lit(1).as("_"))
-									.$call((qb) => (qb[method] as any)(resolvedFrom, ...args)),
-							),
-						);
-					}
-					default: {
-						assertNever(method);
-					}
-				}
-			}
-
-			default: {
-				assertNever(operation);
-			}
-		}
+	limit(limit: number): any {
+		return this.#clone({
+			limit,
+		});
 	}
 
-	#applyOperationsToRoot(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
-		for (const operation of this.#props.operations) {
-			qb = this.#applyOperationToRoot(qb, operation);
+	offset(offset: number): any {
+		return this.#clone({
+			offset,
+		});
+	}
+
+	#applyLimitAndOffset(query: AnySelectQueryBuilder): AnySelectQueryBuilder {
+		if (this.#props.limit !== null) {
+			query = query.limit(this.#props.limit);
+		}
+		if (this.#props.offset !== null) {
+			query = query.offset(this.#props.offset);
+		}
+		return query;
+	}
+
+	toQuery(): AnySelectQueryBuilder {
+		const { limit, offset, operations, keyBy } = this.#props;
+
+		// Never fuck with the query if we have no limit or offset.
+		if (limit === null && offset === null) {
+			return this.#toBaseQuery();
 		}
 
-		return qb;
+		// If we have no nested joins, we can just apply the limit and offset to the
+		// base query without worrying about row explosion.
+		//
+		// TODO: We should probably do this for hasOne collections as well?
+		if (!operations.some((operation) => operation.type === "collection")) {
+			const query = this.#toBaseQuery();
+			return this.#applyLimitAndOffset(query);
+		}
+
+		const baseQuery = this.#toBaseQuery();
+		return wrapQuery(baseQuery, (eb, query) => {
+			// This is horrible.  Praying the query optimizer handles this.
+			const data = query.as("__data");
+
+			// Apply the limit and offset to the distinct query so we only get the keys we care about.
+			const distinct = this.#applyLimitAndOffset(this.#toDistinctQuery(eb, query)).as("__distinct");
+
+			return eb
+				.selectFrom(data)
+				.selectAll("__data")
+				.innerJoin(distinct, (join) => {
+					const arr = Array.isArray(keyBy) ? keyBy : [keyBy];
+					for (const key of arr) {
+						join = join.onRef(`__data.${key}`, "=", `__distinct.${key}`);
+					}
+					return join;
+				});
+		});
+	}
+
+	#toDistinctQuery(eb: k.ExpressionBuilder<any, any>, query: k.ExpressionWrapper<any, any, any>) {
+		const data = query.as("__data");
+		let distinctQuery = eb
+			.selectFrom(data)
+			.select(this.#props.keyBy as any)
+			.distinct();
+
+		return distinctQuery;
 	}
 
 	toRootQuery(): k.SelectQueryBuilder<any, any, any> {
-		let qb = this.#props.qb;
-
-		for (const operation of this.#props.operations) {
-			if (operation.type === "collection") {
-				qb = operation.nestedBuilder.#applyOperationsToRoot(qb);
-			} else {
-				// Any operations not nested in collections just get applied to the root
-				// as is!  This will typically just be modifications with where clauses,
-				// but if someone adds a join, it will be applied to the root and change
-				// the root entity in whatever way they want.
-				qb = this.#applyOperation(qb, operation);
-			}
-		}
-
-		return qb;
+		return wrapQuery(this.#toBaseQuery(), (eb, query) => this.#toDistinctQuery(eb, query));
 	}
 
 	async executeCountAll(cast?: (count: string | number | bigint) => number | bigint): Promise<any> {
-		const result = await wrapQuery(this.toRootQuery(), (eb, query) => {
-			const data = query.as("__data");
-			const distinct = eb
-				.selectFrom(data)
-				.select(this.#props.keyBy as any)
-				.distinct()
-				.as("__");
-
-			return eb.selectFrom(distinct).select((eb) => eb.fn.countAll().as("count"));
-		}).executeTakeFirstOrThrow();
-
-		// const result = await this.toRootQuery()
-		// 	.clearSelect()
-		// 	.select((eb) => eb.fn.countAll().as("count"))
-		// 	.executeTakeFirstOrThrow();
+		const result = await wrapQuery(this.#toBaseQuery(), (eb, query) =>
+			eb
+				.selectFrom(this.#toDistinctQuery(eb, query).as("__distinct"))
+				.select((eb) => eb.fn.countAll().as("count")),
+		).executeTakeFirstOrThrow();
 
 		return cast ? cast(result.count) : result.count;
 	}
@@ -1895,6 +1873,8 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			hydrator: createHydrator<any>(keyBy),
 			keyBy,
 			operations: [],
+			limit: null,
+			offset: null,
 		});
 		const outputNb = jb(inputNb);
 
@@ -2121,5 +2101,7 @@ export function hydrate(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
 		hydrator: createHydrator<any>(keyBy),
 		keyBy,
 		operations: [],
+		limit: null,
+		offset: null,
 	});
 }
