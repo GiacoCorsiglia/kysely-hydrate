@@ -6,7 +6,7 @@ import {
 	hoistAndPrefixSelections,
 	prefixSelectArg,
 } from "./helpers/select-renamer.ts";
-import { type Extend, type KeyBy, type StrictSubset } from "./helpers/utils.ts";
+import { type Extend, type KeyBy, type StrictSubset, assertNever } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
 	type CollectionMode,
@@ -1484,10 +1484,47 @@ type JoinMethod =
 	| "leftJoinLateral"
 	| "crossJoinLateral";
 
+interface ModifyOperation {
+	readonly type: "modify";
+	readonly modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder;
+}
+
+type AnyJoinFrom =
+	| k.TableExpression<any, any>
+	| AliasedHydratedQueryBuilderOrFactory<any, any, any, any, any>;
+
+type AnyResolvedJoinFrom = Exclude<AnyJoinFrom, Function>;
+
+const resolveJoinFrom = (from: AnyJoinFrom): AnyResolvedJoinFrom => {
+	if (typeof from === "function") {
+		return from(k.expressionBuilder());
+	}
+	return from;
+};
+
+interface JoinOperation {
+	readonly type: "join";
+	readonly method: JoinMethod;
+	readonly from:
+		| k.TableExpression<any, any>
+		| AliasedHydratedQueryBuilderOrFactory<any, any, any, any, any>;
+	readonly args: AnyJoinArgsTail;
+}
+
+interface CollectionOperation {
+	readonly type: "collection";
+	readonly mode: CollectionMode;
+	readonly key: string;
+	readonly nestedBuilder: HydratedQueryBuilderImpl;
+}
+
+type Operation = ModifyOperation | JoinOperation | CollectionOperation;
+
 interface HydratedQueryBuilderProps {
 	readonly qb: AnySelectQueryBuilder;
 	readonly prefix: string;
 	readonly hydrator: Hydrator<any, any>;
+	readonly operations: readonly Operation[];
 }
 
 type AnyJoinArgs = [from: any, callbackOrk1?: any, k2?: any];
@@ -1517,7 +1554,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	//
 
 	compile() {
-		return this.#props.qb.compile();
+		return this.toQuery().compile();
 	}
 
 	//
@@ -1525,7 +1562,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	//
 
 	toOperationNode() {
-		return this.#props.qb.toOperationNode();
+		return this.toQuery().toOperationNode();
 	}
 
 	//
@@ -1536,20 +1573,79 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		return undefined;
 	}
 
-	modify(modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder): any {
+	#clone(props: Partial<HydratedQueryBuilderProps>): HydratedQueryBuilderImpl {
 		return new HydratedQueryBuilderImpl({
 			...this.#props,
-			qb: modifier(this.#props.qb),
+			...props,
+		});
+	}
+
+	#addOperation(operation: Operation): HydratedQueryBuilderImpl {
+		return this.#clone({
+			operations: [...this.#props.operations, operation],
+		});
+	}
+
+	#applyOperation(qb: AnySelectQueryBuilder, operation: Operation): AnySelectQueryBuilder {
+		switch (operation.type) {
+			case "modify": {
+				return operation.modifier(qb);
+			}
+
+			case "collection": {
+				return operation.nestedBuilder.#applyOperations(qb);
+			}
+
+			case "join": {
+				const { method, from, args } = operation;
+
+				const resolvedFrom = resolveJoinFrom(from);
+				if (!(resolvedFrom instanceof AliasedHydratedQueryBuilder)) {
+					return (qb[method] as any)(from, ...args);
+				}
+
+				// In case of lateral joins with just one argument (the subquery), default to joining ON TRUE.
+				// This doesn't apply to cross joins, which always have no ON clause.
+				if (!args.length && (method === "leftJoinLateral" || method === "innerJoinLateral")) {
+					args.push((join: k.JoinBuilder<any, any>) => join.onTrue());
+				}
+
+				const aliasedQb = resolvedFrom.toAliasedQuery();
+				const hoistedSelections = hoistAndPrefixSelections(this.#props.prefix, aliasedQb);
+
+				// This cast to a single method helps TypeScript follow the overloads.
+				qb = qb[method as "innerJoinLateral"](aliasedQb, ...args);
+				// This cast to `any` is needed because TS can't follow the overloads.
+				return qb.select(hoistedSelections as any);
+			}
+
+			default: {
+				assertNever(operation);
+			}
+		}
+	}
+
+	#applyOperations(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
+		for (const operation of this.#props.operations) {
+			qb = this.#applyOperation(qb, operation);
+		}
+
+		return qb;
+	}
+
+	modify(modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder): any {
+		return this.#addOperation({
+			type: "modify",
+			modifier,
 		});
 	}
 
 	toQuery(): AnySelectQueryBuilder {
-		return this.#props.qb;
+		return this.#applyOperations(this.#props.qb);
 	}
 
 	map(transform: (row: any) => any): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		return this.#clone({
 			hydrator: this.#props.hydrator.map(transform),
 		});
 	}
@@ -1572,7 +1668,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	}
 
 	async execute(): Promise<any[]> {
-		const rows = await this.#props.qb.execute();
+		const rows = await this.toQuery().execute();
 
 		return this.#hydrate(rows);
 	}
@@ -1606,29 +1702,25 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	//
 
 	extras(extras: Extras<any>) {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		return this.#clone({
 			hydrator: asFullHydrator(this.#props.hydrator).extras(extras),
 		});
 	}
 
 	mapFields(mappings: FieldMappings<any>): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		return this.#clone({
 			hydrator: asFullHydrator(this.#props.hydrator).fields(mappings),
 		});
 	}
 
 	omit(keys: readonly PropertyKey[]): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		return this.#clone({
 			hydrator: asFullHydrator(this.#props.hydrator).omit(keys),
 		});
 	}
 
 	with(hydrator: Hydrator<any, any>): any {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		return this.#clone({
 			hydrator: asFullHydrator(this.#props.hydrator).extend(hydrator),
 		});
 	}
@@ -1642,16 +1734,41 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		const inputNb = new HydratedQueryBuilderImpl({
 			qb: this.#props.qb,
 			prefix: makePrefix(this.#props.prefix, key),
-
 			hydrator: createHydrator<any>(keyBy),
+			operations: [],
 		});
 		const outputNb = jb(inputNb);
 
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		// Add a collection operation
+		const collectionOperation: CollectionOperation = {
+			type: "collection",
+			mode,
+			key,
+			nestedBuilder: outputNb,
+		};
 
-			qb: outputNb.#props.qb,
+		// Find and replace any existing collection operation with the same key.
+		// This is O(N) because operation order matters...but there shouldn't be
+		// many collections in a query otherwise your performance problem will not
+		// be iteration in JavaScript lol.
+		const existingIndex = this.#props.operations.findIndex(
+			(op) => op.type === "collection" && op.key === key,
+		);
 
+		return this.#clone({
+			// I think it makes sense to insert the replaced operation at the same index
+			// as the original operation.  Presumably you are replacing the collection
+			// with a similar one (i.e., the same join), so we should just keep it in
+			// the original order in the generated SQL.  This is a super edge case
+			// anyway; if your queries are sensitive to this you probably shouldn't be
+			// using hydrate in the first place.
+			operations:
+				existingIndex !== -1
+					? this.#props.operations.toSpliced(existingIndex, 1, collectionOperation)
+					: [...this.#props.operations, collectionOperation],
+
+			// Hydrators maintain a Map of collections, so this will correctly
+			// overwrite any previous collection definition with the same key.
 			hydrator: asFullHydrator(this.#props.hydrator).has(
 				mode,
 				key,
@@ -1688,8 +1805,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	) {
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		return this.#clone({
 			hydrator: asFullHydrator(this.#props.hydrator).attach(mode, key, fetchFn, keys),
 		});
 	}
@@ -1713,16 +1829,12 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 	select(selection: AnySelectArg) {
 		const prefixedSelections = prefixSelectArg(this.#props.prefix, selection);
 
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
+		// Note: We don't configure fields here. The #hydrate method will
+		// automatically use fields-auto-inclusion to discover fields from actual
+		// result rows, which works correctly with plugins like CamelCasePlugin.
 
-			// This cast to `any` is needed because TS can't follow the overload.
-			qb: this.#props.qb.select(prefixedSelections as any),
-
-			// Note: We don't configure fields here. The #hydrate method will
-			// automatically use fields-auto-inclusion to discover fields from actual
-			// result rows, which works correctly with plugins like CamelCasePlugin.
-		});
+		// This cast is necessary because TS can't follow the overloads.
+		return this.modify((qb) => qb.select(prefixedSelections as any));
 	}
 
 	#join(
@@ -1732,61 +1844,29 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			| AliasedHydratedQueryBuilderOrFactory<any, any, any, any, any>,
 		...args: AnyJoinArgsTail
 	): any {
-		// These conditions handle `AliasedHydratedQueryBuilderOrFactory`.
-		if (typeof from === "function") {
-			const result = from(k.expressionBuilder());
+		let clone = this as HydratedQueryBuilderImpl;
 
-			if (result instanceof AliasedHydratedQueryBuilder) {
-				return this.#joinHydrated(method, result, ...args);
-			}
-		} else if (from instanceof AliasedHydratedQueryBuilder) {
-			return this.#joinHydrated(method, from, ...args);
+		const resolvedFrom = resolveJoinFrom(from);
+		if (resolvedFrom instanceof AliasedHydratedQueryBuilder) {
+			const nestedHydratedQueryBuilder =
+				resolvedFrom.hydratedQueryBuilder as HydratedQueryBuilderImpl;
+			const nestedHydrator = nestedHydratedQueryBuilder.#props.hydrator;
+			// This works because Hydrators are composable and do not need to know
+			// about their parent's prefix.
+			clone = clone.#clone({
+				hydrator: asFullHydrator(clone.#props.hydrator).extend(nestedHydrator),
+			});
+			// Note: We don't need to manually ensure fields here. The #hydrate method
+			// will automatically use fields-auto-inclusion to discover fields from
+			// actual result rows, which works correctly with plugins like
+			// CamelCasePlugin.
 		}
 
-		// Otherwise, it's just a normal Kysely join.
-		return this.modify((qb) =>
-			// TypeScript can't follow the overloads, so we need to cast to any.
-			(qb[method] as any)(from, ...args),
-		);
-	}
-
-	#joinHydrated(
-		method: JoinMethod,
-		from: AliasedHydratedQueryBuilder<any, any, any>,
-		...args: AnyJoinArgsTail
-	) {
-		// In case of lateral joins with just one argument (the subquery), default to joining ON TRUE.
-		// This doesn't apply to cross joins, which always have no ON clause.
-		if (!args.length && (method === "leftJoinLateral" || method === "innerJoinLateral")) {
-			args = [(join: k.JoinBuilder<any, any>) => join.onTrue()];
-		}
-
-		const aliasedQb = from.toAliasedQuery();
-		const hoistedSelections = hoistAndPrefixSelections(this.#props.prefix, aliasedQb);
-
-		const nestedHydratedQueryBuilder = from.hydratedQueryBuilder as HydratedQueryBuilderImpl;
-		const nestedHydrator = nestedHydratedQueryBuilder.#props.hydrator;
-
-		let newQb = this.#props.qb;
-		// This cast to a single method helps TypeScript follow the overloads.
-		newQb = newQb[method as "innerJoinLateral"](aliasedQb, ...args);
-		// This cast to `any` is needed because TS can't follow the overloads.
-		newQb = newQb.select(hoistedSelections as any);
-
-		// This works because Hydrators are composable and do not need to know
-		// about their parent's prefix.
-		const newHydrator = asFullHydrator(this.#props.hydrator).extend(nestedHydrator);
-		// Note: We don't need to manually ensure fields here. The #hydrate method
-		// will automatically use fields-auto-inclusion to discover fields from
-		// actual result rows, which works correctly with plugins like
-		// CamelCasePlugin.
-
-		return new HydratedQueryBuilderImpl({
-			...this.#props,
-
-			qb: newQb,
-
-			hydrator: newHydrator,
+		return clone.#addOperation({
+			type: "join",
+			method,
+			from,
+			args,
 		});
 	}
 
@@ -1880,5 +1960,6 @@ export function hydrate(qb: any, keyBy: any = DEFAULT_KEY_BY): any {
 		qb,
 		prefix: "",
 		hydrator: createHydrator<any>(keyBy),
+		operations: [],
 	});
 }

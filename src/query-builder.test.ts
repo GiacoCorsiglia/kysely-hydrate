@@ -1432,6 +1432,59 @@ test("multiple nested levels: keyBy defaults to 'id' at all levels", async () =>
 	});
 });
 
+test("hasMany: overrides previous relation with same key", async () => {
+	const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
+		.modify((qb) => qb.where("users.id", "=", 2))
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id")
+					.select(["posts.id", "posts.title"])
+					.modify((qb) => qb.where("posts.id", "=", 1)),
+			"id",
+		)
+		// Override the previous 'posts' relation with a different one
+		.hasMany(
+			"posts",
+			({ leftJoin }) =>
+				leftJoin("posts", "posts.user_id", "users.id")
+					.select(["posts.id", "posts.title"])
+					.modify((qb) => qb.where("posts.id", ">", 2)),
+			"id",
+		)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	// Should only have posts with id > 2, not the first relation's posts
+	assert.strictEqual(users[0]?.posts.length, 2);
+	assert.ok(users[0]?.posts.every((p) => p.id! > 2));
+});
+
+test("hasOne: overrides previous relation with same key", async () => {
+	const posts = await hydrate(db.selectFrom("posts").select(["posts.id", "posts.title"]), "id")
+		.modify((qb) => qb.where("posts.id", "=", 1))
+		.hasOne(
+			"author",
+			({ innerJoin }) =>
+				innerJoin("users", "users.id", "posts.user_id").select(["users.id", "users.username"]),
+			"id",
+		)
+		// Override with a version that also selects the user id
+		.hasOne(
+			"author",
+			({ innerJoin }) =>
+				innerJoin("users", "users.id", "posts.user_id").select(["users.id", "users.username"]),
+			"id",
+		)
+		.execute();
+
+	assert.strictEqual(posts.length, 1);
+	// Should have the overridden relation with both id and username
+	assert.ok("id" in posts[0]!.author!);
+	assert.ok("username" in posts[0]!.author!);
+	assert.strictEqual(posts[0]?.author?.username, "bob"); // Post 1 belongs to bob (user_id = 2)
+});
+
 //
 // innerJoinLateral with AliasedHydratedExpression
 //
