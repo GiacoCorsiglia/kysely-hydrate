@@ -798,6 +798,73 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 });
 
 //
+// Executable support in attach methods
+//
+
+test("attachMany: accepts Executable return from fetchFn", async () => {
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const fetchPosts = async () => {
+		return {
+			execute: async () => [
+				{ id: 10, userId: 1, title: "Alice Post" },
+				{ id: 11, userId: 2, title: "Bob Post" },
+			],
+		};
+	};
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.strictEqual(result[0]?.posts.length, 1);
+	assert.deepStrictEqual(result[0]?.posts[0], { id: 10, userId: 1, title: "Alice Post" });
+	assert.strictEqual(result[1]?.posts.length, 1);
+	assert.deepStrictEqual(result[1]?.posts[0], { id: 11, userId: 2, title: "Bob Post" });
+});
+
+test("attachOne: accepts Executable return from fetchFn", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const fetchPosts = () => ({
+		execute: async () => [{ id: 10, userId: 1, title: "Post" }],
+	});
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachOne("latestPost", fetchPosts, { matchChild: "userId" });
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.deepStrictEqual(result[0]?.latestPost, { id: 10, userId: 1, title: "Post" });
+});
+
+test("attachMany: accepts Promise<Executable> return from fetchFn", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const fetchPosts = async () => {
+		await Promise.resolve(); // Simulate async work
+		return {
+			execute: async () => [{ id: 10, userId: 1, title: "Post" }],
+		};
+	};
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const result = await hydrateData(users, hydrator);
+
+	assert.strictEqual(result[0]?.posts.length, 1);
+});
+
+//
 // Hydration Modes and Edge Cases
 //
 

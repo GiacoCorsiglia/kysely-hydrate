@@ -7,7 +7,13 @@ import {
 	removePrefix,
 	type SelectAndStripPrefix,
 } from "./helpers/prefixes.ts";
-import { addObjectToMap, type Extend, isIterable, type KeyBy } from "./helpers/utils.ts";
+import {
+	addObjectToMap,
+	type Extend,
+	type ExtendWith,
+	isIterable,
+	type KeyBy,
+} from "./helpers/utils.ts";
 
 ////////////////////////////////////////////////////////////////////
 // Optional keyBy when "id" is a valid key.
@@ -100,12 +106,55 @@ interface Collection<ChildInput, ChildOutput> {
 }
 
 /**
+ * An executable, like a query builder.
+ */
+interface Executable<Output> {
+	execute(): Promise<Output[]>;
+}
+
+/**
+ * Tests if a value is executable.
+ */
+function isExecutable<Output>(value: unknown): value is Executable<Output> {
+	return (
+		typeof value === "object" && value !== null && typeof (value as any).execute === "function"
+	);
+}
+
+/**
  * Async function that fetches and hydrates data to attach. Called exactly once with
  * all parent inputs to avoid N+1 queries. Should return already-hydrated data.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
-) => Iterable<AttachedOutput> | Promise<Iterable<AttachedOutput>>;
+) =>
+	| Iterable<AttachedOutput>
+	| Promise<Iterable<AttachedOutput>>
+	| Executable<AttachedOutput>
+	| Promise<Executable<AttachedOutput>>;
+
+/**
+ * The allowed return types of a fetch function.
+ */
+export type SomeFetchFnReturn =
+	| Iterable<any>
+	| Promise<Iterable<any>>
+	| Executable<any>
+	| Promise<Executable<any>>;
+
+/**
+ * A fetch function that returns a value of type `FetchFnReturn`.
+ */
+export type SomeFetchFn<ParentInput, FetchFnReturn extends SomeFetchFnReturn> = (
+	inputs: ParentInput[],
+) => FetchFnReturn;
+
+export type AttachedOutputFromFetchFnReturn<FetchFnReturn extends SomeFetchFnReturn> =
+	Awaited<FetchFnReturn> extends Iterable<infer AttachedOutput>
+		? AttachedOutput
+		: Awaited<FetchFnReturn> extends Executable<infer AttachedOutput>
+			? AttachedOutput
+			: never;
 
 /**
  * Input argument for configuring the keys to use for matching attached data to parents.
@@ -430,25 +479,25 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput[]>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "one",
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput | null>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput>>;
 	has<K extends string, P extends string, ChildOutput>(
 		mode: CollectionMode,
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] | ChildOutput | null }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput[] | ChildOutput | null>>;
 
 	/**
 	 * Shorthand for `has("many", ...)` - configures a nested array collection.
@@ -462,7 +511,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput[] }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput[]>>;
 
 	/**
 	 * Shorthand for `has("one", ...)` - configures a nested nullable single entity.
@@ -476,7 +525,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput | null }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput | null>>;
 
 	/**
 	 * Shorthand for `has("oneOrThrow", ...)` - configures a nested non-nullable single entity.
@@ -491,7 +540,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		prefix: P,
 		hydrator: ChildHydratorArg<P, Input, ChildOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: ChildOutput }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, ChildOutput>>;
 
 	/**
 	 * Configures an attached collection that is fetched from an external source.
@@ -517,25 +566,25 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput[]>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "one",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput | null>>;
 	attach<K extends string, AttachedOutput>(
 		mode: "oneOrThrow",
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput>>;
 	attach<K extends string, AttachedOutput>(
 		mode: CollectionMode,
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] | AttachedOutput | null }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput[] | AttachedOutput | null>>;
 
 	/**
 	 * Shorthand for `attach("many", ...)` - configures an attached array collection.
@@ -550,7 +599,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput[] }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput[]>>;
 
 	/**
 	 * Shorthand for `attach("one", ...)` - configures an attached nullable single entity.
@@ -565,7 +614,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput | null }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput | null>>;
 
 	/**
 	 * Shorthand for `attach("oneOrThrow", ...)` - configures an attached non-nullable single entity.
@@ -581,7 +630,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		key: K,
 		fetchFn: FetchFn<Input, AttachedOutput>,
 		keys: AttachedKeysArg<Input, AttachedOutput>,
-	): FullHydrator<Input, Extend<Output, { [_ in K]: AttachedOutput }>>;
+	): FullHydrator<Input, ExtendWith<Output, K, AttachedOutput>>;
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -790,16 +839,23 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 				// Create fetch promise
 				fetchPromises.push(
-					Promise.resolve(attachedCollection.fetchFn(inputArray)).then((attachedOutputs) => {
-						// Group fetched rows by their match key
-						const grouped = groupByKey(
-							"", // Always unprefixed.
-							attachedOutputs,
-							attachedCollection.matchChild,
-						);
+					Promise.resolve(attachedCollection.fetchFn(inputArray))
+						.then((result) => {
+							if (isExecutable(result)) {
+								return result.execute();
+							}
+							return result as Iterable<any>;
+						})
+						.then((attachedOutputs) => {
+							// Group fetched rows by their match key
+							const grouped = groupByKey(
+								"", // Always unprefixed.
+								attachedOutputs,
+								attachedCollection.matchChild,
+							);
 
-						ctx.attachedDataMap.set(mapKey, grouped);
-					}),
+							ctx.attachedDataMap.set(mapKey, grouped);
+						}),
 				);
 			}
 		}

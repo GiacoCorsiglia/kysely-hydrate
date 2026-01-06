@@ -246,6 +246,73 @@ import { createHydrator, hydrateData } from "./hydrator.ts";
 }
 
 //
+// Executable support in attach methods
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	interface Post {
+		id: number;
+		userId: number;
+		title: string;
+	}
+
+	interface Executable<T> {
+		execute(): Promise<T[]>;
+	}
+
+	// attachMany with Executable return
+	const hydrator1 = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			async (_users): Promise<Executable<Post>> => {
+				return {
+					execute: async () => [] as Post[],
+				};
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result1 = hydrator1.hydrate([] as User[]);
+	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; name: string; posts: Post[] }[]>();
+
+	// attachOne with Executable return
+	const hydrator2 = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachOne(
+			"latestPost",
+			async (_users): Promise<Executable<Post>> => ({
+				execute: async () => [] as Post[],
+			}),
+			{ matchChild: "userId" },
+		);
+
+	const result2 = hydrator2.hydrate([] as User[]);
+	expectTypeOf(result2).resolves.toEqualTypeOf<
+		{ id: number; name: string; latestPost: Post | null }[]
+	>();
+
+	// attachMany with synchronous Executable return
+	const hydrator3 = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			(_users): Executable<Post> => ({
+				execute: async () => [] as Post[],
+			}),
+			{ matchChild: "userId" },
+		);
+
+	const result3 = hydrator3.hydrate([] as User[]);
+	expectTypeOf(result3).resolves.toEqualTypeOf<{ id: number; name: string; posts: Post[] }[]>();
+}
+
+//
 // Nested extras: receive unprefixed input
 //
 
