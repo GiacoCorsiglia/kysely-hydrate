@@ -43,7 +43,8 @@ export type StrictSubset<T, U> = Partial<T> & {
 	[K in Exclude<keyof U, keyof T>]: never;
 };
 
-export type KeyBy<T> = (keyof T & string) | readonly (keyof T & string)[];
+type AtLeastOne<T> = readonly [T, ...T[]];
+export type KeyBy<T> = (keyof T & string) | AtLeastOne<keyof T & string>;
 
 export type KeysWithValueOfType<O, T> = {
 	[K in keyof O]: O[K] extends T ? K : never;

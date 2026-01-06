@@ -24,6 +24,7 @@ import {
  * Only used when the input type has an "id" property.
  */
 export const DEFAULT_KEY_BY = "id";
+export type DEFAULT_KEY_BY = typeof DEFAULT_KEY_BY;
 
 /**
  * Interface representing an input that has the default key property.

@@ -3,6 +3,52 @@ import { expectTypeOf } from "expect-type";
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
 
+// init: builder overloads
+{
+	//
+	// Direct overloads
+	//
+
+	// @ts-expect-error DEFAULT_KEY_BY ("id") is not selected, so keyBy must be provided.
+	querySet(db).init("users", db.selectFrom("users").select(["username"]));
+
+	querySet(db).init("users", db.selectFrom("users").select(["username"]), "username");
+
+	// Optional keyBy (defaults to "id" when valid)
+	querySet(db).init("users", db.selectFrom("users").select(["id"]));
+	// Can always provide keyBy if you want to be explicit
+	querySet(db).init("users", db.selectFrom("users").select(["id"]), "id");
+	querySet(db).init("users", db.selectFrom("users").select(["id", "username"]), "id");
+	querySet(db).init("users", db.selectFrom("users").select(["id", "username"]), "username");
+
+	// @ts-expect-error Invalid keyBy (with default key by)
+	querySet(db).init("users", db.selectFrom("users").select(["id"]), "invalid");
+
+	// @ts-expect-error Invalid keyBy (without default key by)
+	querySet(db).init("users", db.selectFrom("users").select(["username"]), "invalid");
+
+	//
+	// Factory overloads
+	//
+
+	// @ts-expect-error DEFAULT_KEY_BY ("id") is not selected, so keyBy must be provided.
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["username"]));
+
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["username"]), "username");
+
+	// Optional keyBy (defaults to "id" when valid)
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["id"]));
+	// Can always provide keyBy if you want to be explicit
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["id"]), "id");
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["id", "username"]), "id");
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["id", "username"]), "username");
+
+	// @ts-expect-error Invalid keyBy (with default key by)
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["id"]), "invalid");
+
+	// @ts-expect-error Invalid keyBy (without default key by)
+	querySet(db).init("users", (eb) => eb.selectFrom("users").select(["username"]), "invalid");
+}
 {
 	const result = querySet(db)
 		.init("users", (eb) => eb.selectFrom("users").select(["id", "username"]))
