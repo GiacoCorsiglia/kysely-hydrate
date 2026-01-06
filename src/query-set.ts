@@ -77,6 +77,10 @@ interface TQuerySet {
 	 */
 	IsMapped: boolean;
 	/**
+	 * The key(s) used to uniquely identify rows in the query result.
+	 */
+	Keys: string;
+	/**
 	 * The alias of the base query.
 	 */
 	BaseAlias: string;
@@ -107,6 +111,7 @@ type TOutput<T extends TQuerySet> = k.Simplify<T["HydratedOutput"]>;
 
 interface TMapped<T extends TQuerySet, Output> {
 	IsMapped: true;
+	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
@@ -116,6 +121,7 @@ interface TMapped<T extends TQuerySet, Output> {
 
 interface TWithExtendedOutput<T extends TQuerySet, Output> {
 	IsMapped: T["IsMapped"];
+	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
@@ -137,19 +143,42 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	// nested collections return a MappedQuerySet instead of a full QuerySet.
 	readonly _generics: T | undefined;
 
-	readonly baseAlias: T["BaseAlias"];
-
+	/**
+	 * Returns the base query that this query set was initialized with (plus any
+	 * modifications).
+	 */
 	toBaseQuery(): SelectQueryBuilderFor<T["BaseQuery"]>;
 
+	/**
+	 * Returns the base query with joins applied for each collection.
+	 *
+	 * @warning This query is subject to "row explosion." If a base record has
+	 * multiple related child records, the base record will appear multiple times
+	 * in the result set.
+	 */
 	toJoinedQuery(): SelectQueryBuilderFor<T["JoinedQuery"]>;
 
-	// TODO
-	toQuery(): k.SelectQueryBuilder<any, any, any>;
+	/**
+	 * Returns the {@link k.SelectQueryBuilder} that will be run if this query set
+	 * is executed.
+	 */
+	toQuery(): SelectQueryBuilderFor<T["JoinedQuery"]>;
+
+	/**
+	 * Returns a query that counts the unique records in the base table.
+	 */
+	// TODO: Types
+	toCountQuery(): k.SelectQueryBuilder<any, any, { count: string | number | bigint }>;
+
+	toKeysQuery(): k.SelectQueryBuilder<any, any, any>;
+
+	toExistsQuery(): k.SelectQueryBuilder<any, any, any>;
 
 	/**
 	 * Executes the query and returns an array of rows.
 	 *
-	 * Also see the {@link executeTakeFirst} and {@link executeTakeFirstOrThrow} methods.
+	 * Also see the {@link executeTakeFirst} and {@link executeTakeFirstOrThrow}
+	 * methods.
 	 */
 	execute(): Promise<TOutput<T>[]>;
 
@@ -723,6 +752,7 @@ type QuerySetWithAttach<
 	AttachedOutput,
 > = QuerySet<{
 	IsMapped: T["IsMapped"];
+	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	JoinedQuery: T["JoinedQuery"];
@@ -828,6 +858,7 @@ type TQuerySetWithJoin<
 	JoinedQuery extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
 		? {
 				IsMapped: T["IsMapped"];
+				Keys: T["Keys"];
 				BaseAlias: T["BaseAlias"];
 				BaseQuery: T["BaseQuery"];
 				Collections: TCollectionsWith<
@@ -1005,7 +1036,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		});
 	}
 
-	#addCollectionToHydrator(key: string, collection: Collection): Hydrator<any, any> {
+	#hydratorWithCollection(key: string, collection: Collection): Hydrator<any, any> {
 		switch (collection.type) {
 			case "join": {
 				return asFullHydrator(this.#props.hydrator).has(
@@ -1028,11 +1059,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	#addCollection(key: string, collection: Collection): QuerySetImpl {
 		return this.#clone({
+			collections: new Map(this.#props.collections).set(key, collection),
 			// Hydrators maintain a Map of collections, so this will correctly
 			// overwrite any previous collection definition with the same key.
-			hydrator: this.#addCollectionToHydrator(key, collection),
-
-			collections: new Map(this.#props.collections).set(key, collection),
+			hydrator: this.#hydratorWithCollection(key, collection),
 		});
 	}
 
@@ -1044,10 +1074,6 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Query generation.
 	////////////////////////////////////////////////////////////
 
-	get baseAlias() {
-		return this.#props.baseAlias;
-	}
-
 	toBaseQuery(): AnySelectQueryBuilder {
 		return this.#props.baseQuery;
 	}
@@ -1058,6 +1084,18 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	toQuery(): AnySelectQueryBuilder {
 		// TODO: How is this different from toJoinedQuery?
+		throw new Error("Not implemented");
+	}
+
+	toCountQuery(): AnySelectQueryBuilder {
+		throw new Error("Not implemented");
+	}
+
+	toKeysQuery(): AnySelectQueryBuilder {
+		throw new Error("Not implemented");
+	}
+
+	toExistsQuery(): AnySelectQueryBuilder {
 		throw new Error("Not implemented");
 	}
 
@@ -1073,7 +1111,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Execution.
 	////////////////////////////////////////////////////////////
 
-	async execute(): Promise<never> {
+	async execute(): Promise<any[]> {
 		throw new Error("Not implemented");
 	}
 
@@ -1182,10 +1220,20 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		nestedQuerySet: NestedQuerySetOrFactory<any, any, any>,
 		...args: AnyJoinArgsTail
 	): any {
-		const nest: InitWithAlias<any, any, any> = (
+		const nest = ((
 			query: SelectQueryBuilderOrFactory<any, any, any, any, any>,
 			keyBy?: KeyBy<any>,
-		) => querySet(this.#props.db).init(key, query, keyBy);
+		) => {
+			const creator = querySet(this.#props.db);
+			if (typeof query === "function") {
+				return keyBy === undefined
+					? creator.init(key, query as any)
+					: creator.init(key, query as any, keyBy as any);
+			}
+			return keyBy === undefined
+				? creator.init(key, query as any)
+				: creator.init(key, query as any, keyBy as any);
+		}) as any as InitWithAlias<any, any, any>;
 
 		const resolved = typeof nestedQuerySet === "function" ? nestedQuerySet(nest) : nestedQuerySet;
 
@@ -1297,14 +1345,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 // QuerySetCreator.
 ////////////////////////////////////////////////////////////
 
+type KeyByToKeys<KB extends KeyBy<any>> =
+	KB extends ReadonlyArray<any> ? KB[number] & string : KB & string;
+
 interface InitialQuerySet<
 	DB,
 	BaseAlias extends string,
 	BaseDB,
 	BaseTB extends keyof BaseDB,
 	BaseO,
+	Keys extends string,
 > extends QuerySet<{
 	IsMapped: false;
+	Keys: Keys;
 	BaseAlias: BaseAlias;
 	BaseQuery: {
 		DB: BaseDB;
@@ -1326,6 +1379,18 @@ interface InitialQuerySet<
 	HydratedOutput: BaseO;
 }> {}
 
+type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
+type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
+type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
+
+type SelectQueryBuilderFactory<
+	DB,
+	TB extends keyof DB,
+	BaseDB,
+	BaseTB extends keyof BaseDB,
+	BaseO,
+> = (eb: k.ExpressionBuilder<DB, TB>) => k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+
 type SelectQueryBuilderOrFactory<
 	DB,
 	TB extends keyof DB,
@@ -1334,16 +1399,28 @@ type SelectQueryBuilderOrFactory<
 	BaseO,
 > =
 	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
-	| ((eb: k.ExpressionBuilder<DB, TB>) => k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>);
+	| SelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
 
 interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
 		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	<BaseDB, BaseTB extends keyof BaseDB, BaseO>(
-		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-		keyBy: KeyBy<BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, DEFAULT_KEY_BY>;
+	<BaseDB, BaseTB extends keyof BaseDB, BaseO, KB extends KeyBy<NoInfer<BaseO>>>(
+		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
+		keyBy: KB,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
+	// Infer output from ReturnType<F> to avoid circular inference.
+	<
+		F extends SelectQueryBuilderFactory<DB, TB, any, any, any>,
+		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
+		BaseDB = InferDB<Q>,
+		BaseTB extends keyof BaseDB = InferTB<Q>,
+		BaseO = InferO<Q>,
+		KB extends KeyBy<NoInfer<BaseO>> = KeyBy<NoInfer<BaseO>>,
+	>(
+		query: F,
+		keyBy: KB,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
 }
 
 class QuerySetCreator<DB> {
@@ -1353,6 +1430,7 @@ class QuerySetCreator<DB> {
 		this.#db = db;
 	}
 
+	// Builder overloads.
 	init<
 		Alias extends string,
 		BaseDB,
@@ -1361,18 +1439,37 @@ class QuerySetCreator<DB> {
 	>(
 		alias: Alias,
 		query: SelectQueryBuilderOrFactory<DB, never, BaseDB, BaseTB, BaseO>,
-		keyBy?: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	init<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, DEFAULT_KEY_BY>;
+	init<
+		Alias extends string,
+		BaseDB,
+		BaseTB extends keyof BaseDB,
+		BaseO,
+		KB extends KeyBy<NoInfer<BaseO>>,
+	>(
 		alias: Alias,
-		query: SelectQueryBuilderOrFactory<DB, never, BaseDB, BaseTB, BaseO>,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
+		keyBy: KB,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
+	// Infer output from ReturnType<F> to avoid circular inference.
+	init<
+		Alias extends string,
+		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
+		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
+		BaseDB = InferDB<Q>,
+		BaseTB extends keyof BaseDB = InferTB<Q>,
+		BaseO = InferO<Q>,
+		KB extends KeyBy<NoInfer<BaseO>> = KeyBy<NoInfer<BaseO>>,
+	>(
+		alias: Alias,
+		query: F,
+		keyBy: KB,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
 	init(
 		alias: string,
-		query: SelectQueryBuilderOrFactory<any, any, any, any, any>,
+		query: any,
 		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
-	): InitialQuerySet<DB, string, any, any, any> {
+	): InitialQuerySet<DB, string, any, any, any, any> {
 		const baseQuery = typeof query === "function" ? query(k.expressionBuilder()) : query;
 
 		return new QuerySetImpl({
