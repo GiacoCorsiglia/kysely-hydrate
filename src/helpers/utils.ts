@@ -4,6 +4,8 @@ export type Prettify<T> = {
 	[K in keyof T]: T[K];
 } & {};
 
+export type ObjectOf<K extends PropertyKey, V> = { [_ in K]: V };
+
 export type Identity<T> = T;
 export type Flatten<T> = Identity<{ [k in keyof T]: T[k] }>;
 export type Extend<A, B> = Flatten<
@@ -16,8 +18,12 @@ export type Extend<A, B> = Flatten<
 				[K in keyof B]: B[K];
 			}
 >;
+export type ExtendWith<T, K extends PropertyKey, V> = Flatten<
+	// fast path when there is no keys overlap
+	K & keyof T extends never ? T & ObjectOf<K, V> : Omit<T, K> & ObjectOf<K, V>
+>;
 
-type _Override<T, K extends keyof T, V> = Omit<T, K> & { [_ in K]: V };
+type _Override<T, K extends keyof T, V> = Omit<T, K> & ObjectOf<K, V>;
 
 export type Override<T, K extends keyof T, V> = Flatten<_Override<T, K, V>>;
 
@@ -38,6 +44,10 @@ export type StrictSubset<T, U> = Partial<T> & {
 };
 
 export type KeyBy<T> = (keyof T & string) | readonly (keyof T & string)[];
+
+export type KeysWithValueOfType<O, T> = {
+	[K in keyof O]: O[K] extends T ? K : never;
+}[keyof O];
 
 export function assertNever(arg: never): never {
 	throw new UnexpectedCaseError(`Unexpected case: ${JSON.stringify(arg)}`);
@@ -67,4 +77,9 @@ export function addObjectToMap<K extends string, V>(
 		}
 	}
 	return clone;
+}
+
+export function capitalize<K extends string>(str: K): Capitalize<K> {
+	if (!str) return "" as Capitalize<K>;
+	return (str.charAt(0).toUpperCase() + str.slice(1)) as Capitalize<K>;
 }
