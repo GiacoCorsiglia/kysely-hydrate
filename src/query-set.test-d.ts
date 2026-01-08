@@ -37,12 +37,6 @@ interface Comment {
 	content: string;
 }
 
-interface Profile {
-	id: number;
-	user_id: number;
-	bio: string | null;
-}
-
 ////////////////////////////////////////////////////////////
 // Section 1: Initialization (.init)
 ////////////////////////////////////////////////////////////
