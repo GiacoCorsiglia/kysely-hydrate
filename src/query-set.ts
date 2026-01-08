@@ -1,14 +1,16 @@
 import * as k from "kysely";
 
+import { db } from "./__tests__/postgres.ts";
 import { makePrefix } from "./helpers/prefixes.ts";
+import { hoistAndPrefixSelections } from "./helpers/select-renamer.ts";
 import {
 	type Extend,
 	type ExtendWith,
 	type Flatten,
 	type KeyBy,
-	type KeysWithValueOfType,
 	type StrictSubset,
 	assertNever,
+	mapWithDeleted,
 } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
@@ -54,8 +56,8 @@ interface TAttachCollection {
 }
 
 type TCollection = TJoinCollection | TAttachCollection;
-type TCollectionType = TCollection["Type"];
 
+type TAttachType = TAttachCollection["Type"];
 type TJoinType = TJoinCollection["Type"];
 
 /**
@@ -71,6 +73,9 @@ type TCollectionsWith<
 	Collection extends TCollection,
 > = ExtendWith<Collections, K, Collection>;
 
+/**
+ * Bag of generics for a QuerySet.
+ */
 interface TQuerySet {
 	/**
 	 * Indicates whether the query set has been mapped.
@@ -119,6 +124,20 @@ interface TMapped<T extends TQuerySet, Output> {
 	HydratedOutput: Output;
 }
 
+interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
+	IsMapped: T["IsMapped"];
+	Keys: T["Keys"];
+	BaseAlias: T["BaseAlias"];
+	BaseQuery: BaseQuery;
+	Collections: T["Collections"];
+	JoinedQuery: {
+		DB: T["JoinedQuery"]["DB"] & { [_ in T["BaseAlias"]]: BaseQuery["O"] };
+		TB: T["JoinedQuery"]["TB"];
+		O: T["JoinedQuery"]["O"];
+	};
+	HydratedOutput: TOutput<T>;
+}
+
 interface TWithExtendedOutput<T extends TQuerySet, Output> {
 	IsMapped: T["IsMapped"];
 	Keys: T["Keys"];
@@ -132,6 +151,26 @@ interface TWithExtendedOutput<T extends TQuerySet, Output> {
 ////////////////////////////////////////////////////////////
 // Interfaces.
 ////////////////////////////////////////////////////////////
+
+/**
+ * A select query builder whose internal structure is hidden from the user.
+ */
+type OpaqueSelectQueryBuilder<O> = k.SelectQueryBuilder<{}, never, O>;
+
+/**
+ * An opaque select query builder that returns a count.
+ */
+type OpaqueCountQueryBuilder = OpaqueSelectQueryBuilder<{ count: string | number | bigint }>;
+
+/**
+ * An opaque select query builder that returns existence
+ */
+type OpaqueExistsQueryBuilder = OpaqueSelectQueryBuilder<{ exists: k.SqlBool }>;
+
+/**
+ * A limit or offset value, passable to `.limit()` and `.offset()`.
+ */
+type LimitOrOffset = number | bigint | null;
 
 interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationNodeSource {
 	/**
@@ -154,7 +193,7 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 *
 	 * @warning This query is subject to "row explosion." If a base record has
 	 * multiple related child records, the base record will appear multiple times
-	 * in the result set.
+	 * in the result set.  As a result, LIMIT and OFFSET will not be applied.
 	 */
 	toJoinedQuery(): SelectQueryBuilderFor<T["JoinedQuery"]>;
 
@@ -162,17 +201,21 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 * Returns the {@link k.SelectQueryBuilder} that will be run if this query set
 	 * is executed.
 	 */
-	toQuery(): SelectQueryBuilderFor<T["JoinedQuery"]>;
+	toQuery(): OpaqueSelectQueryBuilder<T["JoinedQuery"]["O"]>;
 
 	/**
-	 * Returns a query that counts the unique records in the base table.
+	 * Returns a query that counts all the unique records in the base table,
+	 * accounting for filtering from inner joins.  This query ignores pagination
+	 * (offset and limit are removed).
 	 */
-	// TODO: Types
-	toCountQuery(): k.SelectQueryBuilder<any, any, { count: string | number | bigint }>;
+	toCountQuery(): OpaqueCountQueryBuilder;
 
-	toKeysQuery(): k.SelectQueryBuilder<any, any, any>;
-
-	toExistsQuery(): k.SelectQueryBuilder<any, any, any>;
+	/**
+	 * Returns a query that returns a boolean indicating whether the query will
+	 * return any results.  This query ignores pagination (offset and limit are
+	 * removed).
+	 */
+	toExistsQuery(): OpaqueExistsQueryBuilder;
 
 	/**
 	 * Executes the query and returns an array of rows.
@@ -214,10 +257,16 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 * query.executeCountAll(BigInt); // bigint
 	 * ```
 	 */
-	executeCountAll(toBigInt: (count: string | number | bigint) => bigint): Promise<bigint>;
-	executeCountAll(toNumber: (count: string | number | bigint) => number): Promise<number>;
-	executeCountAll(toString: (count: string | number | bigint) => string): Promise<string>;
-	executeCountAll(): Promise<string | number | bigint>;
+	executeCount(toBigInt: (count: string | number | bigint) => bigint): Promise<bigint>;
+	executeCount(toNumber: (count: string | number | bigint) => number): Promise<number>;
+	executeCount(toString: (count: string | number | bigint) => string): Promise<string>;
+	executeCount(): Promise<string | number | bigint>;
+
+	/**
+	 * Executes a modified version of the query and returns a boolean indicating
+	 * whether the query will return any results.
+	 */
+	executeExists(): Promise<boolean>;
 
 	/**
 	 * Applies a transformation function to the hydrated output.
@@ -250,9 +299,47 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 * querySet(db).init(...).modify((qb) => qb.where("isActive", "=", "true"))
 	 * ```
 	 */
-	modify(
-		modifier: (qb: SelectQueryBuilderFor<T["BaseQuery"]>) => SelectQueryBuilderFor<T["BaseQuery"]>,
-	): this;
+	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
+		modifier: (
+			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
+		) => k.SelectQueryBuilder<NewDB, NewTB, NewO>,
+	): MappedQuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
+
+	/**
+	 * Adds a limit clause to the query in a way that handles row explosion.
+	 *
+	 * Works similarly to {@link k.SelectQueryBuilder.limit()}.
+	 *
+	 * NOTE: We don't support {@link k.ValueExpression} here because the limit
+	 * might be applied to different queries depending on the types of joins you
+	 * have added to this query set.
+	 */
+	limit(limit: LimitOrOffset): this;
+
+	/**
+	 * Clears the limit clause from the query.
+	 *
+	 * Works similarly to {@link k.SelectQueryBuilder.clearLimit()}.
+	 */
+	clearLimit(): this;
+
+	/**
+	 * Adds a limit clause to the query in a way that handles row explosion.
+	 *
+	 * Works similarly to {@link k.SelectQueryBuilder.offset()}.
+	 *
+	 * NOTE: We don't support {@link k.ValueExpression} here because the offset
+	 * might be applied to different queries depending on the types of joins you
+	 * have added to this query set.
+	 */
+	offset(offset: LimitOrOffset): this;
+
+	/**
+	 * Clears the offset clause from the query.
+	 *
+	 * Works similarly to {@link k.SelectQueryBuilder.clearOffset()}.
+	 */
+	clearOffset(): this;
 }
 
 interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
@@ -268,10 +355,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 * ### Examples
 	 *
 	 * ```ts
-	 * const users = await hydrate(
-	 *   db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
-	 *   "id",
-	 * )
+	 * const users = await querySet(db)
+	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
 	 *   .extras({
 	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
 	 *   })
@@ -294,10 +379,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 * ### Examples
 	 *
 	 * ```ts
-	 * const users = await hydrate(
-	 *   db.selectFrom("users").select(["users.id", "users.name"]),
-	 *   "id",
-	 * )
+	 * const users = await querySet(db)
+	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name"]))
 	 *   .mapFields({
 	 *     name: (name) => name.toUpperCase(),
 	 *   })
@@ -320,10 +403,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 * ### Examples
 	 *
 	 * ```ts
-	 * const users = await hydrate(
-	 *   db.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]),
-	 *   "id",
-	 * )
+	 * const users = await querySet(db)
+	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
 	 *   .extras({
 	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
 	 *   })
@@ -354,10 +435,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .fields({ email: true })
 	 *   .extras({ displayName: (u) => `${u.name} <${u.email}>` });
 	 *
-	 * const users = await hydrate(
-	 *   db.selectFrom("users").select(["users.id", "users.name", "users.email"]),
-	 *   "id",
-	 * )
+	 * const users = await querySet(db)
+	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name", "users.email"]))
 	 *   .with(extraFields)
 	 *   .execute();
 	 * // Result: [{ id: 1, name: "Alice", email: "...", displayName: "Alice <...>" }]
@@ -387,7 +466,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init(db.selectFrom("users").select(["users.id", "users.name"]))
+	 *   .init((eb) => eb.selectFrom("users").select(["users.id", "users.name"]))
 	 *   .attachMany(
 	 *     "posts",
 	 *     async (userRows) => {
@@ -422,7 +501,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example:**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init(db.selectFrom("posts").select(["posts.id", "posts.title"]))
+	 *   .init((eb) => eb.selectFrom("posts").select(["posts.id", "posts.title"]))
 	 *   .attachOne(
 	 *     "author",
 	 *     async (postRows) => {
@@ -678,15 +757,19 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 
 	/**
 	 * When called with one argument, allows you to modify the base select query.
+	 * You can add where clauses, and can also select additional columns.  You
+	 * cannot, however, select *fewer* columns (e.g., with `.clearSelect()`)---you
+	 * can only add to the selection
 	 *
 	 * When called with two arguments, allows you to modify a nested collection
 	 * (either a join or attach).
 	 */
 	// Modify base query.
-	// TODO: Should you be allowed to change the shape here?
-	modify(
-		modifier: (qb: SelectQueryBuilderFor<T["BaseQuery"]>) => SelectQueryBuilderFor<T["BaseQuery"]>,
-	): this;
+	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
+		modifier: (
+			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
+		) => k.SelectQueryBuilder<NewDB, NewTB, NewO>,
+	): QuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
 	// Modify collection.
 	modify<
 		Key extends keyof T["Collections"] & string,
@@ -695,19 +778,16 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	>(
 		key: Key,
 		modifier: CollectionModifier<T["Collections"][NoInfer<Key>], TNestedNew, NewValue>,
-	): ModifyCollectionReturn<
-		T,
-		NoInfer<Key> & string,
-		T["Collections"][NoInfer<Key>]["Type"],
-		TNestedNew,
-		NewValue
-	>;
+	): ModifyCollectionReturnMap<T, Key, TNestedNew, NewValue>[T["Collections"][Key]["Type"]];
 }
 
 ////////////////////////////////////////////////////////////
 // Modify Helpers.
 ////////////////////////////////////////////////////////////
 
+/**
+ * A callback for modifying a collection.
+ */
 type CollectionModifier<
 	Collection extends TCollection,
 	TNestedNew extends TQuerySet,
@@ -716,7 +796,10 @@ type CollectionModifier<
 	? (value: QuerySetFor<Collection["Value"]>) => MappedQuerySet<TNestedNew>
 	: (value: Collection["Value"]) => NewValue;
 
-interface ModifyCollectionReturns<
+/**
+ * Map of collection types to their return types for a modified collection.
+ */
+interface ModifyCollectionReturnMap<
 	T extends TQuerySet,
 	Key extends string,
 	TNestedNew extends TQuerySet,
@@ -733,77 +816,71 @@ interface ModifyCollectionReturns<
 	AttachMany: QuerySetWithAttachMany<T, Key, NewValue>;
 }
 
-type ModifyCollectionReturn<
-	T extends TQuerySet,
-	Key extends string,
-	CollectionType extends TCollectionType,
-	TNestedNew extends TQuerySet,
-	NewValue extends SomeFetchFnReturn,
-> = ModifyCollectionReturns<T, Key, TNestedNew, NewValue>[CollectionType];
-
 ////////////////////////////////////////////////////////////
 // Attach Helpers.
 ////////////////////////////////////////////////////////////
 
-type QuerySetWithAttach<
+interface TQuerySetWithAttach<
 	T extends TQuerySet,
-	Collections extends TCollections,
+	Type extends TAttachType,
+	FetchFnReturn extends SomeFetchFnReturn,
 	Key extends string,
 	AttachedOutput,
-> = QuerySet<{
+> {
 	IsMapped: T["IsMapped"];
 	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	JoinedQuery: T["JoinedQuery"];
-	Collections: Collections;
+	Collections: TCollectionsWith<
+		TCollections,
+		Key,
+		{ Prototype: "Attach"; Type: Type; Value: FetchFnReturn }
+	>;
 	HydratedOutput: ExtendWith<TOutput<T>, Key, AttachedOutput>;
-}>;
+}
 
-type QuerySetWithAttachMany<
+interface QuerySetWithAttachMany<
 	T extends TQuerySet,
 	Key extends string,
 	FetchFnReturn extends SomeFetchFnReturn,
-> = QuerySetWithAttach<
-	T,
-	TCollectionsWith<
-		TCollections,
+> extends QuerySet<
+	TQuerySetWithAttach<
+		T,
+		"AttachMany",
+		FetchFnReturn,
 		Key,
-		{ Prototype: "Attach"; Type: "AttachMany"; Value: FetchFnReturn }
-	>,
-	Key,
-	AttachedOutputFromFetchFnReturn<FetchFnReturn>[]
->;
+		AttachedOutputFromFetchFnReturn<FetchFnReturn>[]
+	>
+> {}
 
-type QuerySetWithAttachOne<
+interface QuerySetWithAttachOne<
 	T extends TQuerySet,
 	Key extends string,
 	FetchFnReturn extends SomeFetchFnReturn,
-> = QuerySetWithAttach<
-	T,
-	TCollectionsWith<
-		TCollections,
+> extends QuerySet<
+	TQuerySetWithAttach<
+		T,
+		"AttachOne",
+		FetchFnReturn,
 		Key,
-		{ Prototype: "Attach"; Type: "AttachOne"; Value: FetchFnReturn }
-	>,
-	Key,
-	AttachedOutputFromFetchFnReturn<FetchFnReturn> | null
->;
+		AttachedOutputFromFetchFnReturn<FetchFnReturn> | null
+	>
+> {}
 
-type QuerySetWithAttachOneOrThrow<
+interface QuerySetWithAttachOneOrThrow<
 	T extends TQuerySet,
 	Key extends string,
 	FetchFnReturn extends SomeFetchFnReturn,
-> = QuerySetWithAttach<
-	T,
-	TCollectionsWith<
-		TCollections,
+> extends QuerySet<
+	TQuerySetWithAttach<
+		T,
+		"AttachOneOrThrow",
+		FetchFnReturn,
 		Key,
-		{ Prototype: "Attach"; Type: "AttachOneOrThrow"; Value: FetchFnReturn }
-	>,
-	Key,
-	AttachedOutputFromFetchFnReturn<FetchFnReturn>
->;
+		AttachedOutputFromFetchFnReturn<FetchFnReturn>
+	>
+> {}
 
 ////////////////////////////////////////////////////////////
 // Join Helpers.
@@ -817,10 +894,6 @@ type NestedQuerySetOrFactory<T extends TQuerySet, Alias extends string, TNested 
 	| ((
 			nest: InitWithAlias<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], Alias>,
 	  ) => MappedQuerySet<TNested>);
-
-// type JoinTableExpression<T extends TQuerySet, NestedRow> =
-// 	| k.AliasableExpression<NestedRow>
-// 	| ((eb: ExpressionBuilderFor<T["JoinedQuery"]>) => k.AliasableExpression<NestedRow>);
 
 type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.AliasedExpression<
 	TNested["BaseQuery"]["O"],
@@ -964,24 +1037,18 @@ type JoinMethod =
 	| "leftJoinLateral"
 	| "crossJoinLateral";
 
+const filteringJoins = new Set<JoinMethod>([
+	"innerJoin",
+	"innerJoinLateral",
+	"crossJoin",
+	"crossJoinLateral",
+]);
+
+const isFilteringJoin = (collection: JoinCollection): boolean =>
+	filteringJoins.has(collection.method);
+
 type AnyJoinArgs = [key: string, from: any, callbackOrk1?: any, k2?: any];
 type AnyJoinArgsTail = [callbackOrk1?: any, k2?: any];
-
-interface ModifyOperation {
-	readonly type: "modify";
-	readonly modifier: (qb: AnySelectQueryBuilder) => AnySelectQueryBuilder;
-}
-
-// interface JoinOperation {
-// 	readonly type: "join";
-// 	readonly key: string;
-// 	readonly method: JoinMethod;
-// 	readonly mode: CollectionMode;
-// 	readonly querySet: MappedQuerySet<any>;
-// 	readonly args: AnyJoinArgsTail;
-// }
-
-type Operation = ModifyOperation;
 
 interface JoinCollection {
 	readonly type: "join";
@@ -1006,10 +1073,12 @@ interface QuerySetProps {
 	baseQuery: AnySelectQueryBuilder;
 	keyBy: KeyBy<any>;
 	hydrator: Hydrator<any, any>;
-	collections: Map<string, Collection>;
-	operations: readonly Operation[];
-	// limit: number | null;
-	// offset: number | null;
+	joinCollections: Map<string, JoinCollection>;
+	attachCollections: Map<string, AttachCollection>;
+	limit: LimitOrOffset;
+	offset: LimitOrOffset;
+	// TODO
+	orderBy: unknown;
 }
 
 /**
@@ -1030,40 +1099,43 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		});
 	}
 
-	#addOperation(operation: Operation): QuerySetImpl {
-		return this.#clone({
-			operations: [...this.#props.operations, operation],
-		});
-	}
+	#addCollection(key: string, collection: Collection): QuerySetImpl {
+		// Careful to overwrite any previous collection definition with the same
+		// key, regardless of type.
 
-	#hydratorWithCollection(key: string, collection: Collection): Hydrator<any, any> {
+		// NOTE: Hydrators maintain a Map of collections, so this will correctly
+		// overwrite any previous collection definition with the same key.
+
+		const { joinCollections, attachCollections, hydrator } = this.#props;
+
 		switch (collection.type) {
 			case "join": {
-				return asFullHydrator(this.#props.hydrator).has(
-					collection.mode,
-					key,
-					makePrefix("", key),
-					collection.querySet.#props.hydrator,
-				);
+				return this.#clone({
+					joinCollections: new Map(joinCollections).set(key, collection),
+					attachCollections: mapWithDeleted(attachCollections, key),
+
+					hydrator: asFullHydrator(hydrator).has(
+						collection.mode,
+						key,
+						makePrefix("", key),
+						collection.querySet.#props.hydrator,
+					),
+				});
 			}
 			case "attach": {
-				return asFullHydrator(this.#props.hydrator).attach(
-					collection.mode,
-					key,
-					collection.fetchFn,
-					collection.keys,
-				);
+				return this.#clone({
+					joinCollections: mapWithDeleted(joinCollections, key),
+					attachCollections: new Map(attachCollections).set(key, collection),
+
+					hydrator: asFullHydrator(hydrator).attach(
+						collection.mode,
+						key,
+						collection.fetchFn,
+						collection.keys,
+					),
+				});
 			}
 		}
-	}
-
-	#addCollection(key: string, collection: Collection): QuerySetImpl {
-		return this.#clone({
-			collections: new Map(this.#props.collections).set(key, collection),
-			// Hydrators maintain a Map of collections, so this will correctly
-			// overwrite any previous collection definition with the same key.
-			hydrator: this.#hydratorWithCollection(key, collection),
-		});
 	}
 
 	get _generics() {
@@ -1074,29 +1146,187 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Query generation.
 	////////////////////////////////////////////////////////////
 
+	get #aliasedBaseQuery() {
+		return this.#props.baseQuery.as(this.#props.baseAlias);
+	}
+
 	toBaseQuery(): AnySelectQueryBuilder {
+		// TODO: This might need to be passed through `db` somehow to become executable.
 		return this.#props.baseQuery;
 	}
 
+	/**
+	 * Checks (recursively) if this query set is subject to row explosion (which also means it
+	 * would cause row explosion if nested).
+	 */
+	#isCardinalityOne(): boolean {
+		const { joinCollections } = this.#props;
+
+		for (const collection of joinCollections.values()) {
+			if (collection.mode === "many") {
+				return false;
+			}
+			if (!collection.querySet.#isCardinalityOne()) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Adds a single join to the query.
+	 *
+	 * @param isForSelection - If true, selections will be hoisted and prefixed.
+	 * @param prefix - The prefix to use when hoisting selections.
+	 * @param qb - The query builder to add the join to.
+	 * @param key - The key of the join.
+	 * @param collection - The collection to add the join to.
+	 */
+	#addCollectionAsJoin(
+		prefix: string,
+		qb: AnySelectQueryBuilder,
+		key: string,
+		collection: JoinCollection,
+	): AnySelectQueryBuilder {
+		// Add the join to the parent query.
+		// This cast to a single method helps TypeScript follow the overloads.
+		const from = collection.querySet.#toQuery(makePrefix(prefix, key)).as(key);
+		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
+
+		// Add the (prefixed) selections from the subquery to the parent query.
+		const hoistedSelections = hoistAndPrefixSelections(prefix, from);
+		qb = qb.select(hoistedSelections);
+
+		return qb;
+	}
+
+	#applyLimitAndOffset(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
+		const { limit, offset } = this.#props;
+		if (limit !== null) {
+			qb = qb.limit(limit);
+		}
+		if (offset !== null) {
+			qb = qb.offset(offset);
+		}
+		return qb;
+	}
+
+	#applyOrderBy(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
+		// TODO
+		return qb;
+	}
+
+	/**
+	 * Returns a query guaranteed to return one row per entity in the result set,
+	 * accounting for filtering joins (inner joins).  It will include
+	 * cardinality-one left joins in addition to cardinality-one inner joins, and
+	 * hoist selections for both.  It will convert cardinality-many inner joins,
+	 * and all cross-joins to a WHERE EXISTS clause.
+	 */
+	#toCardinalityOneQuery(prefix: string): AnySelectQueryBuilder {
+		const { joinCollections } = this.#props;
+
+		let qb = db.selectFrom(this.#aliasedBaseQuery);
+
+		for (const [key, collection] of joinCollections) {
+			if (collection.querySet.#isCardinalityOne()) {
+				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
+			} else if (isFilteringJoin(collection)) {
+				// Otherwise, build a dummy source and replay the join method onto
+				// it so we don't have to figure out how to convert arbitrary joins
+				// to select queries.
+				qb = qb.where(({ exists, selectFrom, lit }) =>
+					exists(
+						selectFrom(k.sql`(SELECT 1)`.as("__"))
+							.select(lit(1).as("_"))
+							.$call((qb) => this.#addCollectionAsJoin(prefix, qb, key, collection)),
+					),
+				);
+
+				// TODO: Convert the ON clause to WHERE clauses so we can use an
+				// optimized version of the subquery and do:
+				//
+				// qb = qb.where(({ exists }) =>
+				//   exists(collection.querySet.#toCardinalityOneQuery(makePrefix(prefix,
+				// key))),
+				// );
+			}
+		}
+
+		return qb;
+	}
+
+	#toJoinedQuery(prefix: string): AnySelectQueryBuilder {
+		const { baseAlias, joinCollections } = this.#props;
+
+		let qb = db.selectFrom(this.#aliasedBaseQuery).selectAll(baseAlias);
+
+		for (const [key, collection] of joinCollections) {
+			qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
+		}
+
+		// NOTE: Limit and offset cannot be applied here because of row explosion.
+
+		// Apply ordering---but only if we're not prefixed, because ordering in
+		// subqueries is ignored (well, "not guaranteed") unless you also have a
+		// LIMIT or OFFSET.
+		if (!prefix) {
+			qb = this.#applyOrderBy(qb);
+		}
+
+		return qb;
+	}
+
 	toJoinedQuery(): AnySelectQueryBuilder {
-		throw new Error("Not implemented");
+		return this.#toJoinedQuery("");
+	}
+
+	#toQuery(prefix: string): AnySelectQueryBuilder {
+		const { baseAlias, db, limit, offset, orderBy, joinCollections } = this.#props;
+
+		// If we have no joins (no row explosion) and no ordering (nothing referencing
+		// the baseAlias), we can just apply the limit and offset to the base query.
+		if (!joinCollections.size && !orderBy) {
+			return this.#applyLimitAndOffset(this.#props.baseQuery);
+		}
+
+		if (!limit && !offset) {
+			return this.toJoinedQuery();
+		}
+
+		const cardinalityOneQuery = this.#toCardinalityOneQuery(prefix);
+
+		let qb = db.selectFrom(cardinalityOneQuery.as(baseAlias));
+
+		// Add any cardinality-many joins.
+		for (const [key, collection] of joinCollections) {
+			if (!collection.querySet.#isCardinalityOne()) {
+				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
+			}
+		}
+
+		// Re-apply ordering since the order from the subquery is not guaranteed to
+		// be preserved.
+		qb = this.#applyOrderBy(qb);
+
+		return qb;
 	}
 
 	toQuery(): AnySelectQueryBuilder {
-		// TODO: How is this different from toJoinedQuery?
-		throw new Error("Not implemented");
+		return this.#toQuery("");
 	}
 
-	toCountQuery(): AnySelectQueryBuilder {
-		throw new Error("Not implemented");
+	toCountQuery(): OpaqueCountQueryBuilder {
+		return this.#toCardinalityOneQuery("")
+			.clearSelect()
+			.select((eb) => eb.fn.countAll().as("count"));
 	}
 
-	toKeysQuery(): AnySelectQueryBuilder {
-		throw new Error("Not implemented");
-	}
-
-	toExistsQuery(): AnySelectQueryBuilder {
-		throw new Error("Not implemented");
+	toExistsQuery(): OpaqueExistsQueryBuilder {
+		return this.#props.db.selectNoFrom(({ exists }) =>
+			exists(this.#toCardinalityOneQuery("")).as("exists"),
+		);
 	}
 
 	compile() {
@@ -1112,7 +1342,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	////////////////////////////////////////////////////////////
 
 	async execute(): Promise<any[]> {
-		throw new Error("Not implemented");
+		const rows = await this.toQuery().execute();
+
+		return this.#props.hydrator.hydrate(
+			rows,
+			// Auto include fields at all levels, so we don't have to understand the
+			// shape of the selection and can allow it to be inferred by the shape of
+			// the rows.
+			// @ts-expect-error - EnableAutoInclusion is a hidden parameter.
+			EnableAutoInclusion,
+		);
 	}
 
 	async executeTakeFirst(): Promise<any | undefined> {
@@ -1139,13 +1378,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return result;
 	}
 
-	async executeCountAll(
+	async executeCount(
 		cast?: (count: string | number | bigint) => string | number | bigint,
 	): Promise<any> {
-		// TODO
-		const result = {} as any;
+		const { count } = await this.toCountQuery().executeTakeFirstOrThrow();
+		return cast ? cast(count) : count;
+	}
 
-		return cast ? cast(result.count) : result.count;
+	async executeExists(): Promise<boolean> {
+		const { exists } = await this.toExistsQuery().executeTakeFirstOrThrow();
+		return Boolean(exists);
 	}
 
 	/////////////////////////////////////////////////////////////
@@ -1225,14 +1467,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			keyBy?: KeyBy<any>,
 		) => {
 			const creator = querySet(this.#props.db);
-			if (typeof query === "function") {
-				return keyBy === undefined
-					? creator.init(key, query as any)
-					: creator.init(key, query as any, keyBy as any);
-			}
-			return keyBy === undefined
-				? creator.init(key, query as any)
-				: creator.init(key, query as any, keyBy as any);
+			return creator.init(key, query as any, keyBy as any);
 		}) as any as InitWithAlias<any, any, any>;
 
 		const resolved = typeof nestedQuerySet === "function" ? nestedQuerySet(nest) : nestedQuerySet;
@@ -1303,20 +1538,23 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		modifier?: (value: any) => any,
 	): any {
 		if (typeof keyOrModifier === "function") {
-			return this.#addOperation({
-				type: "modify",
-				modifier: keyOrModifier,
+			// It's safe to immediately apply modifications to the base query because
+			// it is scoped within its own subselect.  The types capture this.
+			return this.#clone({
+				baseQuery: keyOrModifier(this.#props.baseQuery),
 			});
-		}
-
-		const collection = this.#props.collections.get(keyOrModifier);
-
-		if (!collection) {
-			throw new TypeError(`Collection ${keyOrModifier} not found`);
 		}
 
 		if (!modifier) {
 			throw new TypeError(`Modifier not provided for collection ${keyOrModifier}`);
+		}
+
+		const collection =
+			this.#props.joinCollections.get(keyOrModifier) ||
+			this.#props.attachCollections.get(keyOrModifier);
+
+		if (!collection) {
+			throw new TypeError(`Collection ${keyOrModifier} not found`);
 		}
 
 		switch (collection.type) {
@@ -1338,6 +1576,30 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				assertNever(collection);
 			}
 		}
+	}
+
+	limit(limit: LimitOrOffset): any {
+		return this.#clone({
+			limit,
+		});
+	}
+
+	offset(offset: LimitOrOffset): any {
+		return this.#clone({
+			offset,
+		});
+	}
+
+	clearLimit(): any {
+		return this.#clone({
+			limit: null,
+		});
+	}
+
+	clearOffset(): any {
+		return this.#clone({
+			offset: null,
+		});
 	}
 }
 
@@ -1478,8 +1740,11 @@ class QuerySetCreator<DB> {
 			baseQuery,
 			keyBy: keyBy,
 			hydrator: createHydrator(),
-			collections: new Map(),
-			operations: [],
+			joinCollections: new Map(),
+			attachCollections: new Map(),
+			limit: null,
+			offset: null,
+			orderBy: null,
 		});
 	}
 }

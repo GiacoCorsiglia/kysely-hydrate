@@ -84,3 +84,17 @@ export function capitalize<K extends string>(str: K): Capitalize<K> {
 	if (!str) return "" as Capitalize<K>;
 	return (str.charAt(0).toUpperCase() + str.slice(1)) as Capitalize<K>;
 }
+
+/**
+ * Creates a new Map with the given key deleted.  If the key does not exist,
+ * returns the original Map.
+ */
+export function mapWithDeleted<K, V>(map: Map<K, V>, key: K): Map<K, V> {
+	if (!map.has(key)) {
+		return map;
+	}
+
+	const clone = new Map(map);
+	clone.delete(key);
+	return clone;
+}
