@@ -105,10 +105,6 @@ interface TQuerySet {
 	 */
 	IsMapped: boolean;
 	/**
-	 * The key(s) used to uniquely identify rows in the query result.
-	 */
-	Keys: string;
-	/**
 	 * The alias of the base query.
 	 */
 	BaseAlias: string;
@@ -140,7 +136,6 @@ type TOutput<T extends TQuerySet> = k.Simplify<T["HydratedOutput"]>;
 interface TMapped<T extends TQuerySet, Output> {
 	DB: T["DB"];
 	IsMapped: true;
-	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
@@ -151,7 +146,6 @@ interface TMapped<T extends TQuerySet, Output> {
 interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
-	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: BaseQuery;
 	Collections: T["Collections"];
@@ -168,7 +162,6 @@ interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
 interface TWithOutput<T extends TQuerySet, Output> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
-	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
@@ -179,7 +172,6 @@ interface TWithOutput<T extends TQuerySet, Output> {
 interface TWithExtendedOutput<T extends TQuerySet, Output> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
-	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
@@ -1807,7 +1799,6 @@ interface TQuerySetWithAttach<
 > {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
-	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: T["BaseQuery"];
 	JoinedQuery: T["JoinedQuery"];
@@ -1913,7 +1904,6 @@ type TQuerySetWithJoin<
 		? {
 				DB: T["DB"];
 				IsMapped: T["IsMapped"];
-				Keys: T["Keys"];
 				BaseAlias: T["BaseAlias"];
 				BaseQuery: T["BaseQuery"];
 				Collections: TCollectionsWith<
@@ -2627,20 +2617,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 // QuerySetCreator.
 ////////////////////////////////////////////////////////////
 
-type KeyByToKeys<KB extends KeyBy<any>> =
-	KB extends ReadonlyArray<any> ? KB[number] & string : KB & string;
-
 interface InitialQuerySet<
 	DB,
 	BaseAlias extends string,
 	BaseDB,
 	BaseTB extends keyof BaseDB,
 	BaseO,
-	Keys extends string,
 > extends QuerySet<{
 	DB: DB;
 	IsMapped: false;
-	Keys: Keys;
 	BaseAlias: BaseAlias;
 	BaseQuery: {
 		DB: BaseDB;
@@ -2685,23 +2670,21 @@ type SelectQueryBuilderOrFactory<
 interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
 		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, DEFAULT_KEY_BY>;
-	<BaseDB, BaseTB extends keyof BaseDB, BaseO, KB extends KeyBy<NoInfer<BaseO>>>(
-		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
-		keyBy: KB,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
-	// Infer output from ReturnType<F> to avoid circular inference.
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+	<BaseDB, BaseTB extends keyof BaseDB, BaseO>(
+		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
+		keyBy: KeyBy<NoInfer<BaseO>>,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	<
-		F extends SelectQueryBuilderFactory<DB, TB, any, any, any>,
+		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
 		BaseDB = InferDB<Q>,
 		BaseTB extends keyof BaseDB = InferTB<Q>,
 		BaseO = InferO<Q>,
-		KB extends KeyBy<NoInfer<BaseO>> = KeyBy<NoInfer<BaseO>>,
 	>(
 		query: F,
-		keyBy: KB,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
+		keyBy: KeyBy<NoInfer<BaseO>>,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 }
 
 /**
@@ -2775,18 +2758,12 @@ class QuerySetCreator<DB> {
 	>(
 		alias: Alias,
 		query: SelectQueryBuilderOrFactory<DB, never, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, DEFAULT_KEY_BY>;
-	init<
-		Alias extends string,
-		BaseDB,
-		BaseTB extends keyof BaseDB,
-		BaseO,
-		KB extends KeyBy<NoInfer<BaseO>>,
-	>(
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+	init<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
 		alias: Alias,
 		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
-		keyBy: KB,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
+		keyBy: KeyBy<NoInfer<BaseO>>,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	// Infer output from ReturnType<F> to avoid circular inference.
 	init<
 		Alias extends string,
@@ -2795,17 +2772,16 @@ class QuerySetCreator<DB> {
 		BaseDB = InferDB<Q>,
 		BaseTB extends keyof BaseDB = InferTB<Q>,
 		BaseO = InferO<Q>,
-		KB extends KeyBy<NoInfer<BaseO>> = KeyBy<NoInfer<BaseO>>,
 	>(
 		alias: Alias,
 		query: F,
-		keyBy: KB,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
+		keyBy: KeyBy<NoInfer<BaseO>>,
+	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	init(
 		alias: string,
 		query: any,
 		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
-	): InitialQuerySet<DB, string, any, any, any, any> {
+	): InitialQuerySet<DB, string, any, any, any> {
 		const baseQuery = typeof query === "function" ? query(this.#db) : query;
 
 		return new QuerySetImpl({
