@@ -19,13 +19,14 @@
 import * as k from "kysely";
 
 import { db } from "./__tests__/postgres.ts";
-import { makePrefix } from "./helpers/prefixes.ts";
+import { type ApplyPrefixes, type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
 import { hoistAndPrefixSelections } from "./helpers/select-renamer.ts";
 import {
 	type Extend,
 	type ExtendWith,
 	type Flatten,
 	type KeyBy,
+	type StrictEqual,
 	type StrictSubset,
 	assertNever,
 	mapWithDeleted,
@@ -96,6 +97,10 @@ type TCollectionsWith<
  */
 interface TQuerySet {
 	/**
+	 * The original shape of the database schema from k.Kysely<DB>.
+	 */
+	DB: any;
+	/**
 	 * Indicates whether the query set has been mapped.
 	 */
 	IsMapped: boolean;
@@ -133,6 +138,7 @@ type TInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
 type TOutput<T extends TQuerySet> = k.Simplify<T["HydratedOutput"]>;
 
 interface TMapped<T extends TQuerySet, Output> {
+	DB: T["DB"];
 	IsMapped: true;
 	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
@@ -143,6 +149,7 @@ interface TMapped<T extends TQuerySet, Output> {
 }
 
 interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
+	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
@@ -153,10 +160,24 @@ interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
 		TB: T["JoinedQuery"]["TB"];
 		O: T["JoinedQuery"]["O"];
 	};
-	HydratedOutput: TOutput<T>;
+	// Extend in this order because we are expanding the input type, but it still
+	// needs to be overwritten by .extras() and whatnot.
+	HydratedOutput: Extend<BaseQuery["O"], TOutput<T>>;
+}
+
+interface TWithOutput<T extends TQuerySet, Output> {
+	DB: T["DB"];
+	IsMapped: T["IsMapped"];
+	Keys: T["Keys"];
+	BaseAlias: T["BaseAlias"];
+	BaseQuery: T["BaseQuery"];
+	Collections: T["Collections"];
+	JoinedQuery: T["JoinedQuery"];
+	HydratedOutput: Output;
 }
 
 interface TWithExtendedOutput<T extends TQuerySet, Output> {
+	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
@@ -165,6 +186,23 @@ interface TWithExtendedOutput<T extends TQuerySet, Output> {
 	JoinedQuery: T["JoinedQuery"];
 	HydratedOutput: Extend<TOutput<T>, Output>;
 }
+
+interface InitialJoinedQuery<DB, BaseAlias extends string, BaseO> {
+	// The base query is wrapped in an alias in `SELECT $alias.* FROM (...) as
+	// $alias`, so it's treated as another table.
+	DB: DB & { [K in BaseAlias]: BaseO };
+	// The base query alias is selected as an active table.
+	TB: BaseAlias;
+	// The output is the same as the base query output.
+	O: BaseO;
+}
+
+type ToInitialJoinedDB<T extends TQuerySet> = Flatten<
+	T["DB"] & {
+		[K in T["BaseAlias"]]: T["BaseQuery"]["O"];
+	}
+>;
+type ToInitialJoinedTB<T extends TQuerySet> = T["BaseAlias"];
 
 ////////////////////////////////////////////////////////////
 // Interfaces.
@@ -548,11 +586,12 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 *   .execute();
 	 * ```
 	 */
-	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
+	// Simple overload for simple case.
+	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
 		modifier: (
 			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
-		) => k.SelectQueryBuilder<NewDB, NewTB, NewO>,
-	): MappedQuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
+		) => k.SelectQueryBuilder<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], O>,
+	): this;
 
 	/**
 	 * Adds a `where` expression to the base query.
@@ -773,7 +812,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 */
 	omit<K extends keyof TInput<T>>(
 		keys: readonly K[],
-	): QuerySet<TWithExtendedOutput<T, Omit<TOutput<T>, K>>>;
+	): QuerySet<TWithOutput<T, Omit<TOutput<T>, K>>>;
 
 	/**
 	 * Extends this query builder's hydration configuration with another Hydrator.
@@ -1699,6 +1738,11 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @returns A new QuerySet with the modification applied.
 	 */
 	// Modify base query.
+	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
+		modifier: (
+			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
+		) => k.SelectQueryBuilder<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], O>,
+	): this;
 	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
 		modifier: (
 			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
@@ -1761,6 +1805,7 @@ interface TQuerySetWithAttach<
 	Key extends string,
 	AttachedOutput,
 > {
+	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	Keys: T["Keys"];
 	BaseAlias: T["BaseAlias"];
@@ -1820,13 +1865,15 @@ interface QuerySetWithAttachOneOrThrow<
 // Join Helpers.
 ////////////////////////////////////////////////////////////
 
-// Important: for all these nested operations, we use the BaseQuery---not the
-// JoinedQuery.  This guarantees at a type level that adjacent joins do not
-// depend on each other.
+// Important: for all these nested operations, we use the *initial*
+// JoinedQuery---not the actual JoinedQuery.  This guarantees at a type level
+// that adjacent joins do not depend on each other.  (We furthermore cannot use
+// T["BaseQuery"] because that's not what the JoinedQuery ever looks like.)
+
 type NestedQuerySetOrFactory<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> =
 	| MappedQuerySet<TNested>
 	| ((
-			nest: InitWithAlias<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], Alias>,
+			nest: InitWithAlias<ToInitialJoinedDB<T>, ToInitialJoinedTB<T>, Alias>,
 	  ) => MappedQuerySet<TNested>);
 
 type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.AliasedExpression<
@@ -1839,8 +1886,8 @@ type JoinReferenceExpression<
 	Key extends string,
 	TNested extends TQuerySet,
 > = k.JoinReferenceExpression<
-	T["BaseQuery"]["DB"],
-	T["BaseQuery"]["TB"],
+	ToInitialJoinedDB<T>,
+	ToInitialJoinedTB<T>,
 	ToTableExpression<Key, TNested>
 >;
 
@@ -1849,8 +1896,8 @@ type JoinCallbackExpression<
 	Key extends string,
 	TNested extends TQuerySet,
 > = k.JoinCallbackExpression<
-	T["BaseQuery"]["DB"],
-	T["BaseQuery"]["TB"],
+	ToInitialJoinedDB<T>,
+	ToInitialJoinedTB<T>,
 	ToTableExpression<Key, TNested>
 >;
 
@@ -1864,6 +1911,7 @@ type TQuerySetWithJoin<
 > = Flatten<
 	JoinedQuery extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
 		? {
+				DB: T["DB"];
 				IsMapped: T["IsMapped"];
 				Keys: T["Keys"];
 				BaseAlias: T["BaseAlias"];
@@ -1883,6 +1931,12 @@ type TQuerySetWithJoin<
 		: never
 >;
 
+type ToJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+	// Extend the *JoinedQuery* output, which includes both the base output and also
+	// output from other joins.
+	T["JoinedQuery"]["O"] & ApplyPrefixes<MakePrefix<"", Key>, TNested["JoinedQuery"]["O"]>
+>;
+
 type TQuerySetWithInnerJoin<
 	T extends TQuerySet,
 	Key extends string,
@@ -1896,9 +1950,9 @@ type TQuerySetWithInnerJoin<
 	TNested,
 	NestedHydratedRow,
 	k.SelectQueryBuilderWithInnerJoin<
-		T["BaseQuery"]["DB"],
-		T["BaseQuery"]["TB"],
-		T["BaseQuery"]["O"],
+		ToInitialJoinedDB<T>,
+		ToInitialJoinedTB<T>,
+		ToJoinOutput<T, TNested, Key>,
 		ToTableExpression<Key, TNested>
 	>
 >;
@@ -1916,9 +1970,9 @@ type TQuerySetWithLeftJoin<
 	TNested,
 	NestedHydratedRow,
 	k.SelectQueryBuilderWithLeftJoin<
-		T["BaseQuery"]["DB"],
-		T["BaseQuery"]["TB"],
-		T["BaseQuery"]["O"],
+		ToInitialJoinedDB<T>,
+		ToInitialJoinedTB<T>,
+		ToJoinOutput<T, TNested, Key>,
 		ToTableExpression<Key, TNested>
 	>
 >;
@@ -2556,6 +2610,7 @@ interface InitialQuerySet<
 	BaseO,
 	Keys extends string,
 > extends QuerySet<{
+	DB: DB;
 	IsMapped: false;
 	Keys: Keys;
 	BaseAlias: BaseAlias;
@@ -2566,15 +2621,7 @@ interface InitialQuerySet<
 	};
 	Collections: {};
 	// The joined query mostly looks like the base query.
-	JoinedQuery: {
-		// The base query is wrapped in an alias in `SELECT $alias.* FROM (...) as
-		// $alias`, so it's treated as another table.
-		DB: DB & { [K in BaseAlias]: BaseO };
-		// The base query alias is selected as an active table.
-		TB: BaseAlias;
-		// The output is the same as the base query output.
-		O: BaseO;
-	};
+	JoinedQuery: InitialJoinedQuery<BaseDB, BaseAlias, BaseO>;
 	// The hydrated output is the same as the base query output; no mapping yet.
 	HydratedOutput: BaseO;
 }> {}

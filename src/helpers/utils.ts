@@ -43,6 +43,10 @@ export type StrictSubset<T, U> = Partial<T> & {
 	[K in Exclude<keyof U, keyof T>]: never;
 };
 
+export type StrictEqual<T, U> = T & {
+	[K in Exclude<keyof U, keyof T>]: never;
+};
+
 type AtLeastOne<T> = readonly [T, ...T[]];
 export type KeyBy<T> = (keyof T & string) | AtLeastOne<keyof T & string>;
 
