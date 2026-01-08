@@ -19,7 +19,7 @@
 import * as k from "kysely";
 
 import { type ApplyPrefixes, type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
-import { hoistAndPrefixSelections } from "./helpers/select-renamer.ts";
+import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
 	type Extend,
 	type ExtendWith,
@@ -2168,19 +2168,18 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * @param collection - The collection to add the join to.
 	 */
 	#addCollectionAsJoin(
-		prefix: string,
 		qb: AnySelectQueryBuilder,
 		key: string,
 		collection: JoinCollection,
 	): AnySelectQueryBuilder {
-		const nestedPrefix = makePrefix(prefix, key);
 		// Add the join to the parent query.
 		// This cast to a single method helps TypeScript follow the overloads.
-		const from = collection.querySet.#toQuery(nestedPrefix).as(key);
+		const from = collection.querySet.#toQuery(true).as(key);
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
 		// Add the (prefixed) selections from the subquery to the parent query.
-		const hoistedSelections = hoistAndPrefixSelections(nestedPrefix, from);
+		const prefix = makePrefix("", key);
+		const hoistedSelections = hoistAndPrefixSelections(prefix, from);
 		qb = qb.select(hoistedSelections);
 
 		return qb;
@@ -2221,17 +2220,17 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * hoist selections for both.  It will convert cardinality-many inner joins,
 	 * and all cross-joins to a WHERE EXISTS clause.
 	 */
-	#toCardinalityOneQuery(prefix: string): AnySelectQueryBuilder {
+	#toCardinalityOneQuery(): AnySelectQueryBuilder {
 		const { db, joinCollections } = this.#props;
 
 		let qb = db.selectFrom(this.#aliasedBaseQuery);
 
-		const hoistedSelects = hoistAndPrefixSelections(prefix, this.#aliasedBaseQuery);
+		const hoistedSelects = hoistSelections(this.#aliasedBaseQuery);
 		qb = qb.select(hoistedSelects);
 
 		for (const [key, collection] of joinCollections) {
 			if (this.#isCollectionCardinalityOne(collection)) {
-				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
+				qb = this.#addCollectionAsJoin(qb, key, collection);
 			} else if (isFilteringJoin(collection)) {
 				// Otherwise, build a dummy source and replay the join method onto
 				// it so we don't have to figure out how to convert arbitrary joins
@@ -2240,7 +2239,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 					exists(
 						selectFrom(k.sql`(SELECT 1)`.as("__"))
 							.select(lit(1).as("_"))
-							.$call((qb) => this.#addCollectionAsJoin(prefix, qb, key, collection)),
+							.$call((qb) => this.#addCollectionAsJoin(qb, key, collection)),
 					),
 				);
 
@@ -2257,16 +2256,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#toJoinedQuery(prefix: string): AnySelectQueryBuilder {
+	#toJoinedQuery(isSubquery: boolean): AnySelectQueryBuilder {
 		const { db, joinCollections } = this.#props;
 
 		let qb = db.selectFrom(this.#aliasedBaseQuery);
 
-		const hoistedSelects = hoistAndPrefixSelections(prefix, this.#aliasedBaseQuery);
+		const hoistedSelects = hoistSelections(this.#aliasedBaseQuery);
 		qb = qb.select(hoistedSelects);
 
 		for (const [key, collection] of joinCollections) {
-			qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
+			qb = this.#addCollectionAsJoin(qb, key, collection);
 		}
 
 		// NOTE: Limit and offset cannot be applied here because of row explosion.
@@ -2274,7 +2273,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Apply ordering---but only if we're not prefixed, because ordering in
 		// subqueries is ignored (well, "not guaranteed") unless you also have a
 		// LIMIT or OFFSET.
-		if (!prefix) {
+		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
 		}
 
@@ -2282,10 +2281,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return this.#toJoinedQuery("");
+		return this.#toJoinedQuery(false);
 	}
 
-	#toQuery(prefix: string): AnySelectQueryBuilder {
+	#toQuery(isSubquery: boolean): AnySelectQueryBuilder {
 		const { baseAlias, db, limit, offset, orderBy, joinCollections } = this.#props;
 
 		// If we have no joins (no row explosion) and no ordering (nothing referencing
@@ -2295,10 +2294,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		if (!limit && !offset) {
-			return this.#toJoinedQuery(prefix);
+			return this.#toJoinedQuery(isSubquery);
 		}
 
-		let cardinalityOneQuery = this.#toCardinalityOneQuery(prefix);
+		let cardinalityOneQuery = this.#toCardinalityOneQuery();
 
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
@@ -2309,20 +2308,20 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
 		let qb = db.selectFrom(aliasedCardinalityOneQuery);
 
-		const hoistedSelects = hoistAndPrefixSelections(prefix, aliasedCardinalityOneQuery);
+		const hoistedSelects = hoistSelections(aliasedCardinalityOneQuery);
 		qb = qb.select(hoistedSelects);
 
 		// Add any cardinality-many joins.
 		for (const [key, collection] of joinCollections) {
 			if (!this.#isCollectionCardinalityOne(collection)) {
-				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
+				qb = this.#addCollectionAsJoin(qb, key, collection);
 			}
 		}
 
 		// Re-apply ordering since the order from the subquery is not guaranteed to
 		// be preserved.  This doesn't matter if we have a prefix because it means
 		// we're in a subquery already.
-		if (!prefix) {
+		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
 		}
 
@@ -2330,18 +2329,18 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toQuery(): AnySelectQueryBuilder {
-		return this.#toQuery("");
+		return this.#toQuery(false);
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
-		return this.#toCardinalityOneQuery("")
+		return this.#toCardinalityOneQuery()
 			.clearSelect()
 			.select((eb) => eb.fn.countAll().as("count"));
 	}
 
 	toExistsQuery(): OpaqueExistsQueryBuilder {
 		return this.#props.db.selectNoFrom(({ exists }) =>
-			exists(this.#toCardinalityOneQuery("").select((eb) => eb.lit(1).as("_"))).as("exists"),
+			exists(this.#toCardinalityOneQuery().select((eb) => eb.lit(1).as("_"))).as("exists"),
 		);
 	}
 
