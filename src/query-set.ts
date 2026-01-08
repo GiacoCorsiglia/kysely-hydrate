@@ -244,7 +244,8 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * Returns the base query that this query set was initialized with, plus any
 	 * modifications made via `.modify()`.
 	 *
-	 * This does not include any joins or hydration configuration.
+	 * This does not include any joins or hydration configuration, including
+	 * limit, offset, or ordering.
 	 *
 	 * **Example:**
 	 * ```ts
@@ -2215,10 +2216,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	/**
 	 * Returns a query guaranteed to return one row per entity in the result set,
-	 * accounting for filtering joins (inner joins).  It will include
-	 * cardinality-one left joins in addition to cardinality-one inner joins, and
-	 * hoist selections for both.  It will convert cardinality-many inner joins,
-	 * and all cross-joins to a WHERE EXISTS clause.
+	 * suitable for count and exists queries. It includes:
+	 * - ALL cardinality-one joins (inner and left) - included directly because
+	 *   WHERE clauses might reference their columns
+	 * - Cardinality-many filtering joins (innerJoinMany, crossJoinMany) - converted
+	 *   to WHERE EXISTS to avoid row explosion
+	 * - Cardinality-many non-filtering joins (leftJoinMany) - excluded entirely
 	 */
 	#toCardinalityOneQuery(): AnySelectQueryBuilder {
 		const { db, joinCollections } = this.#props;
@@ -2229,12 +2232,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		qb = qb.select(hoistedSelects);
 
 		for (const [key, collection] of joinCollections) {
+			// For count/exists queries:
+			// - ALL cardinality-one joins (innerJoinOne, leftJoinOne, leftJoinOneOrThrow): included as-is
+			//   because WHERE clauses might reference columns from these joins
+			// - Cardinality-many filtering joins (innerJoinMany, crossJoinMany): converted to WHERE EXISTS
+			//   to avoid row explosion
+			// - Cardinality-many non-filtering joins (leftJoinMany): excluded from count/exists
+
 			if (this.#isCollectionCardinalityOne(collection)) {
+				// All cardinality-one joins are safe to include directly (no row explosion)
 				qb = this.#addCollectionAsJoin(qb, key, collection);
 			} else if (isFilteringJoin(collection)) {
-				// Otherwise, build a dummy source and replay the join method onto
-				// it so we don't have to figure out how to convert arbitrary joins
-				// to select queries.
+				// Cardinality-many filtering joins must be converted to WHERE EXISTS
+				// to avoid row explosion in count queries
 				qb = qb.where(({ exists, selectFrom, lit }) =>
 					exists(
 						selectFrom(k.sql`(SELECT 1)`.as("__"))
@@ -2251,6 +2261,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				// key))),
 				// );
 			}
+			// Cardinality-many non-filtering joins (leftJoinMany) are intentionally excluded
 		}
 
 		return qb;
@@ -2293,8 +2304,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return this.#applyLimitAndOffset(this.#props.baseQuery);
 		}
 
+		// If no pagination, just return the joined query.
 		if (!limit && !offset) {
 			return this.#toJoinedQuery(isSubquery);
+		}
+
+		// If only cardinality-one joins, we can safely apply limit/offset to the
+		// joined query.
+		if (this.#isCardinalityOne()) {
+			return this.#applyLimitAndOffset(this.#toJoinedQuery(isSubquery));
 		}
 
 		let cardinalityOneQuery = this.#toCardinalityOneQuery();
@@ -2340,7 +2358,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	toExistsQuery(): OpaqueExistsQueryBuilder {
 		return this.#props.db.selectNoFrom(({ exists }) =>
-			exists(this.#toCardinalityOneQuery().select((eb) => eb.lit(1).as("_"))).as("exists"),
+			exists(
+				this.#toCardinalityOneQuery()
+					.clearSelect()
+					.select((eb) => eb.lit(1).as("_")),
+			).as("exists"),
 		);
 	}
 
