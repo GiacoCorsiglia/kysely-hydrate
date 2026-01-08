@@ -2162,6 +2162,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
+	 * Checks if a collection is cardinality-one, including checking its query set recursively.
+	 */
+	#isCollectionCardinalityOne(collection: JoinCollection): boolean {
+		return collection.mode === "one" && collection.querySet.#isCardinalityOne();
+	}
+
+	/**
 	 * Adds a single join to the query.
 	 *
 	 * @param isForSelection - If true, selections will be hoisted and prefixed.
@@ -2218,7 +2225,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		let qb = db.selectFrom(this.#aliasedBaseQuery);
 
 		for (const [key, collection] of joinCollections) {
-			if (collection.querySet.#isCardinalityOne()) {
+			if (this.#isCollectionCardinalityOne(collection)) {
 				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
 			} else if (isFilteringJoin(collection)) {
 				// Otherwise, build a dummy source and replay the join method onto
@@ -2289,7 +2296,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		// Add any cardinality-many joins.
 		for (const [key, collection] of joinCollections) {
-			if (!collection.querySet.#isCardinalityOne()) {
+			if (!this.#isCollectionCardinalityOne(collection)) {
 				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
 			}
 		}
