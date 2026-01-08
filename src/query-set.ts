@@ -18,7 +18,6 @@
 
 import * as k from "kysely";
 
-import { db } from "./__tests__/postgres.ts";
 import { type ApplyPrefixes, type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
 import { hoistAndPrefixSelections } from "./helpers/select-renamer.ts";
 import {
@@ -2213,7 +2212,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * and all cross-joins to a WHERE EXISTS clause.
 	 */
 	#toCardinalityOneQuery(prefix: string): AnySelectQueryBuilder {
-		const { joinCollections } = this.#props;
+		const { db, joinCollections } = this.#props;
 
 		let qb = db.selectFrom(this.#aliasedBaseQuery);
 
@@ -2246,7 +2245,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#toJoinedQuery(prefix: string): AnySelectQueryBuilder {
-		const { baseAlias, joinCollections } = this.#props;
+		const { db, baseAlias, joinCollections } = this.#props;
 
 		let qb = db.selectFrom(this.#aliasedBaseQuery).selectAll(baseAlias);
 
