@@ -2360,16 +2360,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	async execute(): Promise<any[]> {
 		const rows = await this.toQuery().execute();
 
-		return this.#props.hydrator.hydrate(
-			rows,
+		return this.#props.hydrator.hydrate(rows, {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.
-			{
-				[EnableAutoInclusion]: true,
-				sort: "nested",
-			},
-		);
+			[EnableAutoInclusion]: true,
+			// Sort nested collections, since their order cannot be guaranteed by SQL.
+			sort: "nested",
+		});
 	}
 
 	async executeTakeFirst(): Promise<any | undefined> {
