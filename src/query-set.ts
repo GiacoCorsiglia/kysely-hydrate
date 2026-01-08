@@ -2320,7 +2320,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	toExistsQuery(): OpaqueExistsQueryBuilder {
 		return this.#props.db.selectNoFrom(({ exists }) =>
-			exists(this.#toCardinalityOneQuery("")).as("exists"),
+			exists(this.#toCardinalityOneQuery("").select((eb) => eb.lit(1).as("_"))).as("exists"),
 		);
 	}
 
