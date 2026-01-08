@@ -555,6 +555,48 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	): MappedQuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
 
 	/**
+	 * Adds a `where` expression to the base query.
+	 *
+	 * This is a convenience method, exactly equivalent to calling
+	 * ```ts
+	 * myQuerySet.modify((qb) => qb.where(...));
+	 * ```
+	 * where `qb.where()` is Kysely's `where` method.
+	 *
+	 * @see {@link k.WhereInterface.where()} for more information.
+	 *
+	 * **Example - Simple where clause:**
+	 * ```ts
+	 * const activeUsers = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .where("users.isActive", "=", true)
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example - Expression-based where:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username", "age"]))
+	 *   .where((eb) => eb.or([
+	 *     eb("users.age", "<", 18),
+	 *     eb("users.age", ">", 65)
+	 *   ]))
+	 *   .execute();
+	 * ```
+	 */
+	where<
+		RE extends k.ReferenceExpression<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"]>,
+		VE extends k.OperandValueExpressionOrList<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], RE>,
+	>(
+		lhs: RE,
+		op: k.ComparisonOperatorExpression,
+		rhs: VE,
+	): this;
+	where<E extends k.ExpressionOrFactory<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], k.SqlBool>>(
+		expression: E,
+	): this;
+
+	/**
 	 * Adds a limit clause to the query, correctly handling row explosion from
 	 * many-joins.
 	 *
@@ -2468,6 +2510,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				assertNever(collection);
 			}
 		}
+	}
+
+	where(...args: any[]): any {
+		return this.modify((qb) => (qb.where as any)(...args));
 	}
 
 	limit(limit: LimitOrOffset): any {
