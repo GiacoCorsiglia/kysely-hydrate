@@ -88,10 +88,10 @@ test("extras: multiple extras on same QuerySet", async () => {
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.extras({
-			first: (row) => "first",
+			first: (_) => "first",
 		})
 		.extras({
-			second: (row) => "second",
+			second: (_) => "second",
 		})
 		.execute();
 

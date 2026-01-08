@@ -24,11 +24,9 @@ test("mixed: multiple innerJoinOne on same QuerySet", async () => {
 		.innerJoinOne(
 			"primaryPost",
 			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "in", [1, 3, 4]), // Exactly one post per user
+				init(
+					(eb) =>
+						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
@@ -71,11 +69,9 @@ test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns
 		.innerJoinOne(
 			"primaryPost",
 			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "in", [1, 3, 4]), // Exactly one post per user
+				init(
+					(eb) =>
+						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
@@ -136,11 +132,9 @@ test("mixed: leftJoinOne and innerJoinOne together", async () => {
 		.innerJoinOne(
 			"primaryPost",
 			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "in", [1, 3, 4]), // Exactly one post per user
+				init(
+					(eb) =>
+						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
@@ -193,39 +187,6 @@ test("mixed: multiple innerJoinMany on same QuerySet with cartesian product", as
 		)
 		.where("posts.id", "<=", 2)
 		.execute();
-
-	const raw = [
-		{
-			id: 1,
-			title: "Post 1",
-			user_id: 2,
-			comments$$id: 1,
-			comments$$content: "Comment 1 on post 1",
-			comments$$post_id: 1,
-			users$$id: 2,
-			users$$username: "bob",
-		},
-		{
-			id: 1,
-			title: "Post 1",
-			user_id: 2,
-			comments$$id: 2,
-			comments$$content: "Comment 2 on post 1",
-			comments$$post_id: 1,
-			users$$id: 2,
-			users$$username: "bob",
-		},
-		{
-			id: 2,
-			title: "Post 2",
-			user_id: 2,
-			comments$$id: 3,
-			comments$$content: "Comment 3 on post 2",
-			comments$$post_id: 2,
-			users$$id: 2,
-			users$$username: "bob",
-		},
-	];
 
 	// Verify basic structure
 	assert.strictEqual(posts.length, 2);
@@ -418,7 +379,7 @@ test("mixed: leftJoinOne and leftJoinMany together", async () => {
 });
 
 test("mixed: executeCount with multiple joins counts unique base records", async () => {
-	const count = await querySet(db)
+	const qs = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
@@ -432,11 +393,16 @@ test("mixed: executeCount with multiple joins counts unique base records", async
 			"posts.user_id",
 			"user.id",
 		)
-		.where("users.id", "<=", 4)
-		.executeCount(Number);
+		.where("users.id", "<=", 4);
+
+	const count = await qs.executeCount(Number);
+	const users = await qs.execute();
+	const joinedRows = await qs.toJoinedQuery().execute();
 
 	// Users with profiles AND posts: bob (2), carol (3), dave (4)
 	assert.strictEqual(count, 3);
+	assert.strictEqual(users.length, 3); // Verify count matches execute
+	assert.ok(joinedRows.length > users.length); // Row explosion from many-join
 });
 
 test("mixed: pagination with multiple joins uses nested subquery", async () => {
@@ -480,11 +446,9 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one
 		.innerJoinOne(
 			"primaryPost",
 			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "in", [1, 3, 4]), // Exactly one post per user
+				init(
+					(eb) =>
+						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
