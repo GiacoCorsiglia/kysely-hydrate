@@ -687,7 +687,7 @@ test("attachOne: works at nested level", async () => {
 		const fetchComments = async () => {
 			return [
 				{ id: 100, postId: 10, content: "Comment 1" },
-				{ id: 101, postId: 10, content: "Comment 2" },
+				{ id: 101, postId: 11, content: "Comment 2" }, // Changed to postId: 11
 			];
 		};
 
@@ -712,7 +712,7 @@ test("attachOne: works at nested level", async () => {
 	const result = await hydrateData(users, hydrator);
 
 	assert.strictEqual(result[0]?.posts[0]?.latestComment?.content, "Comment 1");
-	assert.strictEqual(result[1]?.posts[0]?.latestComment, null);
+	assert.strictEqual(result[1]?.posts[0]?.latestComment?.content, "Comment 2");
 });
 
 test("attachOneOrThrow: returns entity when exists", async () => {

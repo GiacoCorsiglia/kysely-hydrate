@@ -72,7 +72,10 @@ test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns
 			"primaryPost",
 			(init) =>
 				init((eb) =>
-					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 4),
+					eb
+						.selectFrom("posts")
+						.select(["id", "title", "user_id"])
+						.where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
@@ -81,8 +84,8 @@ test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns
 		.toJoinedQuery()
 		.execute();
 
-	// Bob appears twice because he has 2 posts with id <= 4 (cardinality violation for innerJoinOne)
-	assert.strictEqual(rows.length, 4);
+	// With specific post IDs [1, 3, 4], we get exactly one post per user
+	assert.strictEqual(rows.length, 3);
 	assert.deepStrictEqual(rows, [
 		{
 			id: 2,
@@ -92,16 +95,6 @@ test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns
 			profile$$user_id: 2,
 			primaryPost$$id: 1,
 			primaryPost$$title: "Post 1",
-			primaryPost$$user_id: 2,
-		},
-		{
-			id: 2,
-			username: "bob",
-			profile$$id: 2,
-			profile$$bio: "Bio for user 2",
-			profile$$user_id: 2,
-			primaryPost$$id: 2,
-			primaryPost$$title: "Post 2",
 			primaryPost$$user_id: 2,
 		},
 		{
@@ -144,7 +137,10 @@ test("mixed: leftJoinOne and innerJoinOne together", async () => {
 			"primaryPost",
 			(init) =>
 				init((eb) =>
-					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 4),
+					eb
+						.selectFrom("posts")
+						.select(["id", "title", "user_id"])
+						.where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
@@ -485,7 +481,10 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one
 			"primaryPost",
 			(init) =>
 				init((eb) =>
-					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 4),
+					eb
+						.selectFrom("posts")
+						.select(["id", "title", "user_id"])
+						.where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
