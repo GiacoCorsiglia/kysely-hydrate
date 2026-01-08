@@ -342,8 +342,8 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 * ```ts
 	 * const users = await querySet(db)
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
-	 *   .leftJoinMany("posts", (eb, init) =>
-	 *     init("post", eb.selectFrom("posts").select(["id", "title"])),
+	 *   .leftJoinMany("posts", (init) =>
+	 *     init("post", eb => eb.selectFrom("posts").select(["id", "title"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1004,7 +1004,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne(
 	 *     "author",  // Key (alias) - extra argument compared to Kysely
-	 *     (eb, init) => init("user", eb.selectFrom("users").select(["id", "username"])),
+	 *     (init) => init("user", eb => eb.selectFrom("users").select(["id", "username"])),
 	 *     "user.id",    // Same as Kysely's k1
 	 *     "post.userId", // Same as Kysely's k2
 	 *   )
@@ -1024,7 +1024,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne(
 	 *     "author",
-	 *     (eb, init) => init("user", eb.selectFrom("users").select(["id", "username"])),
+	 *     (init) => init("user", eb =>eb.selectFrom("users").select(["id", "username"])),
 	 *     (join) => join.onRef("user.id", "=", "post.userId"),  // Same as Kysely's callback
 	 *   )
 	 *   .execute();
@@ -1080,7 +1080,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "posts",
-	 *     (eb, init) => init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (init) => init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1100,7 +1100,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "publishedPosts",
-	 *     (eb, init) =>
+	 *     (init) =>
 	 *       init("post", (eb) =>
 	 *         eb
 	 *           .selectFrom("posts")
@@ -1156,7 +1156,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinOne(
 	 *     "profile",
-	 *     (eb, init) => init("profile", eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+	 *     (init) => init("profile", eb => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
 	 *     "profile.userId",
 	 *     "user.id",
 	 *   )
@@ -1210,7 +1210,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .leftJoinOneOrThrow(
 	 *     "author",
-	 *     (eb, init) => init("user", eb.selectFrom("users").select(["id", "username"])),
+	 *     (init) => init("user", eb => eb.selectFrom("users").select(["id", "username"])),
 	 *     "user.id",
 	 *     "post.userId",
 	 *   )
@@ -1264,7 +1264,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (eb, init) => init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (init) => init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1284,12 +1284,12 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (eb, init) =>
-	 *       init("post", eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *     (init) =>
+	 *       init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"]))
 	 *         .leftJoinMany(
 	 *           "comments",
-	 *           (eb, init) =>
-	 *             init("comment", eb.selectFrom("comments").select(["id", "content", "postId"])),
+	 *           (init) =>
+	 *             init("comment", eb => eb.selectFrom("comments").select(["id", "content", "postId"])),
 	 *           "comment.postId",
 	 *           "post.id",
 	 *         ),
@@ -1562,8 +1562,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (eb, init) =>
-	 *       init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (init) =>
+	 *       init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1581,8 +1581,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "posts",
-	 *     (eb, init) =>
-	 *       init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (init) =>
+	 *       init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -2753,7 +2753,7 @@ class QuerySetCreator<DB> {
  * ```ts
  * const users = await querySet(db)
  *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
- *   .leftJoinMany("posts", (eb, init) =>
+ *   .leftJoinMany("posts", (init) =>
  *     init("post", (eb) => eb.selectFrom("posts").select(["id", "userId", "title"])),
  *     "post.userId",
  *     "user.id",
