@@ -2176,13 +2176,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		key: string,
 		collection: JoinCollection,
 	): AnySelectQueryBuilder {
+		const nestedPrefix = makePrefix(prefix, key);
 		// Add the join to the parent query.
 		// This cast to a single method helps TypeScript follow the overloads.
-		const from = collection.querySet.#toQuery(makePrefix(prefix, key)).as(key);
+		const from = collection.querySet.#toQuery(nestedPrefix).as(key);
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
 		// Add the (prefixed) selections from the subquery to the parent query.
-		const hoistedSelections = hoistAndPrefixSelections(prefix, from);
+		const hoistedSelections = hoistAndPrefixSelections(nestedPrefix, from);
 		qb = qb.select(hoistedSelections);
 
 		return qb;
