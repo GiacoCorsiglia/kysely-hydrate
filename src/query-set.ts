@@ -1,3 +1,21 @@
+/**
+ * @module query-set
+ *
+ * This module provides the `querySet` API for building queries with nested joins
+ * and automatic hydration of flat SQL results into nested objects.
+ *
+ * Key features:
+ * - Nested subqueries for better SQL isolation
+ * - Correct pagination with row explosion from many-joins
+ * - Type-safe nested joins with cardinality constraints
+ * - Flexible hydration with field transformations and computed values
+ * - Support for both SQL joins and non-SQL attaches
+ *
+ * @see {@link querySet} - Main entry point
+ * @see {@link QuerySet} - Query builder interface
+ * @see {@link MappedQuerySet} - Mapped query builder interface
+ */
+
 import * as k from "kysely";
 
 import { db } from "./__tests__/postgres.ts";
@@ -172,6 +190,16 @@ type OpaqueExistsQueryBuilder = OpaqueSelectQueryBuilder<{ exists: k.SqlBool }>;
  */
 type LimitOrOffset = number | bigint | null;
 
+/**
+ * A query set that has been mapped with a transformation function.
+ *
+ * After calling `.map()`, only query execution and further mapping are available.
+ * You cannot continue to add joins, modify hydration, or otherwise change the
+ * shape of the query's input, since that would affect the input expected by the
+ * transformation function.
+ *
+ * @template T - The query set's type parameters.
+ */
 interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationNodeSource {
 	/**
 	 * This property exists for complex type reasons and will never be set.
@@ -183,78 +211,232 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	readonly _generics: T | undefined;
 
 	/**
-	 * Returns the base query that this query set was initialized with (plus any
-	 * modifications).
+	 * Returns the base query that this query set was initialized with, plus any
+	 * modifications made via `.modify()`.
+	 *
+	 * This does not include any joins or hydration configuration.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const qs = querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .modify((qb) => qb.where("isActive", "=", true));
+	 *
+	 * const baseQuery = qs.toBaseQuery();
+	 * // SELECT id, username FROM users WHERE isActive = true
+	 * ```
 	 */
 	toBaseQuery(): SelectQueryBuilderFor<T["BaseQuery"]>;
 
 	/**
-	 * Returns the base query with joins applied for each collection.
+	 * Returns the base query with all joins applied as nested subqueries.
 	 *
-	 * @warning This query is subject to "row explosion." If a base record has
-	 * multiple related child records, the base record will appear multiple times
-	 * in the result set.  As a result, LIMIT and OFFSET will not be applied.
+	 * **Warning:** This query is subject to "row explosion." If a base record has
+	 * multiple related child records via many-joins, the base record will appear
+	 * multiple times in the result set. Limit and offset are not applied to this
+	 * query.
+	 *
+	 * **Example SQL structure:**
+	 * ```sql
+	 * SELECT *
+	 * FROM (
+	 *   SELECT * FROM users WHERE isActive = true
+	 * ) AS user
+	 * LEFT JOIN (
+	 *   SELECT * FROM posts
+	 * ) AS posts ON posts.userId = user.id
+	 * ```
 	 */
 	toJoinedQuery(): SelectQueryBuilderFor<T["JoinedQuery"]>;
 
 	/**
-	 * Returns the {@link k.SelectQueryBuilder} that will be run if this query set
-	 * is executed.
+	 * Returns the query that will actually be executed when you call `.execute()`.
+	 *
+	 * This query handles row explosion by using nested subqueries internally when
+	 * necessary for correct pagination. The exact SQL structure is an implementation
+	 * detail and may change.
+	 *
+	 * **Note:** The result is still subject to row explosion (you'll get duplicate
+	 * base records if there are many-joins), but pagination (limit/offset) will be
+	 * applied correctly to unique base records.
+	 *
+	 * **Example SQL structure (may vary):**
+	 * ```sql
+	 * SELECT *
+	 * FROM (
+	 *   -- Cardinality-one subquery with limit/offset applied
+	 *   SELECT * FROM (...) AS user
+	 *   LEFT JOIN (...) AS profile ON ...
+	 *   LIMIT 10
+	 * ) AS user
+	 * -- Cardinality-many joins applied afterward
+	 * LEFT JOIN (...) AS posts ON posts.userId = user.id
+	 * ```
 	 */
 	toQuery(): OpaqueSelectQueryBuilder<T["JoinedQuery"]["O"]>;
 
 	/**
-	 * Returns a query that counts all the unique records in the base table,
-	 * accounting for filtering from inner joins.  This query ignores pagination
-	 * (offset and limit are removed).
+	 * Returns a query that counts unique base records when executed.
+	 *
+	 * This correctly handles filtering many-joins (like `innerJoinMany`) by
+	 * converting them to `WHERE EXISTS` clauses. Pagination (limit/offset) is
+	 * ignored.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const count = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinMany("posts", ...)
+	 *   .limit(10)
+	 *   .toCountQuery()
+	 *   .executeTakeFirstOrThrow();
+	 *
+	 * console.log(count.count); // Total count, ignoring the limit
+	 * ```
+	 *
+	 * **Example SQL structure (may vary):**
+	 * ```sql
+	 * SELECT COUNT(*) AS count
+	 * FROM (
+	 *   SELECT DISTINCT user.id
+	 *   FROM (...) AS user
+	 *   WHERE EXISTS (SELECT 1 FROM (...) AS posts WHERE ...)
+	 * )
+	 * ```
 	 */
 	toCountQuery(): OpaqueCountQueryBuilder;
 
 	/**
-	 * Returns a query that returns a boolean indicating whether the query will
-	 * return any results.  This query ignores pagination (offset and limit are
-	 * removed).
+	 * Returns a query that checks whether any base records exist when executed.
+	 *
+	 * Like `toCountQuery`, this correctly handles filtering many-joins and ignores
+	 * pagination.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const existsQuery = querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .modify((qb) => qb.where("username", "=", "alice"))
+	 *   .toExistsQuery();
+	 *
+	 * const { exists } = await existsQuery.executeTakeFirstOrThrow();
+	 * console.log(exists); // true or false
+	 * ```
+	 *
+	 * **Example SQL structure:**
+	 * ```sql
+	 * SELECT EXISTS (
+	 *   SELECT * FROM (...) AS user WHERE username = 'alice'
+	 * ) AS exists
+	 * ```
 	 */
 	toExistsQuery(): OpaqueExistsQueryBuilder;
 
 	/**
-	 * Executes the query and returns an array of rows.
+	 * Executes the query and returns an array of hydrated rows.
 	 *
-	 * Also see the {@link executeTakeFirst} and {@link executeTakeFirstOrThrow}
-	 * methods.
+	 * Nested collections (from joins and attaches) will be hydrated into nested
+	 * objects and arrays according to the configuration.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany("posts", (eb, init) =>
+	 *     init("post", eb.selectFrom("posts").select(["id", "title"])),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   .execute();
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   posts: Array<{ id: number; title: string }>;
+	 * }>;
+	 * ```
+	 *
+	 * Also see {@link executeTakeFirst} and {@link executeTakeFirstOrThrow}.
 	 */
 	execute(): Promise<TOutput<T>[]>;
 
 	/**
-	 * Executes the query and returns the first result or undefined if the query
-	 * returned no result.
+	 * Executes the query and returns the first hydrated result, or `undefined` if
+	 * the query returned no results.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const user = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .modify((qb) => qb.where("id", "=", 1))
+	 *   .executeTakeFirst();
+	 *
+	 * if (user) {
+	 *   console.log(user.username);
+	 * }
+	 * ```
 	 */
 	executeTakeFirst(): Promise<TOutput<T> | undefined>;
 
 	/**
-	 * Executes the query and returns the first result or throws if the query
-	 * returned no result.
+	 * Executes the query and returns the first hydrated result, or throws if the
+	 * query returned no results.
 	 *
-	 * By default an instance of {@link k.NoResultError} is thrown, but you can
-	 * provide a custom error class, or callback to throw a different error.
+	 * By default, throws a {@link k.NoResultError}, but you can provide a custom
+	 * error constructor or factory function.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const user = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .modify((qb) => qb.where("id", "=", 1))
+	 *   .executeTakeFirstOrThrow();
+	 *
+	 * console.log(user.username); // Safe - will throw if not found
+	 * ```
+	 *
+	 * **Example with custom error:**
+	 * ```ts
+	 * class UserNotFoundError extends Error {
+	 *   constructor() {
+	 *     super("User not found");
+	 *   }
+	 * }
+	 *
+	 * const user = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .modify((qb) => qb.where("id", "=", 1))
+	 *   .executeTakeFirstOrThrow(UserNotFoundError);
+	 * ```
 	 */
 	executeTakeFirstOrThrow(
 		errorConstructor?: k.NoResultErrorConstructor | ((node: k.QueryNode) => Error),
 	): Promise<TOutput<T>>;
 
 	/**
-	 * Executes a modified version the query and returns the number of root entity
-	 * rows.
+	 * Executes the count query (via {@link toCountQuery}) and returns the count of
+	 * unique base records.
 	 *
-	 * By default, Kysely's count function returns `string | number | bigint`.
-	 * You can provide a transformation function to convert the count to a number
-	 * or bigint.
+	 * By default, Kysely's count function returns `string | number | bigint`. You
+	 * can provide a transformation function to convert the count to your preferred
+	 * numeric type.
 	 *
-	 * @example
+	 * **Example:**
 	 * ```ts
-	 * query.executeCountAll(); // string | number | bigint
-	 * query.executeCountAll(Number); // number
-	 * query.executeCountAll(BigInt); // bigint
+	 * const count = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .executeCount(); // string | number | bigint
+	 * ```
+	 *
+	 * **Example with type conversion:**
+	 * ```ts
+	 * const count = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .executeCount(Number); // number
+	 *
+	 * const bigCount = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .executeCount(BigInt); // bigint
 	 * ```
 	 */
 	executeCount(toBigInt: (count: string | number | bigint) => bigint): Promise<bigint>;
@@ -263,8 +445,22 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	executeCount(): Promise<string | number | bigint>;
 
 	/**
-	 * Executes a modified version of the query and returns a boolean indicating
-	 * whether the query will return any results.
+	 * Executes the exists query (via {@link toExistsQuery}) and returns a boolean
+	 * indicating whether any base records exist.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const hasActiveUsers = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id"]))
+	 *   .modify((qb) => qb.where("isActive", "=", true))
+	 *   .executeExists();
+	 *
+	 * if (hasActiveUsers) {
+	 *   console.log("We have active users!");
+	 * } else {
+	 *   console.log("Hmm, better do another fundraising round...")
+	 * }
+	 * ```
 	 */
 	executeExists(): Promise<boolean>;
 
@@ -272,31 +468,84 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	 * Applies a transformation function to the hydrated output.
 	 *
 	 * This is a terminal operation: after calling `.map()`, only `.map()` and
-	 * `.execute()` are available; you cannot continue to chain methods that
-	 * affect the input type expected by the transformation function.
+	 * execution methods are available. You cannot continue to add joins, modify
+	 * hydration, or otherwise change the query's input shape, since that would
+	 * affect the input expected by the transformation function.
 	 *
-	 * Use this for more complex transformations, such as:
+	 * Use this for complex transformations such as:
 	 * - Hydrating into class instances
 	 * - Asserting discriminated union types
 	 * - Complex data reshaping
 	 *
-	 * For simple field transformations, prefer `.fields()` or `.extras()`.
+	 * For simple field transformations, prefer `.mapFields()` or `.extras()`.
 	 *
-	 * @param transform - A function that transforms the hydrated output
-	 * @returns A MappedQuerySet with the transformation added
+	 * **Example - Hydrating into class instances:**
+	 * ```ts
+	 * class User {
+	 *   constructor(public id: number, public username: string) {}
+	 *   greet() {
+	 *     return `Hello, I'm ${this.username}`;
+	 *   }
+	 * }
+	 *
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .map((row) => new User(row.id, row.username))
+	 *   .execute();
+	 *
+	 * console.log(users[0].greet()); // "Hello, I'm alice"
+	 * ```
+	 *
+	 * **Example - Asserting discriminated unions:**
+	 * ```ts
+	 * type AdminUser = { id: number; role: "admin"; permissions: string[] };
+	 * type RegularUser = { id: number; role: "user" };
+	 * type User = AdminUser | RegularUser;
+	 *
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "role", "permissions"]))
+	 *   .map((row): User => {
+	 *     if (row.role === "admin") {
+	 *       return { id: row.id, role: "admin", permissions: row.permissions ?? [] };
+	 *     }
+	 *     return { id: row.id, role: "user" };
+	 *   })
+	 *   .execute();
+	 * ```
+	 *
+	 * @param transform - A function that transforms each hydrated row.
+	 * @returns A MappedQuerySet with the transformation applied.
 	 */
 	map<NewHydratedOutput>(
 		transform: (row: TOutput<T>) => NewHydratedOutput,
 	): MappedQuerySet<TMapped<T, NewHydratedOutput>>;
 
 	/**
-	 * Allows you to modify the base select query.  Useful for adding `where`
-	 * clauses.  Adding additional SELECTs here is forbidden.
+	 * Allows you to modify the base select query. Useful for adding `WHERE`
+	 * clauses, additional selections, or other query modifications.
 	 *
-	 * For example:
+	 * **Note:** You cannot use `.clearSelect()` or otherwise remove selections
+	 * that were already made, but you can add additional columns.
 	 *
+	 * **Example - Adding WHERE clauses:**
 	 * ```ts
-	 * querySet(db).init(...).modify((qb) => qb.where("isActive", "=", "true"))
+	 * const activeUsers = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username", "isActive"]))
+	 *   .modify((qb) => qb.where("isActive", "=", true))
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example - Adding additional selections:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .modify((qb) =>
+	 *     qb
+	 *       .leftJoin("posts", "posts.userId", "users.id")
+	 *       .select((eb) => eb.fn.count("posts.id").as("postCount"))
+	 *       .groupBy("users.id")
+	 *   )
+	 *   .execute();
 	 * ```
 	 */
 	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
@@ -306,42 +555,98 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
 	): MappedQuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
 
 	/**
-	 * Adds a limit clause to the query in a way that handles row explosion.
+	 * Adds a limit clause to the query, correctly handling row explosion from
+	 * many-joins.
 	 *
-	 * Works similarly to {@link k.SelectQueryBuilder.limit()}.
+	 * The limit is applied to unique base records, not to the exploded rows. The
+	 * query builder will use nested subqueries internally to ensure correct
+	 * pagination.
 	 *
-	 * NOTE: We don't support {@link k.ValueExpression} here because the limit
-	 * might be applied to different queries depending on the types of joins you
-	 * have added to this query set.
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany("posts", ...)
+	 *   .limit(10)
+	 *   .execute();
+	 * // Returns 10 users, each with their full array of posts
+	 * ```
+	 *
+	 * **Note:** Unlike Kysely's `.limit()`, this does not accept
+	 * {@link k.ValueExpression} because the limit may be applied to different
+	 * internal queries depending on your join structure.
 	 */
 	limit(limit: LimitOrOffset): this;
 
 	/**
 	 * Clears the limit clause from the query.
 	 *
-	 * Works similarly to {@link k.SelectQueryBuilder.clearLimit()}.
+	 * **Example:**
+	 * ```ts
+	 * const query = querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .limit(10);
+	 *
+	 * const allUsers = await query.clearLimit().execute();
+	 * ```
 	 */
 	clearLimit(): this;
 
 	/**
-	 * Adds a limit clause to the query in a way that handles row explosion.
+	 * Adds an offset clause to the query, correctly handling row explosion from
+	 * many-joins.
 	 *
-	 * Works similarly to {@link k.SelectQueryBuilder.offset()}.
+	 * The offset is applied to unique base records, not to the exploded rows. The
+	 * query builder will use nested subqueries internally to ensure correct
+	 * pagination.
 	 *
-	 * NOTE: We don't support {@link k.ValueExpression} here because the offset
-	 * might be applied to different queries depending on the types of joins you
-	 * have added to this query set.
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany("posts", ...)
+	 *   .offset(20)
+	 *   .limit(10)
+	 *   .execute();
+	 * // Returns users 21-30, each with their full array of posts
+	 * ```
+	 *
+	 * **Note:** Unlike Kysely's `.offset()`, this does not accept
+	 * {@link k.ValueExpression} because the offset may be applied to different
+	 * internal queries depending on your join structure.
 	 */
 	offset(offset: LimitOrOffset): this;
 
 	/**
 	 * Clears the offset clause from the query.
 	 *
-	 * Works similarly to {@link k.SelectQueryBuilder.clearOffset()}.
+	 * **Example:**
+	 * ```ts
+	 * const query = querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .offset(20)
+	 *   .limit(10);
+	 *
+	 * const firstTen = await query.clearOffset().execute();
+	 * ```
 	 */
 	clearOffset(): this;
 }
 
+/**
+ * A query set that supports nested joins and automatic hydration.
+ *
+ * QuerySet extends {@link MappedQuerySet} with additional methods for:
+ * - Configuring hydration (extras, mapFields, omit, with)
+ * - Adding nested collections via joins (innerJoinOne, leftJoinMany, etc.)
+ * - Adding nested collections via attaches (attachOne, attachMany, etc.)
+ * - Modifying nested collections
+ *
+ * After calling `.map()`, the query set becomes a {@link MappedQuerySet} and
+ * these additional methods are no longer available.
+ *
+ * @template T - The query set's type parameters.
+ */
 interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	////////////////////////////////////////////////////////////
 	// Hydration
@@ -361,7 +666,13 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
 	 *   })
 	 *   .execute();
-	 * // Result: [{ id: 1, firstName: "Alice", lastName: "Smith", fullName: "Alice Smith" }]
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   firstName: string;
+	 *   lastName: string;
+	 *   fullName: string;
+	 * }>;
 	 * ```
 	 *
 	 * @param extras - An object mapping field names to functions that compute
@@ -385,7 +696,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *     name: (name) => name.toUpperCase(),
 	 *   })
 	 *   .execute();
-	 * // Result: [{ id: 1, name: "ALICE" }]
+	 * // ⬇
+	 * type Result = Array<{ id: number; name: string }>;
 	 * ```
 	 *
 	 * @param mappings - An object mapping field names to transformation
@@ -410,7 +722,8 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   })
 	 *   .omit(["firstName", "lastName"])
 	 *   .execute();
-	 * // Result: [{ id: 1, fullName: "Alice Smith" }]
+	 * // ⬇
+	 * type Result = Array<{ id: number; fullName: string }>;
 	 * ```
 	 *
 	 * @param keys - Field names to omit from the output.
@@ -439,7 +752,13 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name", "users.email"]))
 	 *   .with(extraFields)
 	 *   .execute();
-	 * // Result: [{ id: 1, name: "Alice", email: "...", displayName: "Alice <...>" }]
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   name: string;
+	 *   email: string;
+	 *   displayName: string;
+	 * }>;
 	 * ```
 	 *
 	 * @param hydrator - The Hydrator to extend with.
@@ -460,21 +779,64 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 
 	/**
 	 * Attaches data from an external source (not via SQL joins) as a nested
-	 * array.  The `fetchFn` is called exactly once per query execution with all
+	 * array. The `fetchFn` is called exactly once per query execution with all
 	 * parent rows to avoid N+1 queries.
 	 *
-	 * **Example:**
+	 * The `fetchFn` can return either:
+	 * - An `Iterable<T>` (e.g., array, Set)
+	 * - An `Executable` (an object with `execute(): Promise<Iterable<T>>`)
+	 *
+	 * When returning an Executable (like a QuerySet or SelectQueryBuilder), do NOT
+	 * call `.execute()` - execution happens automatically when the main query runs.
+	 * This allows the query to be modified via `.modify()` before execution.
+	 *
+	 * **Example with QuerySet (recommended):**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init((eb) => eb.selectFrom("users").select(["users.id", "users.name"]))
+	 *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "posts",
-	 *     async (userRows) => {
+	 *     (userRows) => {
+	 *       const userIds = userRows.map((u) => u.id);
+	 *       return querySet(db).init(
+	 *         "post",
+	 *         (eb) => eb.selectFrom("posts")
+	 *           .select(["id", "userId", "title"])
+	 *           .where("userId", "in", userIds)
+	 *       );
+	 *     },
+	 *     { matchChild: "userId" },
+	 *   )
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example with SelectQueryBuilder:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+	 *   .attachMany(
+	 *     "posts",
+	 *     (userRows) => {
 	 *       const userIds = userRows.map((u) => u.id);
 	 *       return db.selectFrom("posts")
-	 *         .select(["posts.id", "posts.userId", "posts.title"])
-	 *         .where("posts.userId", "in", userIds)
-	 *         .execute();
+	 *         .select(["id", "userId", "title"])
+	 *         .where("userId", "in", userIds);
+	 *       // Note: No .execute() call - it's executed automatically
+	 *     },
+	 *     { matchChild: "userId" },
+	 *   )
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example with external API:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+	 *   .attachMany(
+	 *     "socialPosts",
+	 *     async (userRows) => {
+	 *       const userIds = userRows.map((u) => u.id);
+	 *       return fetchSocialPostsFromApi(userIds);
 	 *     },
 	 *     { matchChild: "userId" },
 	 *   )
@@ -483,7 +845,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * @param key - The key name for the array in the output.
 	 * @param fetchFn - A function that fetches the attached data. Called once
-	 * with all parent rows.
+	 * with all parent rows. Can return an Iterable or an Executable.
 	 * @param keys - Configuration for matching attached data to parents.
 	 * @returns A new QuerySet with the attached collection added.
 	 */
@@ -495,21 +857,49 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 
 	/**
 	 * Attaches data from an external source (not via SQL joins) as a single
-	 * nested object.  The object will be nullable. The `fetchFn` is called
+	 * nested object. The object will be nullable. The `fetchFn` is called
 	 * exactly once per query execution with all parent rows to avoid N+1 queries.
 	 *
-	 * **Example:**
+	 * The `fetchFn` can return either:
+	 * - An `Iterable<T>` (e.g., array, Set)
+	 * - An `Executable` (an object with `execute(): Promise<Iterable<T>>`)
+	 *
+	 * When returning an Executable (like a QuerySet or SelectQueryBuilder), do NOT
+	 * call `.execute()` - execution happens automatically when the main query runs.
+	 * This allows the query to be modified via `.modify()` before execution.
+	 *
+	 * **Example with QuerySet (recommended):**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init((eb) => eb.selectFrom("posts").select(["posts.id", "posts.title"]))
+	 *   .init("post", (eb) => eb.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .attachOne(
 	 *     "author",
-	 *     async (postRows) => {
+	 *     (postRows) => {
+	 *       const userIds = [...new Set(postRows.map((p) => p.userId))];
+	 *       return querySet(db).init(
+	 *         "user",
+	 *         (eb) => eb.selectFrom("users")
+	 *           .select(["id", "username"])
+	 *           .where("id", "in", userIds)
+	 *       );
+	 *     },
+	 *     { matchChild: "id", toParent: "userId" },
+	 *   )
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example with SelectQueryBuilder:**
+	 * ```ts
+	 * const posts = await querySet(db)
+	 *   .init("post", (eb) => eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .attachOne(
+	 *     "author",
+	 *     (postRows) => {
 	 *       const userIds = [...new Set(postRows.map((p) => p.userId))];
 	 *       return db.selectFrom("users")
-	 *         .select(["users.id", "users.name"])
-	 *         .where("users.id", "in", userIds)
-	 *         .execute();
+	 *         .select(["id", "username"])
+	 *         .where("id", "in", userIds);
+	 *       // Note: No .execute() call - it's executed automatically
 	 *     },
 	 *     { matchChild: "id", toParent: "userId" },
 	 *   )
@@ -518,7 +908,7 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * @param key - The key name for the nested object in the output.
 	 * @param fetchFn - A function that fetches the attached data. Called once
-	 * with all parent rows.
+	 * with all parent rows. Can return an Iterable or an Executable.
 	 * @param keys - Configuration for matching attached data to parents.
 	 * @returns A new QuerySet with the attached object added.
 	 */
@@ -553,7 +943,68 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	//
 
 	/**
+	 * Adds an inner join that hydrates into a single nested object.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.innerJoin}, but with an additional first
+	 * argument (`key`) for the alias/key name, and requiring a QuerySet instead of a
+	 * table expression. The remaining arguments (join conditions or callback) work the
+	 * same as Kysely's `.innerJoin()`.
+	 *
+	 * The joined record is required (non-nullable) because it's an inner join.
+	 * If no matching record is found, the base record will be filtered out.
+	 *
+	 * The hydrator will also throw an error if it encounters more than one matching
+	 * record for a base record, since this violates the cardinality constraint.
+	 *
+	 * **Example with explicit join conditions:**
+	 * ```ts
+	 * const posts = await querySet(db)
+	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .innerJoinOne(
+	 *     "author",  // Key (alias) - extra argument compared to Kysely
+	 *     (eb, init) => init("user", eb.selectFrom("users").select(["id", "username"])),
+	 *     "user.id",    // Same as Kysely's k1
+	 *     "post.userId", // Same as Kysely's k2
+	 *   )
+	 *   .execute();
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   title: string;
+	 *   userId: number;
+	 *   author: { id: number; username: string };
+	 * }>;
+	 * ```
+	 *
+	 * **Example with callback:**
+	 * ```ts
+	 * const posts = await querySet(db)
+	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .innerJoinOne(
+	 *     "author",
+	 *     (eb, init) => init("user", eb.selectFrom("users").select(["id", "username"])),
+	 *     (join) => join.onRef("user.id", "=", "post.userId"),  // Same as Kysely's callback
+	 *   )
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example with pre-built query set:**
+	 * ```ts
+	 * const authorQuery = querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]));
+	 *
+	 * const posts = await querySet(db)
+	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .innerJoinOne("author", authorQuery, "user.id", "post.userId")
+	 *   .execute();
+	 * ```
+	 *
+	 * @param key - The key name for the nested object in the output (alias).
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the inner join added.
 	 */
 	innerJoinOne<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -566,22 +1017,67 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithInnerJoinOne<T, Key, TNested>;
-	// Standard version
-	// TODO: These need a key by, which means they need even more generics lol
-	// innerJoinOne<Key extends string, NestedRow>(
-	// 	key: Key,
-	// 	table: JoinTableExpression<T, NestedRow>,
-	// 	k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<NestedRow>>,
-	// 	k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<NestedRow>>,
-	// ): QuerySetWithInnerJoin<T, Key, NestedRow, NestedRow>;
-	// innerJoinOne<Key extends string, NestedRow>(
-	// 	key: Key,
-	// 	table: JoinTableExpression<T, NestedRow>,
-	// 	callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<NestedRow>>,
-	// ): QuerySetWithInnerJoin<T, Key, NestedRow, NestedRow>;
 
 	/**
+	 * Adds an inner join that hydrates into a nested array.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.innerJoin}, but with an additional first
+	 * argument (`key`) for the alias/key name, and requiring a QuerySet instead of a
+	 * table expression.
+	 *
+	 * This is a filtering join: base records without matching child records will be
+	 * excluded from the result set. The nested array will never be empty.
+	 *
+	 * **Note:** This causes row explosion in the SQL result. The query builder
+	 * handles this internally for pagination, but be aware of the performance
+	 * implications for large result sets.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinMany(
+	 *     "posts",
+	 *     (eb, init) => init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   .execute();
+	 * // Only users with posts are included
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   posts: Array<{ id: number; title: string; userId: number }>;
+	 * }>;
+	 * ```
+	 *
+	 * **Example with filtering in nested query:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinMany(
+	 *     "publishedPosts",
+	 *     (eb, init) =>
+	 *       init("post", (eb) =>
+	 *         eb
+	 *           .selectFrom("posts")
+	 *           .select(["id", "title", "userId"])
+	 *           .where("status", "=", "published")
+	 *       ),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   .execute();
+	 * // Only users with published posts are included
+	 * ```
+	 *
+	 * @param key - The key name for the nested array in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the inner join added.
 	 */
 	innerJoinMany<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -600,7 +1096,44 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	//
 
 	/**
+	 * Adds a left join that hydrates into a single nested object or null.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.leftJoin}, but with an additional first
+	 * argument (`key`) for the alias/key name, and requiring a QuerySet instead of a
+	 * table expression.
+	 *
+	 * Unlike {@link innerJoinOne}, base records without matching child records will
+	 * be included, with the nested object set to `null`.
+	 *
+	 * The hydrator will throw an error if it encounters more than one matching
+	 * record for a base record, since this violates the cardinality constraint.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinOne(
+	 *     "profile",
+	 *     (eb, init) => init("profile", eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+	 *     "profile.userId",
+	 *     "user.id",
+	 *   )
+	 *   .execute();
+	 * // All users included, with profile null if no profile exists
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   profile: { id: number; bio: string; userId: number } | null;
+	 * }>;
+	 * ```
+	 *
+	 * @param key - The key name for the nested object in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the left join added.
 	 */
 	leftJoinOne<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -615,7 +1148,47 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	): QuerySetWithLeftJoinOne<T, Key, TNested>;
 
 	/**
+	 * Adds a left join that hydrates into a single nested object, throwing if not found.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.leftJoin}, but with an additional first
+	 * argument (`key`) for the alias/key name, and requiring a QuerySet instead of a
+	 * table expression.
+	 *
+	 * Like {@link leftJoinOne}, but throws an error during hydration if the nested
+	 * object is missing. This is useful when you logically expect the relationship to
+	 * exist but want to use a left join in SQL (e.g., to avoid filtering out base
+	 * records prematurely).
+	 *
+	 * The hydrator will also throw an error if it encounters more than one matching
+	 * record for a base record, since this violates the cardinality constraint.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const posts = await querySet(db)
+	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .leftJoinOneOrThrow(
+	 *     "author",
+	 *     (eb, init) => init("user", eb.selectFrom("users").select(["id", "username"])),
+	 *     "user.id",
+	 *     "post.userId",
+	 *   )
+	 *   .execute();
+	 * // Throws if any post is missing an author
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   title: string;
+	 *   userId: number;
+	 *   author: { id: number; username: string };
+	 * }>;
+	 * ```
+	 *
+	 * @param key - The key name for the nested object in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the left join added.
 	 */
 	leftJoinOneOrThrow<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -630,7 +1203,78 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	): QuerySetWithLeftJoinOneOrThrow<T, Key, TNested>;
 
 	/**
+	 * Adds a left join that hydrates into a nested array.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.leftJoin}, but with an additional first
+	 * argument (`key`) for the alias/key name, and requiring a QuerySet instead of a
+	 * table expression.
+	 *
+	 * All base records are included, even if they have no matching child records. If
+	 * there are no matches, the nested array will be empty.
+	 *
+	 * **Note:** This causes row explosion in the SQL result. The query builder
+	 * handles this internally for pagination, but be aware of the performance
+	 * implications for large result sets.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany(
+	 *     "posts",
+	 *     (eb, init) => init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   .execute();
+	 * // All users included, with empty array if no posts
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   posts: Array<{ id: number; title: string; userId: number }>;
+	 * }>;
+	 * ```
+	 *
+	 * **Example with nested joins:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany(
+	 *     "posts",
+	 *     (eb, init) =>
+	 *       init("post", eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *         .leftJoinMany(
+	 *           "comments",
+	 *           (eb, init) =>
+	 *             init("comment", eb.selectFrom("comments").select(["id", "content", "postId"])),
+	 *           "comment.postId",
+	 *           "post.id",
+	 *         ),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   .execute();
+	 * // Users with posts, with comments nested in each post
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   posts: Array<{
+	 *     id: number;
+	 *     title: string;
+	 *     userId: number;
+	 *     comments: Array<{ id: number; content: string; postId: number }>;
+	 *   }>;
+	 * }>;
+	 * ```
+	 *
+	 * @param key - The key name for the nested array in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the left join added.
 	 */
 	leftJoinMany<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -649,7 +1293,18 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	//
 
 	/**
+	 * Adds a cross join that hydrates into a nested array.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.crossJoin}, but with an additional first
+	 * argument (`key`) for the alias/key name, and requiring a QuerySet instead of a
+	 * table expression.
+	 *
+	 * A cross join produces the Cartesian product of the base and nested query sets.
+	 * This is a filtering join like {@link innerJoinMany}.
+	 *
+	 * @param key - The key name for the nested array in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @returns A new QuerySet with the cross join added.
 	 */
 	crossJoinMany<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -661,7 +1316,21 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	//
 
 	/**
+	 * Adds an inner lateral join that hydrates into a single nested object.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.innerJoinLateral}, but with an additional
+	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
+	 * of a table expression.
+	 *
+	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Works like {@link innerJoinOne} but with `INNER JOIN LATERAL` in SQL.
+	 *
+	 * @param key - The key name for the nested object in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the inner lateral join added.
 	 */
 	innerJoinLateralOne<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -676,7 +1345,21 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	): QuerySetWithInnerJoinOne<T, Key, TNested>;
 
 	/**
+	 * Adds an inner lateral join that hydrates into a nested array.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.innerJoinLateral}, but with an additional
+	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
+	 * of a table expression.
+	 *
+	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Works like {@link innerJoinMany} but with `INNER JOIN LATERAL` in SQL.
+	 *
+	 * @param key - The key name for the nested array in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the inner lateral join added.
 	 */
 	innerJoinLateralMany<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -695,7 +1378,21 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	//
 
 	/**
+	 * Adds a left lateral join that hydrates into a single nested object or null.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.leftJoinLateral}, but with an additional
+	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
+	 * of a table expression.
+	 *
+	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Works like {@link leftJoinOne} but with `LEFT JOIN LATERAL` in SQL.
+	 *
+	 * @param key - The key name for the nested object in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the left lateral join added.
 	 */
 	leftJoinLateralOne<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -710,7 +1407,21 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	): QuerySetWithLeftJoinOne<T, Key, TNested>;
 
 	/**
+	 * Adds a left lateral join that hydrates into a single nested object, throwing if not found.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.leftJoinLateral}, but with an additional
+	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
+	 * of a table expression.
+	 *
+	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Works like {@link leftJoinOneOrThrow} but with `LEFT JOIN LATERAL` in SQL.
+	 *
+	 * @param key - The key name for the nested object in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the left lateral join added.
 	 */
 	leftJoinLateralOneOrThrow<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -725,7 +1436,21 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	): QuerySetWithLeftJoinOneOrThrow<T, Key, TNested>;
 
 	/**
+	 * Adds a left lateral join that hydrates into a nested array.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.leftJoinLateral}, but with an additional
+	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
+	 * of a table expression.
+	 *
+	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Works like {@link leftJoinMany} but with `LEFT JOIN LATERAL` in SQL.
+	 *
+	 * @param key - The key name for the nested array in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @param k1 - First join reference (when using simple syntax).
+	 * @param k2 - Second join reference (when using simple syntax).
+	 * @param callback - Join callback (when using callback syntax).
+	 * @returns A new QuerySet with the left lateral join added.
 	 */
 	leftJoinLateralMany<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -744,7 +1469,18 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	//
 
 	/**
+	 * Adds a cross lateral join that hydrates into a nested array.
 	 *
+	 * Similar to {@link k.SelectQueryBuilder.crossJoinLateral}, but with an additional
+	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
+	 * of a table expression.
+	 *
+	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Works like {@link crossJoinMany} but with `CROSS JOIN LATERAL` in SQL.
+	 *
+	 * @param key - The key name for the nested array in the output.
+	 * @param querySet - A nested query set or factory function.
+	 * @returns A new QuerySet with the cross lateral join added.
 	 */
 	crossJoinLateralMany<Key extends string, TNested extends TQuerySet>(
 		key: Key,
@@ -756,13 +1492,169 @@ interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
 	////////////////////////////////////////////////////////////
 
 	/**
-	 * When called with one argument, allows you to modify the base select query.
-	 * You can add where clauses, and can also select additional columns.  You
-	 * cannot, however, select *fewer* columns (e.g., with `.clearSelect()`)---you
-	 * can only add to the selection
+	 * Modifies the base query or a nested collection.
 	 *
-	 * When called with two arguments, allows you to modify a nested collection
-	 * (either a join or attach).
+	 * **One-argument form:** Modifies the base query. You can add WHERE clauses,
+	 * additional SELECT columns, joins, etc. You cannot remove columns with
+	 * `.clearSelect()` - only additions are allowed.
+	 *
+	 * **Two-argument form:** Modifies a nested collection by key.
+	 * - For join collections: receives the nested QuerySet and must return a
+	 *   modified QuerySet.
+	 * - For attach collections: receives the result of the fetch function and
+	 *   must return a modified result.  The modifier composes with the existing
+	 *   fetch function.
+	 *
+	 * **Example - Modifying base query:**
+	 * ```ts
+	 * const activeUsers = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany("posts", ...)
+	 *   .modify((qb) => qb.where("isActive", "=", true))
+	 *   .execute();
+	 * ```
+	 *
+	 * **Example - Modifying a joined QuerySet with filtering:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany(
+	 *     "posts",
+	 *     (eb, init) =>
+	 *       init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   // Add a WHERE clause to the posts subquery
+	 *   .modify("posts", (postsQuerySet) =>
+	 *     postsQuerySet.modify((qb) => qb.where("status", "=", "published"))
+	 *   )
+	 *   .execute();
+	 * // All users included, with only their published posts
+	 * ```
+	 *
+	 * **Example - Adding nested attaches to a joined QuerySet:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinMany(
+	 *     "posts",
+	 *     (eb, init) =>
+	 *       init("post", eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     "post.userId",
+	 *     "user.id",
+	 *   )
+	 *   // Enhance the posts collection by attaching additional data
+	 *   .modify("posts", (postsQuerySet) =>
+	 *     postsQuerySet.attachOne(
+	 *       "metadata",
+	 *       (postRows) => {
+	 *         const postIds = postRows.map((p) => p.id);
+	 *         return querySet(db).init("metadata", (eb) =>
+	 *           eb.selectFrom("post_metadata")
+	 *             .select(["postId", "viewCount", "likeCount"])
+	 *             .where("postId", "in", postIds)
+	 *         );
+	 *       },
+	 *       { matchChild: "postId" },
+	 *     )
+	 *   )
+	 *   .execute();
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   posts: Array<{
+	 *     id: number;
+	 *     title: string;
+	 *     userId: number;
+	 *     metadata: { postId: number; viewCount: number; likeCount: number } | null;
+	 *   }>;
+	 * }>;
+	 * ```
+	 *
+	 * **Example - Modifying an attach collection (QuerySet):**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .attachMany(
+	 *     "posts",
+	 *     (userRows) => {
+	 *       const userIds = userRows.map((u) => u.id);
+	 *       return querySet(db).init("post", (eb) =>
+	 *         eb.selectFrom("posts")
+	 *           .select(["id", "title", "userId"])
+	 *           .where("userId", "in", userIds)
+	 *       );
+	 *     },
+	 *     { matchChild: "userId" },
+	 *   )
+	 *   // Add additional filtering to the posts query
+	 *   .modify("posts", (postsQuerySet) =>
+	 *     postsQuerySet.modify((qb) => qb.where("status", "=", "published"))
+	 *   )
+	 *   .execute();
+	 * // All users included, with only their published posts
+	 * ```
+	 *
+	 * **Example - Modifying an attach collection (SelectQueryBuilder):**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .attachMany(
+	 *     "posts",
+	 *     (userRows) => {
+	 *       const userIds = userRows.map((u) => u.id);
+	 *       return db.selectFrom("posts")
+	 *         .select(["id", "title", "userId"])
+	 *         .where("userId", "in", userIds);
+	 *     },
+	 *     { matchChild: "userId" },
+	 *   )
+	 *   // Add additional filtering to the query
+	 *   .modify("posts", (qb) => qb.where("status", "=", "published"))
+	 *   .execute();
+	 * // All users included, with only their published posts
+	 * ```
+	 *
+	 * **Example - Transforming an external API attach collection:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .attachMany(
+	 *     "socialPosts",
+	 *     async (userRows) => {
+	 *       const userIds = userRows.map((u) => u.id);
+	 *       return fetchPostsFromApi(userIds);
+	 *     },
+	 *     { matchChild: "userId" },
+	 *   )
+	 *   // Transform the API response by awaiting and mapping
+	 *   .modify("socialPosts", async (fetchedPostsPromise) =>
+	 *     (await fetchedPostsPromise).map((p) => ({
+	 *       ...p,
+	 *       upperTitle: p.title.toUpperCase(),
+	 *       titleLength: p.title.length,
+	 *     }))
+	 *   )
+	 *   .execute();
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   username: string;
+	 *   socialPosts: Array<{
+	 *     id: number;
+	 *     title: string;
+	 *     userId: number;
+	 *     upperTitle: string;
+	 *     titleLength: number;
+	 *   }>;
+	 * }>;
+	 * ```
+	 *
+	 * @param keyOrModifier - Collection key (string) or modifier function.
+	 * @param modifier - Modifier function (when first param is a key).
+	 * @returns A new QuerySet with the modification applied.
 	 */
 	// Modify base query.
 	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
@@ -1539,7 +2431,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	): any {
 		if (typeof keyOrModifier === "function") {
 			// It's safe to immediately apply modifications to the base query because
-			// it is scoped within its own subselect.  The types capture this.
+			// it is scoped within its own subquery.  The types capture this.
 			return this.#clone({
 				baseQuery: keyOrModifier(this.#props.baseQuery),
 			});
@@ -1685,6 +2577,11 @@ interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO, KeyByToKeys<KB>>;
 }
 
+/**
+ * Factory for creating query sets. Obtained by calling {@link querySet}.
+ *
+ * @template DB - The database schema type.
+ */
 class QuerySetCreator<DB> {
 	#db: k.Kysely<DB>;
 
@@ -1692,7 +2589,57 @@ class QuerySetCreator<DB> {
 		this.#db = db;
 	}
 
-	// Builder overloads.
+	/**
+	 * Initializes a new query set with a base query and alias.
+	 *
+	 * The alias is required and will be used to reference columns from the base
+	 * query in the generated SQL, including for any nested joins you add. You
+	 * must provide either a Kysely query builder or a factory function that
+	 * receives an expression builder and returns a query.
+	 *
+	 * By default, the query set will use `"id"` as the key to uniquely identify
+	 * rows.  You can override this by passing a `keyBy` parameter (and must do so
+	 * if your selected row does not have an `id` column).
+	 *
+	 * **Example with query builder:**
+	 * ```ts
+	 * querySet(db).init(
+	 *   "user",
+	 *   db.selectFrom("users").select(["id", "username", "email"])
+	 * )
+	 * ```
+	 *
+	 * **Example with factory function:**
+	 * ```ts
+	 * querySet(db).init(
+	 *   "user",
+	 *   (eb) => eb.selectFrom("users").select(["id", "username", "email"])
+	 * )
+	 * ```
+	 *
+	 * **Example with custom keyBy:**
+	 * ```ts
+	 * querySet(db).init(
+	 *   "session",
+	 *   db.selectFrom("sessions").select(["sessionId", "userId"]),
+	 *   "sessionId" // Use sessionId instead of id
+	 * )
+	 * ```
+	 *
+	 * **Example with composite key:**
+	 * ```ts
+	 * querySet(db).init(
+	 *   "userRole",
+	 *   db.selectFrom("user_roles").select(["userId", "roleId"]),
+	 *   ["userId", "roleId"]
+	 * )
+	 * ```
+	 *
+	 * @param alias - The alias for the base query (used in generated SQL).
+	 * @param query - A Kysely query builder or factory function.
+	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
+	 * @returns A new QuerySet.
+	 */
 	init<
 		Alias extends string,
 		BaseDB,
@@ -1749,6 +2696,35 @@ class QuerySetCreator<DB> {
 	}
 }
 
+/**
+ * Creates a new {@link QuerySetCreator} for building query sets with nested joins
+ * and automatic hydration of flat SQL results into nested objects.
+ *
+ * Query sets use nested subqueries to provide better SQL isolation and enable
+ * correct pagination even with joined collections.
+ *
+ * **Example:**
+ * ```ts
+ * const users = await querySet(db)
+ *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
+ *   .leftJoinMany("posts", (eb, init) =>
+ *     init("post", (eb) => eb.selectFrom("posts").select(["id", "userId", "title"])),
+ *     "post.userId",
+ *     "user.id",
+ *   )
+ *   .execute();
+ * // ⬇
+ * type Result = Array<{
+ *   id: number;
+ *   username: string;
+ *   email: string;
+ *   posts: Array<{ id: number; userId: number; title: string }>;
+ * }>;
+ * ```
+ *
+ * @param db - A Kysely database instance.
+ * @returns A QuerySetCreator for building query sets.
+ */
 export function querySet<DB>(db: k.Kysely<DB>): QuerySetCreator<DB> {
 	return new QuerySetCreator(db);
 }
