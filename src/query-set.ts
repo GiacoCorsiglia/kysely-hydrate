@@ -2208,7 +2208,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#applyOrderBy(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
-		// TODO
+		const { baseAlias, keyBy } = this.#props;
+
+		// TODO: this.#props.orderBy.
+
+		// Always order by the key(s); as tie breakers if nothing else.
+		if (typeof keyBy === "string") {
+			qb = qb.orderBy(`${baseAlias}.${keyBy}`, "asc");
+		} else {
+			for (const key of keyBy) {
+				qb = qb.orderBy(`${baseAlias}.${key}`, "asc");
+			}
+		}
+
 		return qb;
 	}
 
@@ -2290,7 +2302,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return this.toJoinedQuery();
 		}
 
-		const cardinalityOneQuery = this.#toCardinalityOneQuery(prefix);
+		let cardinalityOneQuery = this.#toCardinalityOneQuery(prefix);
+
+		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
+		// Ordering in the subquery only matters if there is a limit or offset.
+		if (limit || offset) {
+			cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery);
+		}
 
 		let qb = db.selectFrom(cardinalityOneQuery.as(baseAlias));
 
@@ -2302,8 +2320,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		// Re-apply ordering since the order from the subquery is not guaranteed to
-		// be preserved.
-		qb = this.#applyOrderBy(qb);
+		// be preserved.  This doesn't matter if we have a prefix because it means
+		// we're in a subquery already.
+		if (!prefix) {
+			qb = this.#applyOrderBy(qb);
+		}
 
 		return qb;
 	}
@@ -2344,8 +2365,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.
-			// @ts-expect-error - EnableAutoInclusion is a hidden parameter.
-			EnableAutoInclusion,
+			{
+				[EnableAutoInclusion]: true,
+				sort: "nested",
+			},
 		);
 	}
 
@@ -2792,7 +2815,7 @@ class QuerySetCreator<DB> {
 			baseAlias: alias,
 			baseQuery,
 			keyBy: keyBy,
-			hydrator: createHydrator(),
+			hydrator: createHydrator().orderByKeys(),
 			joinCollections: new Map(),
 			attachCollections: new Map(),
 			limit: null,

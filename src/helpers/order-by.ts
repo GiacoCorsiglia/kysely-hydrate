@@ -1,5 +1,5 @@
-interface OrderBy<T = Record<string, unknown>> {
-	key: keyof T;
+export interface OrderBy<T = Record<string, unknown>> {
+	key: keyof T | ((input: T) => unknown);
 	direction: "asc" | "desc";
 	nulls: "first" | "last";
 }
@@ -50,11 +50,21 @@ export function sqlCompare(a: unknown, b: unknown): number {
 	return String(a) < String(b) ? -1 : 1;
 }
 
-export function makeOrderByComparator<T extends object>(orderings: readonly OrderBy<T>[]) {
+const defaultGetter = <T>(obj: T, key: keyof T | ((input: T) => unknown)) => {
+	if (typeof key === "function") {
+		return key(obj);
+	}
+	return (obj as any)[key];
+};
+
+export function makeOrderByComparator<T>(
+	orderings: readonly OrderBy<T>[],
+	getValue: (obj: T, key: keyof T | ((input: T) => unknown)) => unknown = defaultGetter,
+) {
 	return (lhs: T, rhs: T): number => {
 		for (const { key, direction, nulls } of orderings) {
-			const a = lhs[key];
-			const b = rhs[key];
+			const a = getValue(lhs, key);
+			const b = getValue(rhs, key);
 
 			const aNull = isNil(a);
 			const bNull = isNil(b);

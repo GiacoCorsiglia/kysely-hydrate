@@ -1798,8 +1798,7 @@ class HydratedQueryBuilderImpl implements AnyHydratedQueryBuilder {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.
-			// @ts-expect-error - EnableAutoInclusion is a hidden parameter.
-			EnableAutoInclusion,
+			{ [EnableAutoInclusion]: true },
 		);
 	}
 

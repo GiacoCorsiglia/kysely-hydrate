@@ -284,4 +284,48 @@ describe("makeOrderByComparator", () => {
 		assert.equal(rows[0]!.id, 2);
 		assert.equal(rows[1]!.id, 1);
 	});
+
+	it("should support ordering by computed values using functions", () => {
+		const rows: TestRow[] = [
+			{ id: 1, name: "Alice", age: 25, active: true },
+			{ id: 2, name: "bob", age: 30, active: false },
+			{ id: 3, name: "Charlie", age: 35, active: true },
+		];
+
+		// Sort by lowercase name for case-insensitive ordering
+		const comparator = makeOrderByComparator<TestRow>([
+			{ key: (row) => row.name.toLowerCase(), direction: "asc", nulls: "first" },
+		]);
+
+		rows.sort(comparator);
+
+		// Should be sorted case-insensitively: Alice, bob, Charlie
+		assert.equal(rows[0]!.name, "Alice");
+		assert.equal(rows[1]!.name, "bob");
+		assert.equal(rows[2]!.name, "Charlie");
+	});
+
+	it("should support mixing field keys and functions in orderings", () => {
+		const rows: TestRow[] = [
+			{ id: 1, name: "Alice", age: 25, active: true },
+			{ id: 2, name: "alice", age: 30, active: false },
+			{ id: 3, name: "Bob", age: 25, active: true },
+		];
+
+		const comparator = makeOrderByComparator<TestRow>([
+			{ key: "age", direction: "asc", nulls: "first" },
+			{ key: (row) => row.name.toLowerCase(), direction: "asc", nulls: "first" },
+		]);
+
+		rows.sort(comparator);
+
+		// Age 25: Alice, Bob (sorted by lowercase name)
+		assert.equal(rows[0]!.age, 25);
+		assert.equal(rows[0]!.name, "Alice");
+		assert.equal(rows[1]!.age, 25);
+		assert.equal(rows[1]!.name, "Bob");
+		// Age 30: alice
+		assert.equal(rows[2]!.age, 30);
+		assert.equal(rows[2]!.name, "alice");
+	});
 });
