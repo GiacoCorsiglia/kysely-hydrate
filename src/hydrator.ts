@@ -1,4 +1,8 @@
-import { ExpectedOneItemError, KeyByMismatchError } from "./helpers/errors.ts";
+import {
+	CardinalityViolationError,
+	ExpectedOneItemError,
+	KeyByMismatchError,
+} from "./helpers/errors.ts";
 import { makeOrderByComparator, type OrderBy } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
@@ -749,18 +753,25 @@ interface HydrationContext {
 }
 
 /**
- * Helper to compute whether a collections map has 2+ "many" collections.
+ * Helper to compute whether a collections map has 2+ "many" collections OR
+ * a mix of "many" + "one"/"oneOrThrow" collections.
+ *
+ * When this is true, ALL sibling collections (including "one") need deduplication
+ * because the "many" collection causes row explosion that affects all siblings.
  */
 function hasMultipleManyCollections(collections?: CollectionsMap): boolean {
 	if (!collections) return false;
 	let manyCount = 0;
+	let oneCount = 0;
 	for (const collection of collections.values()) {
 		if (collection.mode === "many") {
 			manyCount++;
-			if (manyCount >= 2) return true;
+		} else {
+			oneCount++;
 		}
 	}
-	return false;
+	// Set flag if: (1) 2+ many collections, OR (2) 1+ many + 1+ one
+	return manyCount >= 2 || (manyCount >= 1 && oneCount >= 1);
 }
 
 /**
@@ -1349,6 +1360,13 @@ function applyCollectionMode<T>(
 ): T[] | T | null {
 	if (mode === "many") {
 		return outputs ?? [];
+	}
+
+	const count = outputs?.length ?? 0;
+
+	// For "one" and "oneOrThrow" modes, validate cardinality after deduplication
+	if (count > 1) {
+		throw new CardinalityViolationError(key, count);
 	}
 
 	const first = outputs?.[0];

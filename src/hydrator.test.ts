@@ -614,14 +614,13 @@ test("attachMany: works with composite keys", async () => {
 	assert.strictEqual(result[1]?.related.length, 1);
 });
 
-test("attachOne: returns first match or null", async () => {
+test("attachOne: returns single match or null", async () => {
 	const usersWithMatch: User[] = [{ id: 1, name: "Alice" }];
 	const usersWithoutMatch: User[] = [{ id: 999, name: "NoMatch" }];
 
 	const fetchPosts = async () => {
 		return [
-			{ id: 10, userId: 1, title: "First" },
-			{ id: 11, userId: 1, title: "Second" },
+			{ id: 10, userId: 1, title: "Only Post" }, // Single post for user 1
 		];
 	};
 
@@ -633,11 +632,36 @@ test("attachOne: returns first match or null", async () => {
 	assert.deepStrictEqual(withMatch[0]?.latestPost, {
 		id: 10,
 		userId: 1,
-		title: "First",
+		title: "Only Post",
 	});
 
 	const withoutMatch = await hydrateData(usersWithoutMatch, hydrator);
 	assert.strictEqual(withoutMatch[0]?.latestPost, null);
+});
+
+test("attachOne: throws on cardinality violation", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const fetchPosts = async () => {
+		return [
+			{ id: 10, userId: 1, title: "First" },
+			{ id: 11, userId: 1, title: "Second" }, // Multiple posts for same user
+		];
+	};
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachOne("latestPost", fetchPosts, { matchChild: "userId" });
+
+	await assert.rejects(
+		async () => await hydrateData(users, hydrator),
+		(err: Error) => {
+			assert.ok(err.message.includes("Expected exactly one item"));
+			assert.ok(err.message.includes("latestPost"));
+			assert.ok(err.message.includes("but got 2"));
+			return true;
+		},
+	);
 });
 
 test("attachOne: works at nested level", async () => {

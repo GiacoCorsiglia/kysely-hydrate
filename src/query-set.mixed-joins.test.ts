@@ -11,6 +11,8 @@ import { querySet } from "./query-set.ts";
 // Multiple cardinality-one joins
 
 test("mixed: multiple innerJoinOne on same QuerySet", async () => {
+	// Use specific post IDs to ensure exactly one post per user
+	// User 2 (bob) -> post 1, User 3 (carol) -> post 3, User 4 (dave) -> post 4
 	const users = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -23,7 +25,10 @@ test("mixed: multiple innerJoinOne on same QuerySet", async () => {
 			"primaryPost",
 			(init) =>
 				init((eb) =>
-					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 4),
+					eb
+						.selectFrom("posts")
+						.select(["id", "title", "user_id"])
+						.where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
 			"primaryPost.user_id",
 			"user.id",
