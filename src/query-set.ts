@@ -54,7 +54,7 @@ import {
 // Generics.
 ////////////////////////////////////////////////////////////
 
-interface TQuery<DB = any, TB extends keyof DB = any> {
+interface TQuery<in out DB = any, in out TB extends keyof DB = any> {
 	DB: DB;
 	TB: TB;
 	O: any;
@@ -133,7 +133,7 @@ type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
 type TInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
 type TOutput<T extends TQuerySet> = k.Simplify<T["HydratedOutput"]>;
 
-interface TMapped<T extends TQuerySet, Output> {
+interface TMapped<in out T extends TQuerySet, in out Output> {
 	DB: T["DB"];
 	IsMapped: true;
 	BaseAlias: T["BaseAlias"];
@@ -143,7 +143,7 @@ interface TMapped<T extends TQuerySet, Output> {
 	HydratedOutput: Output;
 }
 
-interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
+interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQuery> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	BaseAlias: T["BaseAlias"];
@@ -159,7 +159,7 @@ interface TWithBaseQuery<T extends TQuerySet, BaseQuery extends TQuery> {
 	HydratedOutput: Extend<BaseQuery["O"], TOutput<T>>;
 }
 
-interface TWithOutput<T extends TQuerySet, Output> {
+interface TWithOutput<in out T extends TQuerySet, in out Output> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	BaseAlias: T["BaseAlias"];
@@ -169,7 +169,7 @@ interface TWithOutput<T extends TQuerySet, Output> {
 	HydratedOutput: Output;
 }
 
-interface TWithExtendedOutput<T extends TQuerySet, Output> {
+interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	BaseAlias: T["BaseAlias"];
@@ -179,7 +179,7 @@ interface TWithExtendedOutput<T extends TQuerySet, Output> {
 	HydratedOutput: Extend<TOutput<T>, Output>;
 }
 
-interface InitialJoinedQuery<DB, BaseAlias extends string, BaseO> {
+interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out BaseO> {
 	// The base query is wrapped in an alias in `SELECT $alias.* FROM (...) as
 	// $alias`, so it's treated as another table.
 	DB: DB & { [K in BaseAlias]: BaseO };
@@ -230,7 +230,7 @@ type LimitOrOffset = number | bigint | null;
  *
  * @template T - The query set's type parameters.
  */
-interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationNodeSource {
+interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.OperationNodeSource {
 	/**
 	 * This property exists for complex type reasons and will never be set.
 	 *
@@ -720,7 +720,7 @@ interface MappedQuerySet<T extends TQuerySet> extends k.Compilable, k.OperationN
  *
  * @template T - The query set's type parameters.
  */
-interface QuerySet<T extends TQuerySet> extends MappedQuerySet<T> {
+interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	////////////////////////////////////////////////////////////
 	// Hydration
 	////////////////////////////////////////////////////////////
@@ -1791,11 +1791,11 @@ interface ModifyCollectionReturnMap<
 ////////////////////////////////////////////////////////////
 
 interface TQuerySetWithAttach<
-	T extends TQuerySet,
-	Type extends TAttachType,
-	FetchFnReturn extends SomeFetchFnReturn,
-	Key extends string,
-	AttachedOutput,
+	in out T extends TQuerySet,
+	in out Type extends TAttachType,
+	in out FetchFnReturn extends SomeFetchFnReturn,
+	in out Key extends string,
+	in out AttachedOutput,
 > {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
@@ -1811,9 +1811,9 @@ interface TQuerySetWithAttach<
 }
 
 interface QuerySetWithAttachMany<
-	T extends TQuerySet,
-	Key extends string,
-	FetchFnReturn extends SomeFetchFnReturn,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out FetchFnReturn extends SomeFetchFnReturn,
 > extends QuerySet<
 	TQuerySetWithAttach<
 		T,
@@ -1825,9 +1825,9 @@ interface QuerySetWithAttachMany<
 > {}
 
 interface QuerySetWithAttachOne<
-	T extends TQuerySet,
-	Key extends string,
-	FetchFnReturn extends SomeFetchFnReturn,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out FetchFnReturn extends SomeFetchFnReturn,
 > extends QuerySet<
 	TQuerySetWithAttach<
 		T,
@@ -1839,9 +1839,9 @@ interface QuerySetWithAttachOne<
 > {}
 
 interface QuerySetWithAttachOneOrThrow<
-	T extends TQuerySet,
-	Key extends string,
-	FetchFnReturn extends SomeFetchFnReturn,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out FetchFnReturn extends SomeFetchFnReturn,
 > extends QuerySet<
 	TQuerySetWithAttach<
 		T,
@@ -1928,11 +1928,11 @@ type ToJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends st
 >;
 
 type TQuerySetWithInnerJoin<
-	T extends TQuerySet,
-	Key extends string,
-	Type extends TJoinType,
-	TNested extends TQuerySet,
-	NestedHydratedRow,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out Type extends TJoinType,
+	in out TNested extends TQuerySet,
+	in out NestedHydratedRow,
 > = TQuerySetWithJoin<
 	T,
 	Key,
@@ -1948,11 +1948,11 @@ type TQuerySetWithInnerJoin<
 >;
 
 type TQuerySetWithLeftJoin<
-	T extends TQuerySet,
-	Key extends string,
-	Type extends TJoinType,
-	TNested extends TQuerySet,
-	NestedHydratedRow,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out Type extends TJoinType,
+	in out TNested extends TQuerySet,
+	in out NestedHydratedRow,
 > = TQuerySetWithJoin<
 	T,
 	Key,
@@ -1968,37 +1968,37 @@ type TQuerySetWithLeftJoin<
 >;
 
 interface QuerySetWithInnerJoinOne<
-	T extends TQuerySet,
-	Key extends string,
-	TNested extends TQuerySet,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out TNested extends TQuerySet,
 > extends QuerySet<TQuerySetWithInnerJoin<T, Key, "InnerJoinOne", TNested, TOutput<TNested>>> {}
 
 interface QuerySetWithInnerJoinMany<
-	T extends TQuerySet,
-	Key extends string,
-	TNested extends TQuerySet,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out TNested extends TQuerySet,
 > extends QuerySet<TQuerySetWithInnerJoin<T, Key, "InnerJoinMany", TNested, TOutput<TNested>[]>> {}
 
 interface QuerySetWithLeftJoinOne<
-	T extends TQuerySet,
-	Key extends string,
-	TNested extends TQuerySet,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out TNested extends TQuerySet,
 > extends QuerySet<
 	TQuerySetWithLeftJoin<T, Key, "LeftJoinOne", TNested, TOutput<TNested> | null>
 > {}
 
 interface QuerySetWithLeftJoinOneOrThrow<
-	T extends TQuerySet,
-	Key extends string,
-	TNested extends TQuerySet,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out TNested extends TQuerySet,
 > extends QuerySet<
 	TQuerySetWithLeftJoin<T, Key, "LeftJoinOneOrThrow", TNested, TOutput<TNested>>
 > {}
 
 interface QuerySetWithLeftJoinMany<
-	T extends TQuerySet,
-	Key extends string,
-	TNested extends TQuerySet,
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out TNested extends TQuerySet,
 > extends QuerySet<TQuerySetWithLeftJoin<T, Key, "LeftJoinMany", TNested, TOutput<TNested>[]>> {}
 
 ////////////////////////////////////////////////////////////
@@ -2692,7 +2692,7 @@ interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
  *
  * @template DB - The database schema type.
  */
-class QuerySetCreator<DB> {
+class QuerySetCreator<in out DB> {
 	#db: k.Kysely<DB>;
 
 	constructor(db: k.Kysely<DB>) {
