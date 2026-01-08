@@ -2139,9 +2139,6 @@ interface Comment {
 		)
 		.execute();
 
-	const a = (await result)[0]!.posts;
-	type b = typeof a;
-
 	expectTypeOf(result).resolves.toEqualTypeOf<
 		{
 			id: number;
