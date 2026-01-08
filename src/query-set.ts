@@ -2226,6 +2226,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		let qb = db.selectFrom(this.#aliasedBaseQuery);
 
+		const hoistedSelects = hoistAndPrefixSelections(prefix, this.#aliasedBaseQuery);
+		qb = qb.select(hoistedSelects);
+
 		for (const [key, collection] of joinCollections) {
 			if (this.#isCollectionCardinalityOne(collection)) {
 				qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
@@ -2255,9 +2258,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#toJoinedQuery(prefix: string): AnySelectQueryBuilder {
-		const { db, baseAlias, joinCollections } = this.#props;
+		const { db, joinCollections } = this.#props;
 
-		let qb = db.selectFrom(this.#aliasedBaseQuery).selectAll(baseAlias);
+		let qb = db.selectFrom(this.#aliasedBaseQuery);
+
+		const hoistedSelects = hoistAndPrefixSelections(prefix, this.#aliasedBaseQuery);
+		qb = qb.select(hoistedSelects);
 
 		for (const [key, collection] of joinCollections) {
 			qb = this.#addCollectionAsJoin(prefix, qb, key, collection);
@@ -2289,7 +2295,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		if (!limit && !offset) {
-			return this.toJoinedQuery();
+			return this.#toJoinedQuery(prefix);
 		}
 
 		let cardinalityOneQuery = this.#toCardinalityOneQuery(prefix);
@@ -2300,7 +2306,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery);
 		}
 
-		let qb = db.selectFrom(cardinalityOneQuery.as(baseAlias));
+		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
+		let qb = db.selectFrom(aliasedCardinalityOneQuery);
+
+		const hoistedSelects = hoistAndPrefixSelections(prefix, aliasedCardinalityOneQuery);
+		qb = qb.select(hoistedSelects);
 
 		// Add any cardinality-many joins.
 		for (const [key, collection] of joinCollections) {
