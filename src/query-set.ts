@@ -48,6 +48,7 @@ import {
 	asFullHydrator,
 	createHydrator,
 	DEFAULT_KEY_BY,
+	EnableAutoInclusion,
 } from "./hydrator.ts";
 
 ////////////////////////////////////////////////////////////
@@ -2139,7 +2140,6 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toBaseQuery(): AnySelectQueryBuilder {
-		// TODO: This might need to be passed through `db` somehow to become executable.
 		return this.#props.baseQuery;
 	}
 
@@ -2630,13 +2630,19 @@ type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseD
 type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
 type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
 
+// A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
+// such as with expressions.
+interface SelectCreator<DB, TB extends keyof DB> {
+	selectFrom: k.ExpressionBuilder<DB, TB>["selectFrom"];
+}
+
 type SelectQueryBuilderFactory<
 	DB,
 	TB extends keyof DB,
 	BaseDB,
 	BaseTB extends keyof BaseDB,
 	BaseO,
-> = (eb: k.ExpressionBuilder<DB, TB>) => k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+> = (eb: SelectCreator<DB, TB>) => k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
 
 type SelectQueryBuilderOrFactory<
 	DB,
@@ -2772,7 +2778,7 @@ class QuerySetCreator<DB> {
 		query: any,
 		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
 	): InitialQuerySet<DB, string, any, any, any, any> {
-		const baseQuery = typeof query === "function" ? query(k.expressionBuilder()) : query;
+		const baseQuery = typeof query === "function" ? query(this.#db) : query;
 
 		return new QuerySetImpl({
 			db: this.#db,
