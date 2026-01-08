@@ -262,6 +262,12 @@ interface HydratorProps<Input> {
 	 * Whether to append keyBy columns as the final ordering (tie-breaker).
 	 */
 	readonly orderByKeys: boolean;
+
+	/**
+	 * Cached flag indicating whether this hydrator has 2+ many-collections.
+	 * When true, all child hydrators will receive the hasSiblingManyCollections flag.
+	 */
+	readonly hasMultipleManyCollections: boolean;
 }
 
 /**
@@ -733,6 +739,28 @@ interface HydrationContext {
 	 * Maps: prefix -> fieldNames[]
 	 */
 	readonly autoFieldsCache: Map<string, string[]>;
+
+	/**
+	 * When true, indicates that an ancestor hydrator has multiple hasMany collections,
+	 * which means input rows may contain cartesian products that need deduplication.
+	 * This flag propagates down to all descendant hydrators.
+	 */
+	readonly hasSiblingManyCollections: boolean;
+}
+
+/**
+ * Helper to compute whether a collections map has 2+ "many" collections.
+ */
+function hasMultipleManyCollections(collections?: CollectionsMap): boolean {
+	if (!collections) return false;
+	let manyCount = 0;
+	for (const collection of collections.values()) {
+		if (collection.mode === "many") {
+			manyCount++;
+			if (manyCount >= 2) return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -792,11 +820,15 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const ownProps = this.#props;
 		const otherProps = otherImpl.#props;
+		const mergedCollections = new Map([
+			...(ownProps.collections ?? []),
+			...(otherProps.collections ?? []),
+		]);
 		return new HydratorImpl({
 			keyBy: otherProps.keyBy as any,
 			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
 			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
-			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
+			collections: mergedCollections,
 			attachedCollections: new Map([
 				...(ownProps.attachedCollections ?? []),
 				...(otherProps.attachedCollections ?? []),
@@ -804,6 +836,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			mapFns: [...(this.#props.mapFns ?? []), ...(otherProps.mapFns ?? [])],
 			orderings: [...(ownProps.orderings ?? []), ...(otherProps.orderings ?? [])],
 			orderByKeys: otherProps.orderByKeys ?? ownProps.orderByKeys,
+			hasMultipleManyCollections: hasMultipleManyCollections(mergedCollections),
 		});
 	}
 
@@ -836,14 +869,17 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	has(mode: CollectionMode, key: string, prefix: string, hydrator: any): any {
+		const newCollections = new Map(this.#props.collections).set(key, {
+			prefix,
+			mode,
+			hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
+		} satisfies Collection<any, any>);
+
 		return new HydratorImpl({
 			...this.#props,
 
-			collections: new Map(this.#props.collections).set(key, {
-				prefix,
-				mode,
-				hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
-			} satisfies Collection<any, any>),
+			collections: newCollections,
+			hasMultipleManyCollections: hasMultipleManyCollections(newCollections),
 		});
 	}
 
@@ -1053,11 +1089,20 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		if (collections) {
+			// Optimization: Use cached flag to determine if children need cartesian product handling.
+			// If we have 2+ "many" collections at this level, their children will receive input rows
+			// with cartesian products and must use groupByKey to deduplicate.
+			// This flag propagates down to all descendants through the context.
+			const childCtx =
+				this.#props.hasMultipleManyCollections && !ctx.hasSiblingManyCollections
+					? { ...ctx, hasSiblingManyCollections: true }
+					: ctx;
+
 			for (const [key, collection] of collections) {
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, inputRows);
+				const collectionOutputs = collection.hydrator.#hydrateMany(childCtx, childPrefix, inputRows);
 
 				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
@@ -1120,7 +1165,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// must correspond to a different top-level entity.  It's safe to do this
 		// even if there are attached collections, because those will be specified
 		// in their own data arrays.
-		if (!collections) {
+		// HOWEVER: If an ancestor has sibling many-collections, we MUST always group by keyBy
+		// to handle cartesian products inherited from ancestor levels.
+		if (!collections && !ctx.hasSiblingManyCollections) {
 			for (const input of sortedInputs) {
 				// Ensure that the input exists in this row.  This check is necessary
 				// here but unnecessary below because the groupByKey function will
@@ -1221,6 +1268,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			sortMode: opts.sort ?? "all",
 			attachedDataMap: new Map(),
 			autoFieldsCache: new Map(),
+			hasSiblingManyCollections: false, // Root level has no ancestors
 		};
 
 		// Fetch all attach collections upfront (this is the only async operation).
@@ -1258,6 +1306,7 @@ export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<
 	return new HydratorImpl({
 		keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string),
 		orderByKeys: false,
+		hasMultipleManyCollections: false, // No collections yet
 	});
 }
 

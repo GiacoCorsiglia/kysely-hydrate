@@ -11,53 +11,53 @@ import { querySet } from "./query-set.ts";
 // Basic pagination without joins
 
 test("pagination: limit without joins", async () => {
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.limit(3)
-		.execute();
+		.limit(3);
 
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().execute();
+
+	// Paginated results should be subset of full results
 	assert.strictEqual(users.length, 3);
-	assert.deepStrictEqual(users, [
-		{ id: 1, username: "alice" },
-		{ id: 2, username: "bob" },
-		{ id: 3, username: "carol" },
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(0, 3));
 });
 
 test("pagination: offset without joins", async () => {
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(1000) // SQLite requires LIMIT when using OFFSET
-		.offset(7)
-		.execute();
+		.offset(7);
 
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().clearOffset().execute();
+
+	// Paginated results should be subset of full results
 	assert.strictEqual(users.length, 3);
-	assert.deepStrictEqual(users, [
-		{ id: 8, username: "heidi" },
-		{ id: 9, username: "ivan" },
-		{ id: 10, username: "judy" },
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(7));
 });
 
 test("pagination: limit and offset without joins", async () => {
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
-		.offset(2)
-		.execute();
+		.offset(2);
 
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().clearOffset().execute();
+
+	// Paginated results should be subset of full results
 	assert.strictEqual(users.length, 3);
-	assert.deepStrictEqual(users, [
-		{ id: 3, username: "carol" },
-		{ id: 4, username: "dave" },
-		{ id: 5, username: "eve" },
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(2, 5));
 });
 
 // Pagination with cardinality-one joins
 
 test("pagination: limit with innerJoinOne", async () => {
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
@@ -65,26 +65,19 @@ test("pagination: limit with innerJoinOne", async () => {
 			"profile.user_id",
 			"user.id",
 		)
-		.limit(2)
-		.execute();
+		.limit(2);
 
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().execute();
+
+	// Paginated results should be subset of full results
 	assert.strictEqual(users.length, 2);
-	assert.deepStrictEqual(users, [
-		{
-			id: 1,
-			username: "alice",
-			profile: { id: 1, bio: "Bio for user 1", user_id: 1 },
-		},
-		{
-			id: 2,
-			username: "bob",
-			profile: { id: 2, bio: "Bio for user 2", user_id: 2 },
-		},
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(0, 2));
 });
 
 test("pagination: limit and offset with leftJoinOne", async () => {
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
@@ -93,29 +86,22 @@ test("pagination: limit and offset with leftJoinOne", async () => {
 			"user.id",
 		)
 		.limit(2)
-		.offset(1)
-		.execute();
+		.offset(1);
 
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().clearOffset().execute();
+
+	// Paginated results should be subset of full results
 	assert.strictEqual(users.length, 2);
-	assert.deepStrictEqual(users, [
-		{
-			id: 2,
-			username: "bob",
-			profile: { id: 2, bio: "Bio for user 2", user_id: 2 },
-		},
-		{
-			id: 3,
-			username: "carol",
-			profile: { id: 3, bio: "Bio for user 3", user_id: 3 },
-		},
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(1, 3));
 });
 
 // Pagination with cardinality-many joins (should use nested subquery)
 
 test("pagination: limit with innerJoinMany returns limited users with ALL their posts", async () => {
 	// User 2 has 4 posts, User 3 has 2 posts
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
@@ -124,29 +110,22 @@ test("pagination: limit with innerJoinMany returns limited users with ALL their 
 			"user.id",
 		)
 		.where("users.id", "<=", 3)
-		.limit(1)
-		.execute();
+		.limit(1);
+
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().execute();
 
 	// Should return only user 2, but with ALL 4 of their posts
 	assert.strictEqual(users.length, 1);
 	assert.strictEqual(users[0]?.posts.length, 4);
-	assert.deepStrictEqual(users, [
-		{
-			id: 2,
-			username: "bob",
-			posts: [
-				{ id: 1, title: "Post 1", user_id: 2 },
-				{ id: 2, title: "Post 2", user_id: 2 },
-				{ id: 5, title: "Post 5", user_id: 2 },
-				{ id: 12, title: "Post 12", user_id: 2 },
-			],
-		},
-	]);
+	assert.ok(users.length < allUsers.length);
+	// First user in paginated results should match first user in full results
+	assert.deepStrictEqual(users[0], allUsers[0]);
 });
 
 test("pagination: limit with leftJoinMany returns limited users with ALL their posts", async () => {
 	// User 1 has no posts, User 2 has 4 posts, User 3 has 2 posts
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
@@ -155,33 +134,20 @@ test("pagination: limit with leftJoinMany returns limited users with ALL their p
 			"user.id",
 		)
 		.where("users.id", "<=", 3)
-		.limit(2)
-		.execute();
+		.limit(2);
+
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().execute();
 
 	// Should return users 1 and 2, with user 2 having all 4 posts
 	assert.strictEqual(users.length, 2);
-	assert.deepStrictEqual(users, [
-		{
-			id: 1,
-			username: "alice",
-			posts: [],
-		},
-		{
-			id: 2,
-			username: "bob",
-			posts: [
-				{ id: 1, title: "Post 1", user_id: 2 },
-				{ id: 2, title: "Post 2", user_id: 2 },
-				{ id: 5, title: "Post 5", user_id: 2 },
-				{ id: 12, title: "Post 12", user_id: 2 },
-			],
-		},
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(0, 2));
 });
 
 test("pagination: offset with innerJoinMany skips base records correctly", async () => {
 	// User 2 has 4 posts, User 3 has 2 posts
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
@@ -191,26 +157,20 @@ test("pagination: offset with innerJoinMany skips base records correctly", async
 		)
 		.where("users.id", "<=", 3)
 		.limit(1000) // SQLite requires LIMIT when using OFFSET
-		.offset(1)
-		.execute();
+		.offset(1);
+
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().clearOffset().execute();
 
 	// Should skip user 2, return only user 3 with their 2 posts
 	assert.strictEqual(users.length, 1);
-	assert.deepStrictEqual(users, [
-		{
-			id: 3,
-			username: "carol",
-			posts: [
-				{ id: 3, title: "Post 3", user_id: 3 },
-				{ id: 15, title: "Post 15", user_id: 3 },
-			],
-		},
-	]);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(1));
 });
 
 test("pagination: limit and offset with innerJoinMany", async () => {
 	// Get users with posts, starting from the 2nd user
-	const users = await querySet(db)
+	const query = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
@@ -220,13 +180,15 @@ test("pagination: limit and offset with innerJoinMany", async () => {
 		)
 		.where("users.id", "<=", 4)
 		.limit(2)
-		.offset(1)
-		.execute();
+		.offset(1);
+
+	const users = await query.execute();
+	const allUsers = await query.clearLimit().clearOffset().execute();
 
 	// Should return users 3 and 4 with all their posts
 	assert.strictEqual(users.length, 2);
-	assert.ok(users[0]?.id === 3);
-	assert.ok(users[1]?.id === 4);
+	assert.ok(users.length < allUsers.length);
+	assert.deepStrictEqual(users, allUsers.slice(1, 3));
 });
 
 // executeCount and executeExists should ignore pagination

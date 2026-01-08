@@ -1628,6 +1628,100 @@ test("multiple nested levels: keyBy defaults to 'id' at all levels", async () =>
 });
 
 //
+// Sibling hasMany collections (multiple many-joins at same level)
+//
+
+test("hasMany: multiple sibling collections at same level", async () => {
+	interface PostWithCommentsAndUsers {
+		id: number;
+		title: string;
+		user_id: number;
+		comments$$id: number | null;
+		comments$$content: string | null;
+		comments$$post_id: number | null;
+		users$$id: number | null;
+		users$$username: string | null;
+	}
+
+	const raw: PostWithCommentsAndUsers[] = [
+		{
+			id: 1,
+			title: "Post 1",
+			user_id: 2,
+			comments$$id: 1,
+			comments$$content: "Comment 1 on post 1",
+			comments$$post_id: 1,
+			users$$id: 2,
+			users$$username: "bob",
+		},
+		{
+			id: 1,
+			title: "Post 1",
+			user_id: 2,
+			comments$$id: 2,
+			comments$$content: "Comment 2 on post 1",
+			comments$$post_id: 1,
+			users$$id: 2,
+			users$$username: "bob",
+		},
+		{
+			id: 2,
+			title: "Post 2",
+			user_id: 2,
+			comments$$id: 3,
+			comments$$content: "Comment 3 on post 2",
+			comments$$post_id: 2,
+			users$$id: 2,
+			users$$username: "bob",
+		},
+	];
+
+	const hydrator = createHydrator<PostWithCommentsAndUsers>("id")
+		.fields({ id: true, title: true, user_id: true })
+		.hasMany("comments", "comments$$", (h) =>
+			h("id").fields({ id: true, content: true, post_id: true }),
+		)
+		.hasMany("users", "users$$", (h) => h("id").fields({ id: true, username: true }));
+
+	const result = await hydrateData(raw, hydrator);
+
+	// Expected: 2 posts
+	// Post 1: 2 comments, 1 user (deduplicated by keyBy)
+	// Post 2: 1 comment, 1 user
+	assert.strictEqual(result.length, 2);
+	assert.strictEqual(result[0]?.comments.length, 2);
+	assert.strictEqual(result[1]?.comments.length, 1);
+
+	// IMPORTANT: Sibling hasMany collections should deduplicate based on keyBy
+	// The raw data has cartesian product (2 comments × 1 user = 2 rows with same user)
+	// But the hydrator should deduplicate the users array to only contain 1 bob entry
+	assert.strictEqual(result[0]?.users.length, 1); // Should be 1, not 2!
+	assert.strictEqual(result[1]?.users.length, 1);
+
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			title: "Post 1",
+			user_id: 2,
+			comments: [
+				{ id: 1, content: "Comment 1 on post 1", post_id: 1 },
+				{ id: 2, content: "Comment 2 on post 1", post_id: 1 },
+			],
+			users: [
+				{ id: 2, username: "bob" }, // Should only appear once (deduplicated)
+			],
+		},
+		{
+			id: 2,
+			title: "Post 2",
+			user_id: 2,
+			comments: [{ id: 3, content: "Comment 3 on post 2", post_id: 2 }],
+			users: [{ id: 2, username: "bob" }],
+		},
+	]);
+});
+
+//
 // map() transformations
 //
 
