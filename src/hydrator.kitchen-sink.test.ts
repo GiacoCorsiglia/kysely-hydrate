@@ -458,6 +458,4 @@ test("kitchen sink: mega hydration with deep nesting, cartesian products, and mi
 			],
 		},
 	]);
-
-	console.log("✅ Kitchen sink mega hydration passed!");
 });
