@@ -265,10 +265,155 @@ test("omit: in nested join", async () => {
 	]);
 });
 
-// with: Merge hydrator configuration
+// with: Merge hydrator configuration using createHydrator
 
-test("with: merge another hydrator configuration", async () => {
-	// Test that nested QuerySets can have their own extras and omit
+test("with: merges extras from hydrator", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	const extraFields = createHydrator<User>("id").extras({
+		displayName: (user) => `${user.username} <${user.email}>`,
+	});
+
+	const users = await querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.where("users.id", "=", 1)
+		.with(extraFields)
+		.execute();
+
+	assert.deepStrictEqual(users, [
+		{
+			id: 1,
+			username: "alice",
+			email: "alice@example.com",
+			displayName: "alice <alice@example.com>",
+		},
+	]);
+});
+
+test("with: merges mapFields from hydrator", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+	}
+
+	const upperCaseHydrator = createHydrator<User>("id").fields({
+		username: (username) => username.toUpperCase(),
+	});
+
+	const users = await querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.where("users.id", "=", 1)
+		.with(upperCaseHydrator)
+		.execute();
+
+	assert.deepStrictEqual(users, [{ id: 1, username: "ALICE" }]);
+});
+
+test("with: hydrator configuration takes precedence over existing", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+	}
+
+	const override = createHydrator<User>("id").fields({
+		username: (username) => username.toUpperCase(),
+	});
+
+	const users = await querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.where("users.id", "=", 1)
+		.mapFields({
+			username: (username) => username.toLowerCase(),
+		})
+		.with(override)
+		.execute();
+
+	// The hydrator passed to with() takes precedence
+	assert.deepStrictEqual(users, [{ id: 1, username: "ALICE" }]);
+});
+
+test("with: merges omit from hydrator", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface User {
+		id: number;
+		username: string;
+		email: string;
+	}
+
+	const withOmit = createHydrator<User>("id")
+		.extras({
+			displayName: (user) => `${user.username} <${user.email}>`,
+		})
+		.omit(["email"]);
+
+	const users = await querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.where("users.id", "=", 1)
+		.with(withOmit)
+		.execute();
+
+	assert.strictEqual(users.length, 1);
+	assert.strictEqual(users[0]?.id, 1);
+	assert.strictEqual(users[0]?.username, "alice");
+	assert.strictEqual(users[0]?.displayName, "alice <alice@example.com>");
+	assert.strictEqual("email" in users[0]!, false);
+});
+
+test("with: works in nested QuerySet", async () => {
+	const { createHydrator } = await import("./hydrator.ts");
+
+	interface Post {
+		id: number;
+		title: string;
+		user_id: number;
+	}
+
+	const postHydrator = createHydrator<Post>("id")
+		.extras({
+			titleUpper: (post) => post.title.toUpperCase(),
+		})
+		.omit(["user_id"]);
+
+	const users = await querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.where("users.id", "=", 2)
+		.innerJoinMany(
+			"posts",
+			(init) =>
+				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).with(postHydrator),
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+
+	assert.deepStrictEqual(users, [
+		{
+			id: 2,
+			username: "bob",
+			posts: [
+				{ id: 1, title: "Post 1", titleUpper: "POST 1" },
+				{ id: 2, title: "Post 2", titleUpper: "POST 2" },
+				{ id: 5, title: "Post 5", titleUpper: "POST 5" },
+				{ id: 12, title: "Post 12", titleUpper: "POST 12" },
+			],
+		},
+	]);
+});
+
+// Miscellaneous hydration configuration tests
+
+test("nested QuerySet with extras and omit", async () => {
 	const users = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -294,7 +439,7 @@ test("with: merge another hydrator configuration", async () => {
 	]);
 });
 
-test("with: later configuration takes precedence", async () => {
+test("multiple mapFields calls: later takes precedence for same field", async () => {
 	const users = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
