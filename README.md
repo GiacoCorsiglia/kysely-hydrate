@@ -122,11 +122,11 @@ type Result = Array<{
 - [Installation](#installation)
 - [Query sets](#query-sets)
   - [Keying and deduplication with `keyBy`](#keying-and-deduplication-with-keyby)
-  - [Joins and Hydration](#joins-and-hydration)
+  - [Joins and hydration](#joins-and-hydration)
   - [Modifying queries with `.modify()`](#modifying-queries-with-modify)
   - [Application-level joins with `.attach*()`](#application-level-joins-with-attach)
   - [Sorting with `.orderBy()`](#sorting-with-orderby)
-  - [Pagination and Aggregation](#pagination-and-aggregation)
+  - [Pagination and aggregation](#pagination-and-aggregation)
   - [Inspect the SQL](#inspecting-the-sql)
   - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
   - [Computed properties with `.extras()`](#computed-properties-with-extras)
@@ -214,7 +214,7 @@ querySet(db).init(
 );
 ```
 
-### Joins and Hydration
+### Joins and hydration
 
 Instead of "mapping" joins after they happen, Kysely Hydrate treats joins as structural definitions. When you add a join to a query set, you define both the SQL join and the shape of the output (object or array) simultaneously.
 
@@ -325,7 +325,7 @@ and column aliasing to ensure that your joins don't interfere with each other
 and that features like pagination work intuitively, even with complex nested
 data.
 
-##### Isolation and Prefixing
+##### Isolation and prefixing
 
 To hydrate nested objects from a flat result set, Kysely Hydrate automatically
 "hoists" selections from joined subqueries and renames them using a unique
@@ -366,7 +366,7 @@ INNER JOIN (
 The hydration layer receives rows like `{ id: 1, posts$$title: "..." }` and
 un-flattens them into `{ id: 1, posts: [{ title: "..." }] }`.
 
-##### Solving "Row Explosion" with Pagination
+##### Solving "row explosion" with pagination
 
 A common pain point in SQL is paginating the "one" in a one-to-many
 relationship. If you `LIMIT 10` on a query joining Users to Posts, you might
@@ -386,7 +386,7 @@ const result = await querySet(db)
   .execute();
 ```
 
-###### Generated SQL Strategy:
+###### Generated SQL strategy:
 
 1 **Inner Query**: Selects the parent rows, applying the `LIMIT 10` here. This
 inner query will include "cardinality-one" joins (`*One()`), so you can use them
@@ -751,11 +751,12 @@ advanced sorting capabilities for nested collections, you must use the
 - `orderByKeys(false)`: Disables the automatic unique key sort entirely (not
   recommended if using pagination).
 
-### Pagination and Aggregation
+### Pagination and aggregation
 
 Kysely Hydrate solves the "pagination with joins" problem. When you use
 `.limit()` or `.offset()` on a query set with `*Many` joins, the library
-automatically wraps the base query in a subquery to ensure the limit applies to
+automatically wraps your query as described
+[above](#solving-row-explosion-with-pagination) to ensure the limit applies to
 the parent entities, not the exploded SQL rows.
 
 ```ts
@@ -768,7 +769,7 @@ const result = await querySet(db)
 ```
 
 > [!NOTE]
-> You typically want to use `querySet.limit()` directly, instead adding a limit to the
+> You typically want to use `querySet.limit()` directly, instead of adding a limit to the
 > base query via `querySet.modify()`. Adding a limit to the base query fails to
 > account for the filtering effect of inner joins on your hydrated query.
 
