@@ -398,7 +398,10 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 			(init) =>
 				init((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1),
-				).attachOneOrThrow("requiredAuthor", fetchAuthor, { matchChild: "id", toParent: "user_id" }),
+				).attachOneOrThrow("requiredAuthor", fetchAuthor, {
+					matchChild: "id",
+					toParent: "user_id",
+				}),
 			"posts.user_id",
 			"user.id",
 		);
@@ -412,7 +415,10 @@ test("attachMany: modify attached QuerySet via init callback", async () => {
 	const fetchPosts = () => {
 		// Modify the QuerySet before returning it
 		return querySet(db)
-			.init("post", db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2))
+			.init(
+				"post",
+				db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2),
+			)
 			.where("posts.id", "<=", 2)
 			.extras({
 				titleLength: (row) => row.title.length,

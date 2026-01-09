@@ -1113,7 +1113,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(childCtx, childPrefix, inputRows);
+				const collectionOutputs = collection.hydrator.#hydrateMany(
+					childCtx,
+					childPrefix,
+					inputRows,
+				);
 
 				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}

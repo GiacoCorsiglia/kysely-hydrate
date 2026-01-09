@@ -92,10 +92,7 @@ test("edge case: leftJoinOne with no match returns null", async () => {
 			"nonExistentProfile",
 			(init) =>
 				init((eb) =>
-					eb
-						.selectFrom("profiles")
-						.select(["id", "bio", "user_id"])
-						.where("user_id", "=", 999),
+					eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999),
 				),
 			"nonExistentProfile.user_id",
 			"user.id",
@@ -112,27 +109,21 @@ test("edge case: leftJoinOne with no match returns null", async () => {
 });
 
 test("edge case: leftJoinOneOrThrow with no match throws", async () => {
-	await assert.rejects(
-		async () => {
-			await querySet(db)
-				.init("user", db.selectFrom("users").select(["id", "username"]))
-				.where("users.id", "=", 1)
-				.leftJoinOneOrThrow(
-					"nonExistentProfile",
-					(init) =>
-						init((eb) =>
-							eb
-								.selectFrom("profiles")
-								.select(["id", "bio", "user_id"])
-								.where("user_id", "=", 999),
-						),
-					"nonExistentProfile.user_id",
-					"user.id",
-				)
-				.execute();
-		},
-		ExpectedOneItemError,
-	);
+	await assert.rejects(async () => {
+		await querySet(db)
+			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 1)
+			.leftJoinOneOrThrow(
+				"nonExistentProfile",
+				(init) =>
+					init((eb) =>
+						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999),
+					),
+				"nonExistentProfile.user_id",
+				"user.id",
+			)
+			.execute();
+	}, ExpectedOneItemError);
 });
 
 test("edge case: leftJoinMany with no matches returns empty array", async () => {
@@ -440,10 +431,8 @@ test("edge case: crossJoinMany creates cartesian product", async () => {
 	// Create a small dataset to verify cartesian product
 	const result = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]).where("id", "<=", 2))
-		.crossJoinMany(
-			"allPosts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3)),
+		.crossJoinMany("allPosts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3)),
 		)
 		.execute();
 

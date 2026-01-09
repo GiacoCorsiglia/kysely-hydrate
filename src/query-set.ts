@@ -230,6 +230,7 @@ type LimitOrOffset = number | bigint | null;
  *
  * @template T - The query set's type parameters.
  */
+// oxlint-disable-next-line namespace I don't know why oxlint can't find these interfaces.
 interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.OperationNodeSource {
 	/**
 	 * This property exists for complex type reasons and will never be set.

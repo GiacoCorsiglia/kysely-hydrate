@@ -4,7 +4,7 @@ import { test } from "node:test";
 import SQLite from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 
-import { type SeedDB } from "./__tests__/fixture.ts";
+import { type SeedDB } from "../__tests__/fixture.ts";
 import { map } from "./mapped-expression.ts";
 import { HydratePlugin } from "./plugin.ts";
 import { timestamp } from "./schema/sqlite.ts";

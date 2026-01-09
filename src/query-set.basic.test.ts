@@ -39,10 +39,7 @@ test("executeTakeFirst: returns first row or undefined", async () => {
 
 test("executeTakeFirst: returns undefined when no rows", async () => {
 	const user = await querySet(db)
-		.init(
-			"user",
-			db.selectFrom("users").select(["id", "username"]).where("id", "=", 999),
-		)
+		.init("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
 		.executeTakeFirst();
 
 	assert.strictEqual(user, undefined);
@@ -59,13 +56,7 @@ test("executeTakeFirstOrThrow: returns first row", async () => {
 test("executeTakeFirstOrThrow: throws when no rows", async () => {
 	await assert.rejects(async () => {
 		await querySet(db)
-			.init(
-				"user",
-				db
-					.selectFrom("users")
-					.select(["id", "username"])
-					.where("id", "=", 999),
-			)
+			.init("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
 			.executeTakeFirstOrThrow();
 	});
 });
@@ -92,11 +83,7 @@ test("init: defaults keyBy to 'id'", async () => {
 
 test("init: accepts explicit keyBy", async () => {
 	const users = await querySet(db)
-		.init(
-			"user",
-			db.selectFrom("users").select(["id", "username", "email"]),
-			"username",
-		)
+		.init("user", db.selectFrom("users").select(["id", "username", "email"]), "username")
 		.execute();
 
 	assert.strictEqual(users.length, 10);
@@ -116,9 +103,7 @@ test("init: accepts explicit keyBy", async () => {
 
 test("init: accepts factory function", async () => {
 	const users = await querySet(db)
-		.init("user", (eb) =>
-			eb.selectFrom("users").select(["id", "username", "email"]),
-		)
+		.init("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
 		.execute();
 
 	assert.strictEqual(users.length, 10);

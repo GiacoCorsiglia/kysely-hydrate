@@ -63,11 +63,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 				"posts",
 				(init) =>
 					init((eb) =>
-						eb
-							.selectFrom("posts")
-							.select(["id", "title", "userId"])
-							.orderBy("posts.id")
-							.limit(2),
+						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
 					),
 				"posts.userId",
 				"user.id",
@@ -103,11 +99,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 				"posts",
 				(init) =>
 					init((eb) =>
-						eb
-							.selectFrom("posts")
-							.select(["id", "title", "userId"])
-							.orderBy("posts.id")
-							.limit(2),
+						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
 					),
 				"posts.userId",
 				"user.id",
@@ -267,11 +259,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 				"posts",
 				(init) =>
 					init((eb) =>
-						eb
-							.selectFrom("posts")
-							.select(["id", "title", "userId"])
-							.orderBy("posts.id")
-							.limit(2),
+						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
 					),
 				"posts.userId",
 				"user.id",

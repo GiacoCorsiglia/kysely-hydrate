@@ -13,10 +13,7 @@ test("leftJoinOneOrThrow: toJoinedQuery shows non-nullable columns", async () =>
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) =>
-				init((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
-				),
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -48,10 +45,7 @@ test("leftJoinOneOrThrow: execute returns object when match exists", async () =>
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) =>
-				init((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
-				),
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -80,11 +74,9 @@ test("leftJoinOneOrThrow: execute throws when no match", async () => {
 			.leftJoinOneOrThrow(
 				"profile",
 				(init) =>
-					init((eb) =>
-						eb
-							.selectFrom("profiles")
-							.select(["id", "bio", "user_id"])
-							.where("user_id", "=", 999), // No profile with this user_id
+					init(
+						(eb) =>
+							eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
 					),
 				"profile.user_id",
 				"user.id",
@@ -99,10 +91,7 @@ test("leftJoinOneOrThrow: executeCount counts all base records", async () => {
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) =>
-				init((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
-				),
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -117,10 +106,7 @@ test("leftJoinOneOrThrow: executeExists checks existence", async () => {
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) =>
-				init((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
-				),
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -135,10 +121,7 @@ test("leftJoinOneOrThrow: executeTakeFirst with join", async () => {
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) =>
-				init((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
-				),
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -158,10 +141,7 @@ test("leftJoinOneOrThrow: toBaseQuery returns base query without joins", async (
 		.where("id", "<=", 3)
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) =>
-				init((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
-				),
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)

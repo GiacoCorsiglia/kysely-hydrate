@@ -4,7 +4,6 @@ import { test } from "node:test";
 import * as k from "kysely";
 
 import { db } from "../__tests__/sqlite.ts";
-import { UnexpectedComplexAliasError } from "./errors.ts";
 import { type AnySelectArg, hoistAndPrefixSelections, prefixSelectArg } from "./select-renamer.ts";
 
 /**

@@ -12,9 +12,8 @@ test("crossJoinMany: toJoinedQuery shows cartesian product with $$ prefixes", as
 	// Cross join user 1 with all posts (15 posts total)
 	const rows = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 		)
 		.where("users.id", "=", 1)
 		.toJoinedQuery()
@@ -32,15 +31,8 @@ test("crossJoinMany: execute returns all posts for each user (cartesian product)
 	// User 1 crossed with a subset of posts
 	const users = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "<=", 3),
-				),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 3)),
 		)
 		.where("users.id", "=", 1)
 		.execute();
@@ -65,15 +57,8 @@ test("crossJoinMany: multiple users get same posts (full cartesian product)", as
 	// Two users crossed with same posts
 	const users = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "<=", 2),
-				),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
 		)
 		.where("users.id", "<=", 2)
 		.execute();
@@ -103,15 +88,8 @@ test("crossJoinMany: multiple users get same posts (full cartesian product)", as
 test("crossJoinMany: executeTakeFirst returns first user with all crossed posts", async () => {
 	const user = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "<=", 2),
-				),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
 		)
 		.where("users.id", "=", 1)
 		.executeTakeFirst();
@@ -129,9 +107,8 @@ test("crossJoinMany: executeTakeFirst returns first user with all crossed posts"
 test("crossJoinMany: executeCount counts unique base records", async () => {
 	const count = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 		)
 		.where("users.id", "<=", 3)
 		.executeCount(Number);
@@ -143,9 +120,8 @@ test("crossJoinMany: executeCount counts unique base records", async () => {
 test("crossJoinMany: executeExists checks existence of base records", async () => {
 	const exists = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 		)
 		.where("users.id", "<=", 5)
 		.executeExists();
@@ -157,9 +133,8 @@ test("crossJoinMany: toBaseQuery returns base query without joins", async () => 
 	const baseQuery = querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 2)
-		.crossJoinMany(
-			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+		.crossJoinMany("posts", (init) =>
+			init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 		)
 		.toBaseQuery();
 
@@ -176,15 +151,10 @@ test("crossJoinMany: empty posts collection filters out base records", async () 
 	// CROSS JOIN with empty set returns no rows (this is correct SQL behavior)
 	const users = await querySet(db)
 		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany(
-			"posts",
-			(init) =>
-				init((eb) =>
-					eb
-						.selectFrom("posts")
-						.select(["id", "title", "user_id"])
-						.where("id", "=", 999), // No post with this ID
-				),
+		.crossJoinMany("posts", (init) =>
+			init(
+				(eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 999), // No post with this ID
+			),
 		)
 		.where("users.id", "=", 1)
 		.execute();
