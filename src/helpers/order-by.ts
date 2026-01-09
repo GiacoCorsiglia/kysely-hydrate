@@ -1,7 +1,79 @@
+import type * as k from "kysely";
+
 export interface OrderBy<T = Record<string, unknown>> {
 	key: keyof T | ((input: T) => unknown);
 	direction: "asc" | "desc";
-	nulls: "first" | "last";
+	nulls?: "first" | "last" | undefined;
+}
+
+function nullsDefault(direction: "asc" | "desc"): "first" | "last" {
+	// Default nulls behavior matches PostgreSQL/Oracle:
+	// NULLS LAST for ASC, NULLS FIRST for DESC
+	return direction === "asc" ? "last" : "first";
+}
+
+class MockOrderByItemBuilder {
+	readonly orderBy: OrderBy;
+
+	constructor(orderBy: OrderBy) {
+		this.orderBy = orderBy;
+	}
+
+	desc(): MockOrderByItemBuilder {
+		return new MockOrderByItemBuilder({
+			...this.orderBy,
+			direction: "desc",
+		});
+	}
+
+	nullsFirst(): MockOrderByItemBuilder {
+		return new MockOrderByItemBuilder({
+			...this.orderBy,
+			nulls: "first",
+		});
+	}
+
+	nullsLast(): MockOrderByItemBuilder {
+		return new MockOrderByItemBuilder({
+			...this.orderBy,
+			nulls: "last",
+		});
+	}
+
+	toOperationNode(): k.OperationNode {
+		throw new Error("Not implemented");
+	}
+
+	asc(): MockOrderByItemBuilder {
+		return new MockOrderByItemBuilder({
+			...this.orderBy,
+			direction: "asc",
+		});
+	}
+
+	collate(): MockOrderByItemBuilder {
+		return this;
+	}
+}
+
+export function kyselyOrderByToOrderBy(expr: string, modifiers: k.OrderByModifiers): OrderBy<any> {
+	if (typeof modifiers === "string") {
+		return {
+			key: expr,
+			direction: modifiers,
+			nulls: nullsDefault(modifiers),
+		};
+	}
+
+	const builder = new MockOrderByItemBuilder({
+		key: expr,
+		direction: "asc",
+	});
+	const built = modifiers(
+		builder as unknown as k.OrderByItemBuilder,
+	) as unknown as MockOrderByItemBuilder;
+
+	return built.orderBy;
 }
 
 function isNil(value: unknown): value is null | undefined {
@@ -74,7 +146,8 @@ export function makeOrderByComparator<T>(
 					continue;
 				}
 				const dir = aNull ? -1 : 1;
-				return nulls === "first" ? dir : -dir;
+				const effectiveNulls = nulls ?? nullsDefault(direction);
+				return effectiveNulls === "first" ? dir : -dir;
 			}
 
 			const cmp = sqlCompare(a, b);

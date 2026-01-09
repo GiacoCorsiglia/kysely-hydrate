@@ -1,5 +1,5 @@
-type SEP = typeof SEP;
-const SEP = "$$";
+export type SEP = typeof SEP;
+export const SEP = "$$";
 
 export type MakePrefix<
 	ParentPrefix extends string,

@@ -18,11 +18,13 @@
 
 import * as k from "kysely";
 
+import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
 	type ApplyPrefixWithSep,
 	type MakePrefix,
 	makePrefix,
+	SEP,
 } from "./helpers/prefixes.ts";
 import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
@@ -2142,6 +2144,11 @@ interface AttachCollection {
 
 type Collection = JoinCollection | AttachCollection;
 
+interface QuerySetOrderBy {
+	expr: string;
+	modifiers?: k.OrderByModifiers | undefined;
+}
+
 interface QuerySetProps {
 	db: k.Kysely<any>;
 	baseAlias: string;
@@ -2152,8 +2159,7 @@ interface QuerySetProps {
 	attachCollections: Map<string, AttachCollection>;
 	limit: LimitOrOffset;
 	offset: LimitOrOffset;
-	// TODO: What should this shape be?
-	orderBy: unknown;
+	orderBy: readonly QuerySetOrderBy[];
 	orderByKeys: boolean;
 }
 
@@ -2295,18 +2301,29 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#applyOrderBy(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
-		const { baseAlias, keyBy } = this.#props;
+		const { baseAlias, keyBy, orderBy } = this.#props;
 
-		// TODO: Apply this.#props.orderBy.
+		let keyByArray: readonly string[] = typeof keyBy === "string" ? [keyBy] : keyBy;
 
-		// Always order by the key(s); as tie breakers if nothing else.
+		// Apply custom orderBy expressions
+		for (const { expr, modifiers } of orderBy) {
+			// Convert $$ to . for SQL column references (e.g., "profile$$bio" -> "profile.bio")
+			// If there's no $$, it's a base column, so add the baseAlias prefix
+			const sqlExpr = expr.includes(SEP)
+				? // Intentionally only replace first occurrence.
+					expr.replace(SEP, ".")
+				: `${baseAlias}.${expr}`;
+
+			qb = qb.orderBy(sqlExpr, modifiers);
+
+			// Remove expr from keyByArray if present
+			keyByArray = keyByArray.filter((k) => k !== expr);
+		}
+
+		// Always order by the key(s) as tie breakers (unless orderByKeys is disabled)
 		if (this.#props.orderByKeys) {
-			if (typeof keyBy === "string") {
-				qb = qb.orderBy(`${baseAlias}.${keyBy}`, "asc");
-			} else {
-				for (const key of keyBy) {
-					qb = qb.orderBy(`${baseAlias}.${key}`, "asc");
-				}
+			for (const key of keyByArray) {
+				qb = qb.orderBy(`${baseAlias}.${key}`, "asc");
 			}
 		}
 
@@ -2742,18 +2759,25 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		});
 	}
 
-	orderBy(...args: any[]): any {
-		// TODO: Handle args correctly.
+	orderBy(expr: string, modifiers: k.OrderByModifiers = "asc"): any {
+		const orderBy = kyselyOrderByToOrderBy(expr, modifiers);
+
 		return this.#clone({
-			// TODO: Do the right thing here (probably append to an array).
-			orderBy: args,
+			// Add to the orderBy array for SQL ORDER BY clause
+			orderBy: [...this.#props.orderBy, { expr, modifiers }],
+
+			hydrator: this.#props.hydrator.orderBy(orderBy.key, orderBy.direction, orderBy.nulls),
 		});
 	}
 
 	clearOrderBy(): any {
+		// Clear the custom orderBy array. The SQL query will revert to ordering by keyBy columns only.
+		// Note: We don't clear the hydrator's orderings here because those affect nested collection
+		// sorting during hydration, which is independent of the SQL ORDER BY clause.
 		return this.#clone({
-			// TODO: Probably set to an empty array?
-			orderBy: null,
+			orderBy: [],
+			// Also clear the hydrator's orderings.
+			hydrator: this.#props.hydrator.clearOrderBy(),
 		});
 	}
 
@@ -2949,7 +2973,7 @@ class QuerySetCreator<in out DB> {
 			attachCollections: new Map(),
 			limit: null,
 			offset: null,
-			orderBy: null,
+			orderBy: [],
 			orderByKeys: true,
 		});
 	}

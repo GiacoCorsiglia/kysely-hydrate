@@ -30,12 +30,20 @@ export interface Profile {
 	avatar_url: string | null;
 }
 
+export interface Reply {
+	id: Generated<number>;
+	comment_id: number;
+	user_id: number;
+	content: string;
+}
+
 // Kysely Database interface
 export interface SeedDB {
 	users: User;
 	posts: Post;
 	comments: Comment;
 	profiles: Profile;
+	replies: Reply;
 }
 
 export const seedDb = createDatabase("public", {

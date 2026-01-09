@@ -407,6 +407,15 @@ export interface MappedHydrator<Input, Output> {
 	): this;
 
 	/**
+	 * Clears custom ordering from the hydrator.  The hydrator will revert to
+	 * either no ordering, or ordering by the keyBy columns only if .orderByKeys()
+	 * was called.
+	 *
+	 * @returns A new Hydrator with the custom ORDER BY clauses cleared
+	 */
+	clearOrderBy(): this;
+
+	/**
 	 * Appends the keyBy column(s) as the final ordering (as a tie-breaker).
 	 *
 	 * This ensures deterministic ordering when multiple records have the same
@@ -855,14 +864,18 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	orderBy(key: any, direction: "asc" | "desc" = "asc", nulls?: "first" | "last"): any {
-		// Default nulls behavior matches PostgreSQL/Oracle:
-		// NULLS LAST for ASC, NULLS FIRST for DESC
-		const nullsPosition = nulls ?? (direction === "asc" ? "last" : "first");
-
 		return new HydratorImpl({
 			...this.#props,
 
-			orderings: [...(this.#props.orderings ?? []), { key, direction, nulls: nullsPosition }],
+			orderings: [...(this.#props.orderings ?? []), { key, direction, nulls }],
+		});
+	}
+
+	clearOrderBy(): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			orderings: [],
 		});
 	}
 
