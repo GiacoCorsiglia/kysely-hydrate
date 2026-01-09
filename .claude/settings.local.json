@@ -14,7 +14,9 @@
       "Bash(npx tsc:*)",
       "Bash(RUN_POSTGRES_TESTS=true npm test:*)"
     ],
-    "deny": [],
+    "deny": [
+      "Read(./src/experimental/**)"
+    ],
     "ask": []
   }
 }
