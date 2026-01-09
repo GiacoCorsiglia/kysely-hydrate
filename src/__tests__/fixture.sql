@@ -1,34 +1,3 @@
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL,
-  email TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  post_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  content TEXT NOT NULL,
-  FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS profiles (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL UNIQUE,
-  bio TEXT,
-  avatar_url TEXT,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
-);
-
 -- Insert 10 users
 INSERT INTO users (username, email) VALUES
   ('alice', 'alice@example.com'),
@@ -88,3 +57,11 @@ INSERT INTO profiles (user_id, bio, avatar_url) VALUES
   (8, 'Bio for user 8', 'https://example.com/avatars/8.png'),
   (9, 'Bio for user 9', 'https://example.com/avatars/9.png'),
   (10, 'Bio for user 10', 'https://example.com/avatars/10.png');
+
+INSERT INTO replies (comment_id, user_id, content) VALUES
+  (3, 6, 'Reply to zeta comment by bob'),      -- id 1
+  (1, 9, 'Reply to gamma comment by dave'),    -- id 2
+  (5, 4, 'Reply to theta comment by eve'),     -- id 3
+  (1, 4, 'Another reply to gamma by eve'),     -- id 4
+  (3, 5, 'Reply to zeta comment by carol'),    -- id 5
+  (6, 6, 'Reply to delta comment by bob');     -- id 6

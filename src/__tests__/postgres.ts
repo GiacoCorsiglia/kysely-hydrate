@@ -58,9 +58,14 @@ export function getDbForTest() {
 		const sqliteSql = readFileSync(sqlPath, "utf-8");
 		const postgresSql = transformSqlForPostgres(sqliteSql);
 
+		const schemaPath = join(__dirname, "fixture-schema.sql");
+		const sqliteSchema = readFileSync(schemaPath, "utf-8");
+		const postgresSchema = transformSqlForPostgres(sqliteSchema);
+
 		// Execute the transformed SQL using the raw pg client
 		const client = await pool.connect();
 		try {
+			await client.query(postgresSchema);
 			await client.query(postgresSql);
 		} finally {
 			client.release();

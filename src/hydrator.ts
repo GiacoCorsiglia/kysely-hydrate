@@ -389,6 +389,46 @@ export interface MappedHydrator<Input, Output> {
 	map<NewOutput>(fn: (output: Output) => NewOutput): MappedHydrator<Input, NewOutput>;
 
 	/**
+	 * Adds an ordering to apply during hydration. Can be chained to add multiple orderings.
+	 *
+	 * Orderings are applied when sorting nested collections (hasMany, etc.) during hydration.
+	 * By default, ordering is only applied to nested arrays (depth > 0), not the top-level array.
+	 * Use the `sort` option in `hydrate()` to control this behavior.
+	 *
+	 * @param key - The field name to order by, or a function that extracts the value to sort by
+	 * @param direction - Sort direction: "asc" or "desc" (default: "asc")
+	 * @param nulls - Where to place nulls: "first" or "last" (default: "last" for ASC, "first" for DESC)
+	 * @returns A new Hydrator with the ordering added
+	 */
+	orderBy<K extends keyof Input>(
+		key: K | ((input: Input) => unknown),
+		direction?: "asc" | "desc",
+		nulls?: "first" | "last",
+	): this;
+
+	/**
+	 * Clears custom ordering from the hydrator.  The hydrator will revert to
+	 * either no ordering, or ordering by the keyBy columns only if .orderByKeys()
+	 * was called.
+	 *
+	 * @returns A new Hydrator with the custom ORDER BY clauses cleared
+	 */
+	clearOrderBy(): this;
+
+	/**
+	 * Appends the keyBy column(s) as the final ordering (as a tie-breaker).
+	 *
+	 * This ensures deterministic ordering when multiple records have the same
+	 * values for earlier orderings. The keyBy columns are always sorted ascending
+	 * with nulls last.
+	 *
+	 * @param enabled - Whether to enable keyBy ordering.  If not provided,
+	 * defaults to `true`
+	 * @returns A new Hydrator with keyBy ordering appended
+	 */
+	orderByKeys(enabled?: boolean): this;
+
+	/**
 	 * Hydrates the input data into a denormalized structure according to this configuration.
 	 *
 	 * If attached collections are configured, this method will fetch them asynchronously
@@ -480,34 +520,6 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		// Extend, don't intersect, because the output gets overridden.
 		Extend<Output, OtherOutput>
 	>;
-
-	/**
-	 * Adds an ordering to apply during hydration. Can be chained to add multiple orderings.
-	 *
-	 * Orderings are applied when sorting nested collections (hasMany, etc.) during hydration.
-	 * By default, ordering is only applied to nested arrays (depth > 0), not the top-level array.
-	 * Use the `sort` option in `hydrate()` to control this behavior.
-	 *
-	 * @param key - The field name to order by, or a function that extracts the value to sort by
-	 * @param direction - Sort direction: "asc" or "desc" (default: "asc")
-	 * @param nulls - Where to place nulls: "first" or "last" (default: "last" for ASC, "first" for DESC)
-	 * @returns A new Hydrator with the ordering added
-	 */
-	orderBy<K extends keyof Input>(
-		key: K | ((input: Input) => unknown),
-		direction?: "asc" | "desc",
-		nulls?: "first" | "last",
-	): FullHydrator<Input, Output>;
-
-	/**
-	 * Appends the keyBy column(s) as the final ordering (as a tie-breaker).
-	 *
-	 * This ensures deterministic ordering when multiple records have the same values
-	 * for earlier orderings. The keyBy columns are always sorted ascending with nulls last.
-	 *
-	 * @returns A new Hydrator with keyBy ordering appended
-	 */
-	orderByKeys(): FullHydrator<Input, Output>;
 
 	/**
 	 * Configures a nested collection that exists in the same query result. The
@@ -852,22 +864,26 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	orderBy(key: any, direction: "asc" | "desc" = "asc", nulls?: "first" | "last"): any {
-		// Default nulls behavior matches PostgreSQL/Oracle:
-		// NULLS LAST for ASC, NULLS FIRST for DESC
-		const nullsPosition = nulls ?? (direction === "asc" ? "last" : "first");
-
 		return new HydratorImpl({
 			...this.#props,
 
-			orderings: [...(this.#props.orderings ?? []), { key, direction, nulls: nullsPosition }],
+			orderings: [...(this.#props.orderings ?? []), { key, direction, nulls }],
 		});
 	}
 
-	orderByKeys(): any {
+	clearOrderBy(): any {
 		return new HydratorImpl({
 			...this.#props,
 
-			orderByKeys: true,
+			orderings: [],
+		});
+	}
+
+	orderByKeys(enabled: boolean = true): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			orderByKeys: enabled,
 		});
 	}
 
