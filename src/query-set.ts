@@ -790,6 +790,18 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * ```
 	 */
 	orderByKeys(enabled?: boolean): this;
+
+	/**
+	 * Calls {@link k.SelectQueryBuilder.modifyFront} on the query before it is
+	 * executed.
+	 */
+	modifyFront(modifier: k.Expression<any>): this;
+
+	/**
+	 * Calls {@link k.SelectQueryBuilder.modifyEnd} on the query before it is
+	 * executed.
+	 */
+	modifyEnd(modifier: k.Expression<any>): this;
 }
 
 /**
@@ -2161,6 +2173,8 @@ interface QuerySetProps {
 	offset: LimitOrOffset;
 	orderBy: readonly QuerySetOrderBy[];
 	orderByKeys: boolean;
+	frontModifiers: readonly k.Expression<any>[];
+	endModifiers: readonly k.Expression<any>[];
 }
 
 /**
@@ -2457,6 +2471,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// we're in a subquery already.
 		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
+		}
+
+		for (const modifier of this.#props.frontModifiers) {
+			qb = qb.modifyFront(modifier);
+		}
+
+		for (const modifier of this.#props.endModifiers) {
+			qb = qb.modifyEnd(modifier);
 		}
 
 		return qb;
@@ -2788,6 +2810,18 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			hydrator: this.#props.hydrator.orderByKeys(enabled),
 		});
 	}
+
+	modifyFront(modifier: k.Expression<any>): any {
+		return this.#clone({
+			frontModifiers: [...this.#props.frontModifiers, modifier],
+		});
+	}
+
+	modifyEnd(modifier: k.Expression<any>): any {
+		return this.#clone({
+			endModifiers: [...this.#props.endModifiers, modifier],
+		});
+	}
 }
 
 ////////////////////////////////////////////////////////////
@@ -2975,6 +3009,8 @@ class QuerySetCreator<in out DB> {
 			offset: null,
 			orderBy: [],
 			orderByKeys: true,
+			frontModifiers: [],
+			endModifiers: [],
 		});
 	}
 }
