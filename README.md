@@ -179,8 +179,8 @@ type Result = Array<{ id: number; username: string }>;
 
 > [!WARNING]
 > When using the `querySet()` API, you cannot use `.selectAll()`, because Kysely
-> Hydrate must introspect your queries for the names of their selections at
-> runtime.
+> Hydrate must introspect your queries for the names of their selections.  Query
+> set execution will throw if it encounters a wildcard selection.
 
 ### Keying and deduplication with keyBy
 
