@@ -802,6 +802,11 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * executed.
 	 */
 	modifyEnd(modifier: k.Expression<any>): this;
+
+	/**
+	 * Calls a callback with the query set and returns the result.  Like {@link k.SelectQueryBuilder.$call}.
+	 */
+	$call<R>(callback: (qs: this) => R): R;
 }
 
 /**
@@ -2821,6 +2826,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#clone({
 			endModifiers: [...this.#props.endModifiers, modifier],
 		});
+	}
+
+	$call<R>(callback: (qs: this) => R): R {
+		return callback(this);
 	}
 }
 
