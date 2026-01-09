@@ -1621,6 +1621,44 @@ interface Comment {
 	}>();
 }
 
+{
+	const joined = querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.leftJoinOne(
+			"profile",
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			"profile.user_id",
+			"user.id",
+		)
+		.toJoinedQuery();
+
+	type DB = InferDB<typeof joined>;
+	type TB = InferTB<typeof joined>;
+	type O = InferO<typeof joined>;
+
+	// JoinedQuery includes both base and joined tables
+	expectTypeOf<DB["users"]>().toEqualTypeOf<DBUser>();
+	expectTypeOf<DB["user"]>().toEqualTypeOf<{ id: number; username: string }>();
+	expectTypeOf<DB["profiles"]>().toEqualTypeOf<DBProfile>();
+	expectTypeOf<DB["profile"]>().toEqualTypeOf<{
+		id: number | null;
+		bio: string | null;
+		user_id: number | null;
+	}>();
+
+	// Both are joined.
+	expectTypeOf<TB>().toEqualTypeOf<"user" | "profile">();
+
+	// Output type is correct (with nullable columns).
+	expectTypeOf<O>().toEqualTypeOf<{
+		id: number;
+		username: string;
+		profile$$id: number | null;
+		profile$$bio: string | null;
+		profile$$user_id: number | null;
+	}>();
+}
+
 //
 // With nested joins, prefixing applied correctly.
 //

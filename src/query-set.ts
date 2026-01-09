@@ -28,6 +28,7 @@ import {
 } from "./helpers/prefixes.ts";
 import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
+	type DrainOuterGeneric,
 	type Extend,
 	type ExtendWith,
 	type Flatten,
@@ -156,17 +157,23 @@ interface TMapped<in out T extends TQuerySet, in out Output> {
 	HydratedOutput: Output;
 }
 
+interface TJoinedQueryWithBaseQuery<
+	BaseAlias extends string,
+	in out JoinedQuery extends TQuery,
+	in out BaseQuery extends TQuery,
+> {
+	DB: JoinedQuery["DB"] & { [_ in BaseAlias]: BaseQuery["O"] };
+	TB: JoinedQuery["TB"];
+	O: JoinedQuery["O"];
+}
+
 interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQuery> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: BaseQuery;
 	Collections: T["Collections"];
-	JoinedQuery: {
-		DB: T["JoinedQuery"]["DB"] & { [_ in T["BaseAlias"]]: BaseQuery["O"] };
-		TB: T["JoinedQuery"]["TB"];
-		O: T["JoinedQuery"]["O"];
-	};
+	JoinedQuery: TJoinedQueryWithBaseQuery<T["BaseAlias"], T["JoinedQuery"], BaseQuery>;
 	OrderableColumns: T["OrderableColumns"] | (keyof BaseQuery["O"] & string);
 	// Extend in this order because we are expanding the input type, but it still
 	// needs to be overwritten by .extras() and whatnot.
@@ -192,7 +199,7 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 	Collections: T["Collections"];
 	JoinedQuery: T["JoinedQuery"];
 	OrderableColumns: T["OrderableColumns"];
-	HydratedOutput: Extend<TOutput<T>, Output>;
+	HydratedOutput: Extend<T["HydratedOutput"], Output>;
 }
 
 interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out BaseO> {
@@ -205,7 +212,7 @@ interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out 
 	O: BaseO;
 }
 
-type ToInitialJoinedDB<T extends TQuerySet> = Flatten<
+type ToInitialJoinedDB<T extends TQuerySet> = DrainOuterGeneric<
 	T["DB"] & {
 		[K in T["BaseAlias"]]: T["BaseQuery"]["O"];
 	}
@@ -1911,7 +1918,7 @@ interface TQuerySetWithAttach<
 		{ Prototype: "Attach"; Type: Type; Value: FetchFnReturn }
 	>;
 	OrderableColumns: T["OrderableColumns"];
-	HydratedOutput: ExtendWith<TOutput<T>, Key, AttachedOutput>;
+	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, AttachedOutput>;
 }
 
 interface QuerySetWithAttachMany<
@@ -2007,49 +2014,60 @@ type TOrderableColumnsWithJoin<
 	? T["OrderableColumns"] | ApplyPrefixWithSep<Key, TNested["OrderableColumns"]>
 	: T["OrderableColumns"];
 
+type TJoinedQuery<JoinedQuery extends k.SelectQueryBuilder<any, any, any>> =
+	JoinedQuery extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
+		? {
+				DB: JoinedDB;
+				TB: JoinedTB;
+				O: JoinedRow;
+			}
+		: never;
+
 type TQuerySetWithJoin<
 	T extends TQuerySet,
 	Key extends string,
 	Type extends TJoinType,
 	TNested extends TQuerySet,
 	NestedHydratedRow,
-	JoinedQuery extends k.SelectQueryBuilder<any, any, any>,
-> = Flatten<
-	JoinedQuery extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
-		? {
-				DB: T["DB"];
-				IsMapped: T["IsMapped"];
-				BaseAlias: T["BaseAlias"];
-				BaseQuery: T["BaseQuery"];
-				Collections: TCollectionsWith<
-					T["Collections"],
-					Key,
-					{ Prototype: "Join"; Type: Type; Value: TNested }
-				>;
-				JoinedQuery: {
-					DB: JoinedDB;
-					TB: JoinedTB;
-					O: JoinedRow;
-				};
-				OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
-				HydratedOutput: ExtendWith<TOutput<T>, Key, NestedHydratedRow>;
-			}
-		: never
->;
+	JoinedQuery extends AnySelectQueryBuilder,
+> = Flatten<{
+	DB: T["DB"];
+	IsMapped: T["IsMapped"];
+	BaseAlias: T["BaseAlias"];
+	BaseQuery: T["BaseQuery"];
+	Collections: TCollectionsWith<
+		T["Collections"],
+		Key,
+		{ Prototype: "Join"; Type: Type; Value: TNested }
+	>;
+	JoinedQuery: TJoinedQuery<JoinedQuery>;
+	OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
+	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, NestedHydratedRow>;
+}>;
 
-type ToJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+type ToJoinOutputInner<
+	T extends TQuerySet,
+	TNested extends TQuerySet,
+	Key extends string,
+> = Flatten<
 	// Extend the *JoinedQuery* output, which includes both the base output and also
 	// output from other joins.
 	T["JoinedQuery"]["O"] & ApplyPrefixes<MakePrefix<"", Key>, TNested["JoinedQuery"]["O"]>
 >;
 
-type TQuerySetWithInnerJoin<
-	T extends TQuerySet,
-	Key extends string,
-	Type extends TJoinType,
-	TNested extends TQuerySet,
-	NestedHydratedRow,
-> = TQuerySetWithJoin<
+// Compared to the inner join, the left joined output is nullable.
+type ToJoinOutputLeft<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+	T["JoinedQuery"]["O"] &
+		ApplyPrefixes<MakePrefix<"", Key>, k.Nullable<TNested["JoinedQuery"]["O"]>>
+>;
+
+interface TQuerySetWithInnerJoin<
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out Type extends TJoinType,
+	in out TNested extends TQuerySet,
+	in out NestedHydratedRow,
+> extends TQuerySetWithJoin<
 	T,
 	Key,
 	Type,
@@ -2058,18 +2076,18 @@ type TQuerySetWithInnerJoin<
 	k.SelectQueryBuilderWithInnerJoin<
 		ToInitialJoinedDB<T>,
 		ToInitialJoinedTB<T>,
-		ToJoinOutput<T, TNested, Key>,
+		ToJoinOutputInner<T, TNested, Key>,
 		ToTableExpression<Key, TNested>
 	>
->;
+> {}
 
-type TQuerySetWithLeftJoin<
-	T extends TQuerySet,
-	Key extends string,
-	Type extends TJoinType,
-	TNested extends TQuerySet,
-	NestedHydratedRow,
-> = TQuerySetWithJoin<
+interface TQuerySetWithLeftJoin<
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out Type extends TJoinType,
+	in out TNested extends TQuerySet,
+	in out NestedHydratedRow,
+> extends TQuerySetWithJoin<
 	T,
 	Key,
 	Type,
@@ -2078,10 +2096,10 @@ type TQuerySetWithLeftJoin<
 	k.SelectQueryBuilderWithLeftJoin<
 		ToInitialJoinedDB<T>,
 		ToInitialJoinedTB<T>,
-		ToJoinOutput<T, TNested, Key>,
+		ToJoinOutputLeft<T, TNested, Key>,
 		ToTableExpression<Key, TNested>
 	>
->;
+> {}
 
 interface QuerySetWithInnerJoinOne<
 	in out T extends TQuerySet,
