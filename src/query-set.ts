@@ -28,6 +28,7 @@ import {
 } from "./helpers/prefixes.ts";
 import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
+	type DrainOuterGeneric,
 	type Extend,
 	type ExtendWith,
 	type Flatten,
@@ -66,6 +67,9 @@ interface TQuery<in out DB = any, in out TB extends keyof DB = any> {
 	TB: TB;
 	O: any;
 }
+
+type InferTQuery<Q extends AnySelectQueryBuilder> =
+	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O> ? { DB: DB; TB: TB; O: O } : never;
 
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
 
@@ -143,7 +147,7 @@ type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
 	: QuerySet<T>;
 
 type TInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
-type TOutput<T extends TQuerySet> = k.Simplify<T["HydratedOutput"]>;
+type TOutput<T extends TQuerySet> = Flatten<T["HydratedOutput"]>;
 
 interface TMapped<in out T extends TQuerySet, in out Output> {
 	DB: T["DB"];
@@ -156,17 +160,23 @@ interface TMapped<in out T extends TQuerySet, in out Output> {
 	HydratedOutput: Output;
 }
 
+interface TJoinedQueryWithBaseQuery<
+	BaseAlias extends string,
+	in out JoinedQuery extends TQuery,
+	in out BaseQuery extends TQuery,
+> {
+	DB: JoinedQuery["DB"] & { [_ in BaseAlias]: BaseQuery["O"] };
+	TB: JoinedQuery["TB"];
+	O: JoinedQuery["O"];
+}
+
 interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQuery> {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
 	BaseAlias: T["BaseAlias"];
 	BaseQuery: BaseQuery;
 	Collections: T["Collections"];
-	JoinedQuery: {
-		DB: T["JoinedQuery"]["DB"] & { [_ in T["BaseAlias"]]: BaseQuery["O"] };
-		TB: T["JoinedQuery"]["TB"];
-		O: T["JoinedQuery"]["O"];
-	};
+	JoinedQuery: TJoinedQueryWithBaseQuery<T["BaseAlias"], T["JoinedQuery"], BaseQuery>;
 	OrderableColumns: T["OrderableColumns"] | (keyof BaseQuery["O"] & string);
 	// Extend in this order because we are expanding the input type, but it still
 	// needs to be overwritten by .extras() and whatnot.
@@ -192,7 +202,7 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 	Collections: T["Collections"];
 	JoinedQuery: T["JoinedQuery"];
 	OrderableColumns: T["OrderableColumns"];
-	HydratedOutput: Extend<TOutput<T>, Output>;
+	HydratedOutput: Extend<T["HydratedOutput"], Output>;
 }
 
 interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out BaseO> {
@@ -205,7 +215,7 @@ interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out 
 	O: BaseO;
 }
 
-type ToInitialJoinedDB<T extends TQuerySet> = Flatten<
+type ToInitialJoinedDB<T extends TQuerySet> = DrainOuterGeneric<
 	T["DB"] & {
 		[K in T["BaseAlias"]]: T["BaseQuery"]["O"];
 	}
@@ -1911,7 +1921,7 @@ interface TQuerySetWithAttach<
 		{ Prototype: "Attach"; Type: Type; Value: FetchFnReturn }
 	>;
 	OrderableColumns: T["OrderableColumns"];
-	HydratedOutput: ExtendWith<TOutput<T>, Key, AttachedOutput>;
+	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, AttachedOutput>;
 }
 
 interface QuerySetWithAttachMany<
@@ -2013,43 +2023,45 @@ type TQuerySetWithJoin<
 	Type extends TJoinType,
 	TNested extends TQuerySet,
 	NestedHydratedRow,
-	JoinedQuery extends k.SelectQueryBuilder<any, any, any>,
-> = Flatten<
-	JoinedQuery extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
-		? {
-				DB: T["DB"];
-				IsMapped: T["IsMapped"];
-				BaseAlias: T["BaseAlias"];
-				BaseQuery: T["BaseQuery"];
-				Collections: TCollectionsWith<
-					T["Collections"],
-					Key,
-					{ Prototype: "Join"; Type: Type; Value: TNested }
-				>;
-				JoinedQuery: {
-					DB: JoinedDB;
-					TB: JoinedTB;
-					O: JoinedRow;
-				};
-				OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
-				HydratedOutput: ExtendWith<TOutput<T>, Key, NestedHydratedRow>;
-			}
-		: never
->;
+	JoinedQuery extends AnySelectQueryBuilder,
+> = Flatten<{
+	DB: T["DB"];
+	IsMapped: T["IsMapped"];
+	BaseAlias: T["BaseAlias"];
+	BaseQuery: T["BaseQuery"];
+	Collections: TCollectionsWith<
+		T["Collections"],
+		Key,
+		{ Prototype: "Join"; Type: Type; Value: TNested }
+	>;
+	JoinedQuery: InferTQuery<JoinedQuery>;
+	OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
+	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, NestedHydratedRow>;
+}>;
 
-type ToJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+type ToJoinOutputInner<
+	T extends TQuerySet,
+	TNested extends TQuerySet,
+	Key extends string,
+> = Flatten<
 	// Extend the *JoinedQuery* output, which includes both the base output and also
 	// output from other joins.
 	T["JoinedQuery"]["O"] & ApplyPrefixes<MakePrefix<"", Key>, TNested["JoinedQuery"]["O"]>
 >;
 
-type TQuerySetWithInnerJoin<
+// Compared to the inner join, the left joined output is nullable.
+type ToJoinOutputLeft<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+	T["JoinedQuery"]["O"] &
+		ApplyPrefixes<MakePrefix<"", Key>, k.Nullable<TNested["JoinedQuery"]["O"]>>
+>;
+
+interface TQuerySetWithInnerJoin<
 	in out T extends TQuerySet,
 	in out Key extends string,
 	in out Type extends TJoinType,
 	in out TNested extends TQuerySet,
 	in out NestedHydratedRow,
-> = TQuerySetWithJoin<
+> extends TQuerySetWithJoin<
 	T,
 	Key,
 	Type,
@@ -2058,18 +2070,18 @@ type TQuerySetWithInnerJoin<
 	k.SelectQueryBuilderWithInnerJoin<
 		ToInitialJoinedDB<T>,
 		ToInitialJoinedTB<T>,
-		ToJoinOutput<T, TNested, Key>,
+		ToJoinOutputInner<T, TNested, Key>,
 		ToTableExpression<Key, TNested>
 	>
->;
+> {}
 
-type TQuerySetWithLeftJoin<
+interface TQuerySetWithLeftJoin<
 	in out T extends TQuerySet,
 	in out Key extends string,
 	in out Type extends TJoinType,
 	in out TNested extends TQuerySet,
 	in out NestedHydratedRow,
-> = TQuerySetWithJoin<
+> extends TQuerySetWithJoin<
 	T,
 	Key,
 	Type,
@@ -2078,10 +2090,10 @@ type TQuerySetWithLeftJoin<
 	k.SelectQueryBuilderWithLeftJoin<
 		ToInitialJoinedDB<T>,
 		ToInitialJoinedTB<T>,
-		ToJoinOutput<T, TNested, Key>,
+		ToJoinOutputLeft<T, TNested, Key>,
 		ToTableExpression<Key, TNested>
 	>
->;
+> {}
 
 interface QuerySetWithInnerJoinOne<
 	in out T extends TQuerySet,
@@ -2838,11 +2850,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 ////////////////////////////////////////////////////////////
 
 interface InitialQuerySet<
-	DB,
-	BaseAlias extends string,
-	BaseDB,
-	BaseTB extends keyof BaseDB,
-	BaseO,
+	in out DB,
+	in out BaseAlias extends string,
+	in out BaseDB,
+	in out BaseTB extends keyof BaseDB,
+	in out BaseO,
 > extends QuerySet<{
 	DB: DB;
 	IsMapped: false;
@@ -2861,23 +2873,25 @@ interface InitialQuerySet<
 	HydratedOutput: BaseO;
 }> {}
 
-type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
-type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
-type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
+// type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
+// type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
+// type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
 
 // A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
 // such as with expressions.
-interface SelectCreator<DB, TB extends keyof DB> {
+interface SelectCreator<in out DB, in out TB extends keyof DB> {
 	selectFrom: k.ExpressionBuilder<DB, TB>["selectFrom"];
 }
 
-type SelectQueryBuilderFactory<
-	DB,
-	TB extends keyof DB,
-	BaseDB,
-	BaseTB extends keyof BaseDB,
-	BaseO,
-> = (eb: SelectCreator<DB, TB>) => k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+interface SelectQueryBuilderFactory<
+	in out DB,
+	in out TB extends keyof DB,
+	in out BaseDB,
+	in out BaseTB extends keyof BaseDB,
+	in out BaseO,
+> {
+	(eb: SelectCreator<DB, TB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+}
 
 type SelectQueryBuilderOrFactory<
 	DB,
@@ -2889,7 +2903,7 @@ type SelectQueryBuilderOrFactory<
 	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
 	| SelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
 
-interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
+interface InitWithAlias<in out DB, in out TB extends keyof DB, in out Alias extends string> {
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
 		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
@@ -2900,13 +2914,11 @@ interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
 	<
 		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		BaseDB = InferDB<Q>,
-		BaseTB extends keyof BaseDB = InferTB<Q>,
-		BaseO = InferO<Q>,
+		TQ extends TQuery = InferTQuery<Q>,
 	>(
 		query: F,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+		keyBy: KeyBy<NoInfer<TQ["O"]>>,
+	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
 }
 
 /**
@@ -2991,14 +3003,12 @@ class QuerySetCreator<in out DB> {
 		Alias extends string,
 		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		BaseDB = InferDB<Q>,
-		BaseTB extends keyof BaseDB = InferTB<Q>,
-		BaseO = InferO<Q>,
+		TQ extends TQuery = InferTQuery<Q>,
 	>(
 		alias: Alias,
 		query: F,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+		keyBy: KeyBy<NoInfer<TQ["O"]>>,
+	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
 	init(
 		alias: string,
 		query: any,

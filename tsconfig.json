@@ -28,5 +28,6 @@
 
 		"types": []
 	},
-	"include": ["src"]
+	"include": ["src"],
+	"exclude": ["src/experimental"]
 }
