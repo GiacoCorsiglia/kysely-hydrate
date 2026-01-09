@@ -143,7 +143,7 @@ type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
 	: QuerySet<T>;
 
 type TInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
-type TOutput<T extends TQuerySet> = k.Simplify<T["HydratedOutput"]>;
+type TOutput<T extends TQuerySet> = Flatten<T["HydratedOutput"]>;
 
 interface TMapped<in out T extends TQuerySet, in out Output> {
 	DB: T["DB"];
@@ -2044,11 +2044,11 @@ type ToJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends st
 >;
 
 type TQuerySetWithInnerJoin<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out Type extends TJoinType,
-	in out TNested extends TQuerySet,
-	in out NestedHydratedRow,
+	T extends TQuerySet,
+	Key extends string,
+	Type extends TJoinType,
+	TNested extends TQuerySet,
+	NestedHydratedRow,
 > = TQuerySetWithJoin<
 	T,
 	Key,
@@ -2064,11 +2064,11 @@ type TQuerySetWithInnerJoin<
 >;
 
 type TQuerySetWithLeftJoin<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out Type extends TJoinType,
-	in out TNested extends TQuerySet,
-	in out NestedHydratedRow,
+	T extends TQuerySet,
+	Key extends string,
+	Type extends TJoinType,
+	TNested extends TQuerySet,
+	NestedHydratedRow,
 > = TQuerySetWithJoin<
 	T,
 	Key,
