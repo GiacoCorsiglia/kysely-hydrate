@@ -30,7 +30,7 @@
     "build": "tsdown",
     "release": "./scripts/release.sh",
     "test": "node --test",
-    "test:postgres": "RUN_POSTGRES_TESTS=1 node --test src/query-builder.postgres.test.ts",
+    "test:postgres": "RUN_POSTGRES_TESTS=1 node --test src/**/*.postgres*.test.ts",
     "typecheck": "tsgo",
     "typecheck:tsc": "tsc",
     "lint": "oxlint",

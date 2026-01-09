@@ -8,24 +8,18 @@
  */
 
 import assert from "node:assert";
-import { after, before, describe, test } from "node:test";
+import { describe, test } from "node:test";
 
 import { CamelCasePlugin } from "kysely";
 
-import { db, setupDatabase, teardownDatabase } from "./__tests__/postgres.ts";
+import { getDbForTest } from "./__tests__/postgres.ts";
 import { querySet } from "./query-set.ts";
 
 // Skip all tests if not explicitly enabled
 const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
 
 describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
-	before(async () => {
-		await setupDatabase();
-	});
-
-	after(async () => {
-		await teardownDatabase();
-	});
+	const db = getDbForTest();
 
 	//
 	// Basic lateral join methods - innerJoinLateralMany, leftJoinLateralMany, crossJoinLateralMany
