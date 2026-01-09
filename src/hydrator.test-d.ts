@@ -1,6 +1,6 @@
 import { expectTypeOf } from "expect-type";
 
-import { createHydrator, hydrateData } from "./hydrator.ts";
+import { createHydrator, hydrate } from "./hydrator.ts";
 
 //
 // Fields: selection and transformation
@@ -876,11 +876,11 @@ import { createHydrator, hydrateData } from "./hydrator.ts";
 
 	// hydrateData with hydrator that uses default keyBy
 	const hydrator = createHydrator<User>().fields({ id: true, name: true });
-	const result1 = hydrateData([] as User[], hydrator);
+	const result1 = hydrate([] as User[], hydrator);
 	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; name: string }[]>();
 
 	// hydrateData with inline hydrator factory
-	const result2 = hydrateData([] as User[], (create: typeof createHydrator<User>) =>
+	const result2 = hydrate([] as User[], (create: typeof createHydrator<User>) =>
 		create().fields({ id: true }),
 	);
 	expectTypeOf(result2).resolves.toEqualTypeOf<{ id: number }[]>();
@@ -931,7 +931,7 @@ import { createHydrator, hydrateData } from "./hydrator.ts";
 	>();
 
 	// @ts-expect-error - hydrateData with inline factory requires keyBy when input doesn't have 'id'
-	hydrateData([] as NoIdUser[], (create: typeof createHydrator<NoIdUser>) => create());
+	hydrate([] as NoIdUser[], (create: typeof createHydrator<NoIdUser>) => create());
 }
 
 //

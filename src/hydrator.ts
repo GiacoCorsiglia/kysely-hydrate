@@ -1,4 +1,9 @@
-import { ExpectedOneItemError, KeyByMismatchError } from "./helpers/errors.ts";
+import {
+	CardinalityViolationError,
+	ExpectedOneItemError,
+	KeyByMismatchError,
+} from "./helpers/errors.ts";
+import { makeOrderByComparator, type OrderBy } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
@@ -24,6 +29,7 @@ import {
  * Only used when the input type has an "id" property.
  */
 export const DEFAULT_KEY_BY = "id";
+export type DEFAULT_KEY_BY = typeof DEFAULT_KEY_BY;
 
 /**
  * Interface representing an input that has the default key property.
@@ -250,6 +256,22 @@ interface HydratorProps<Input> {
 	 * An optional array of map functions to apply to the hydrated output.
 	 */
 	readonly mapFns?: Array<(value: any) => any> | undefined;
+
+	/**
+	 * An optional array of orderings to apply during hydration.
+	 */
+	readonly orderings?: readonly OrderBy<Input>[] | undefined;
+
+	/**
+	 * Whether to append keyBy columns as the final ordering (tie-breaker).
+	 */
+	readonly orderByKeys: boolean;
+
+	/**
+	 * Cached flag indicating whether this hydrator has 2+ many-collections.
+	 * When true, all child hydrators will receive the hasSiblingManyCollections flag.
+	 */
+	readonly hasMultipleManyCollections: boolean;
 }
 
 /**
@@ -373,11 +395,12 @@ export interface MappedHydrator<Input, Output> {
 	 * before performing the hydration. The method always returns a Promise for consistency.
 	 *
 	 * @param input - A single input entity or an iterable of input entities
+	 * @param options - Optional hydration options (sort mode, etc.)
 	 * @returns A Promise that resolves to the hydrated output(s)
 	 */
-	hydrate(input: Iterable<Input>): Promise<Output[]>;
-	hydrate(input: Input | Iterable<Input>): Promise<Output | Output[]>;
-	hydrate(input: Input): Promise<Output>;
+	hydrate(input: Iterable<Input>, options?: HydrateOptions): Promise<Output[]>;
+	hydrate(input: Input | Iterable<Input>, options?: HydrateOptions): Promise<Output | Output[]>;
+	hydrate(input: Input, options?: HydrateOptions): Promise<Output>;
 }
 
 /**
@@ -457,6 +480,34 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		// Extend, don't intersect, because the output gets overridden.
 		Extend<Output, OtherOutput>
 	>;
+
+	/**
+	 * Adds an ordering to apply during hydration. Can be chained to add multiple orderings.
+	 *
+	 * Orderings are applied when sorting nested collections (hasMany, etc.) during hydration.
+	 * By default, ordering is only applied to nested arrays (depth > 0), not the top-level array.
+	 * Use the `sort` option in `hydrate()` to control this behavior.
+	 *
+	 * @param key - The field name to order by, or a function that extracts the value to sort by
+	 * @param direction - Sort direction: "asc" or "desc" (default: "asc")
+	 * @param nulls - Where to place nulls: "first" or "last" (default: "last" for ASC, "first" for DESC)
+	 * @returns A new Hydrator with the ordering added
+	 */
+	orderBy<K extends keyof Input>(
+		key: K | ((input: Input) => unknown),
+		direction?: "asc" | "desc",
+		nulls?: "first" | "last",
+	): FullHydrator<Input, Output>;
+
+	/**
+	 * Appends the keyBy column(s) as the final ordering (as a tie-breaker).
+	 *
+	 * This ensures deterministic ordering when multiple records have the same values
+	 * for earlier orderings. The keyBy columns are always sorted ascending with nulls last.
+	 *
+	 * @returns A new Hydrator with keyBy ordering appended
+	 */
+	orderByKeys(): FullHydrator<Input, Output>;
 
 	/**
 	 * Configures a nested collection that exists in the same query result. The
@@ -643,6 +694,30 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 export const EnableAutoInclusion = Symbol();
 
 /**
+ * Options for hydration behavior.
+ */
+export interface HydrateOptions {
+	/**
+	 * When to apply sorting during hydration:
+	 * - "nested": Sort nested collections only (depth > 0), not the top-level array
+	 * - "all": Sort everything including the top-level array
+	 * - "none": Don't sort at all (rely on SQL ordering or input order)
+	 *
+	 * @default "all"
+	 */
+	sort?: "nested" | "all" | "none";
+
+	/**
+	 * When true, automatically includes all fields at each level (excluding
+	 * parent fields and nested collection fields).
+	 *
+	 * This is an internal option used by the EnableAutoInclusion symbol.
+	 * @internal
+	 */
+	[EnableAutoInclusion]?: boolean;
+}
+
+/**
  * Context passed through hydration operations.
  */
 interface HydrationContext {
@@ -651,6 +726,11 @@ interface HydrationContext {
 	 * parent fields and nested collection fields).
 	 */
 	readonly autoIncludeFields: boolean;
+
+	/**
+	 * When to apply sorting during hydration.
+	 */
+	readonly sortMode: "nested" | "all" | "none";
 
 	/**
 	 * Map of attached collection data, keyed by prefixed collection key.
@@ -663,6 +743,35 @@ interface HydrationContext {
 	 * Maps: prefix -> fieldNames[]
 	 */
 	readonly autoFieldsCache: Map<string, string[]>;
+
+	/**
+	 * When true, indicates that an ancestor hydrator has multiple hasMany collections,
+	 * which means input rows may contain cartesian products that need deduplication.
+	 * This flag propagates down to all descendant hydrators.
+	 */
+	readonly hasSiblingManyCollections: boolean;
+}
+
+/**
+ * Helper to compute whether a collections map has 2+ "many" collections OR
+ * a mix of "many" + "one"/"oneOrThrow" collections.
+ *
+ * When this is true, ALL sibling collections (including "one") need deduplication
+ * because the "many" collection causes row explosion that affects all siblings.
+ */
+function hasMultipleManyCollections(collections?: CollectionsMap): boolean {
+	if (!collections) return false;
+	let manyCount = 0;
+	let oneCount = 0;
+	for (const collection of collections.values()) {
+		if (collection.mode === "many") {
+			manyCount++;
+		} else {
+			oneCount++;
+		}
+	}
+	// Set flag if: (1) 2+ many collections, OR (2) 1+ many + 1+ one
+	return manyCount >= 2 || (manyCount >= 1 && oneCount >= 1);
 }
 
 /**
@@ -722,16 +831,43 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const ownProps = this.#props;
 		const otherProps = otherImpl.#props;
+		const mergedCollections = new Map([
+			...(ownProps.collections ?? []),
+			...(otherProps.collections ?? []),
+		]);
 		return new HydratorImpl({
-			keyBy: otherProps.keyBy,
+			keyBy: otherProps.keyBy as any,
 			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
 			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
-			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
+			collections: mergedCollections,
 			attachedCollections: new Map([
 				...(ownProps.attachedCollections ?? []),
 				...(otherProps.attachedCollections ?? []),
 			]),
 			mapFns: [...(this.#props.mapFns ?? []), ...(otherProps.mapFns ?? [])],
+			orderings: [...(ownProps.orderings ?? []), ...(otherProps.orderings ?? [])],
+			orderByKeys: otherProps.orderByKeys ?? ownProps.orderByKeys,
+			hasMultipleManyCollections: hasMultipleManyCollections(mergedCollections),
+		});
+	}
+
+	orderBy(key: any, direction: "asc" | "desc" = "asc", nulls?: "first" | "last"): any {
+		// Default nulls behavior matches PostgreSQL/Oracle:
+		// NULLS LAST for ASC, NULLS FIRST for DESC
+		const nullsPosition = nulls ?? (direction === "asc" ? "last" : "first");
+
+		return new HydratorImpl({
+			...this.#props,
+
+			orderings: [...(this.#props.orderings ?? []), { key, direction, nulls: nullsPosition }],
+		});
+	}
+
+	orderByKeys(): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			orderByKeys: true,
 		});
 	}
 
@@ -744,14 +880,17 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	has(mode: CollectionMode, key: string, prefix: string, hydrator: any): any {
+		const newCollections = new Map(this.#props.collections).set(key, {
+			prefix,
+			mode,
+			hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
+		} satisfies Collection<any, any>);
+
 		return new HydratorImpl({
 			...this.#props,
 
-			collections: new Map(this.#props.collections).set(key, {
-				prefix,
-				mode,
-				hydrator: typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator,
-			} satisfies Collection<any, any>),
+			collections: newCollections,
+			hasMultipleManyCollections: hasMultipleManyCollections(newCollections),
 		});
 	}
 
@@ -961,11 +1100,24 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		if (collections) {
+			// Optimization: Use cached flag to determine if children need cartesian product handling.
+			// If we have 2+ "many" collections at this level, their children will receive input rows
+			// with cartesian products and must use groupByKey to deduplicate.
+			// This flag propagates down to all descendants through the context.
+			const childCtx =
+				this.#props.hasMultipleManyCollections && !ctx.hasSiblingManyCollections
+					? { ...ctx, hasSiblingManyCollections: true }
+					: ctx;
+
 			for (const [key, collection] of collections) {
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, inputRows);
+				const collectionOutputs = collection.hydrator.#hydrateMany(
+					childCtx,
+					childPrefix,
+					inputRows,
+				);
 
 				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
@@ -1007,14 +1159,31 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	#hydrateMany(ctx: HydrationContext, prefix: string, inputs: Iterable<Input>): Output[] {
 		const { keyBy, collections } = this.#props;
 
+		// Sort inputs before hydration if needed
+		const finalOrderings = this.#getFinalOrderings();
+		const shouldSort = finalOrderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix);
+
+		let sortedInputs: Iterable<Input> = inputs;
+		if (shouldSort) {
+			// Convert to array for sorting
+			const inputsArray = Array.isArray(inputs) ? inputs : Array.from(inputs);
+
+			const comparator = this.#makePrefixedComparator(prefix, finalOrderings);
+			inputsArray.sort(comparator);
+
+			sortedInputs = inputsArray;
+		}
+
 		const result: Output[] = [];
 
 		// If there are no collections, we can skip grouping, because each input
 		// must correspond to a different top-level entity.  It's safe to do this
 		// even if there are attached collections, because those will be specified
 		// in their own data arrays.
-		if (!collections) {
-			for (const input of inputs) {
+		// HOWEVER: If an ancestor has sibling many-collections, we MUST always group by keyBy
+		// to handle cartesian products inherited from ancestor levels.
+		if (!collections && !ctx.hasSiblingManyCollections) {
+			for (const input of sortedInputs) {
 				// Ensure that the input exists in this row.  This check is necessary
 				// here but unnecessary below because the groupByKey function will
 				// already skip rows with null keys.
@@ -1030,7 +1199,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			return result;
 		}
 
-		const grouped = groupByKey(prefix, inputs, keyBy);
+		const grouped = groupByKey(prefix, sortedInputs, keyBy);
 		for (const groupRows of grouped.values()) {
 			// We assume the first row is representative of the group, at least for
 			// the top-level entity (not nested collections).
@@ -1042,15 +1211,79 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		return result;
 	}
 
+	#cachedOrderings: readonly OrderBy<Input>[] | undefined;
+
+	/**
+	 * Builds the final orderings array, appending keyBy columns if orderByKeys is true.
+	 * Result is cached to avoid recreating the array on repeated calls.
+	 */
+	#getFinalOrderings(): readonly OrderBy<Input>[] {
+		if (this.#cachedOrderings) {
+			return this.#cachedOrderings;
+		}
+
+		const { orderings, orderByKeys, keyBy } = this.#props;
+
+		if (!orderByKeys) {
+			this.#cachedOrderings = orderings ?? [];
+			return this.#cachedOrderings;
+		}
+
+		const keys = typeof keyBy === "string" ? [keyBy] : keyBy;
+		const keyOrderings = keys.map((key) => ({
+			key,
+			direction: "asc" as const,
+			nulls: "last" as const, // Follows PostgreSQL/Oracle: NULLS LAST for ASC
+		}));
+
+		this.#cachedOrderings = [...(orderings ?? []), ...keyOrderings];
+		return this.#cachedOrderings;
+	}
+
+	/**
+	 * Creates a comparator function that handles prefixed field names.
+	 * For function keys, creates a prefixed accessor so the function can access unprefixed fields.
+	 */
+	#makePrefixedComparator(prefix: string, orderings: readonly OrderBy<Input>[]) {
+		return makeOrderByComparator(orderings, (obj, key) => {
+			if (typeof key === "function") {
+				// Create a prefixed accessor so the function can access fields without the prefix
+				const accessor = createdPrefixedAccessor(prefix, obj as object);
+				return key(accessor as Input);
+			}
+			return getPrefixedValue(prefix, obj, key as string);
+		});
+	}
+
+	/**
+	 * Determines if sorting should be applied at the given depth.
+	 */
+	#shouldSort(sortMode: "nested" | "all" | "none", prefix: string): boolean {
+		switch (sortMode) {
+			case "nested":
+				return prefix !== "";
+			case "all":
+				return true;
+			case "none":
+				return false;
+		}
+	}
+
 	hydrate(
 		input: Input | Iterable<Input>,
-		autoIncludeFields?: typeof EnableAutoInclusion,
+		options?: HydrateOptions | typeof EnableAutoInclusion,
 	): Promise<any> {
+		// Handle legacy EnableAutoInclusion symbol for backward compatibility
+		const opts: HydrateOptions =
+			options === EnableAutoInclusion ? { [EnableAutoInclusion]: true } : (options ?? {});
+
 		// Create hydration context for this operation
 		const ctx: HydrationContext = {
-			autoIncludeFields: autoIncludeFields === EnableAutoInclusion,
+			autoIncludeFields: opts[EnableAutoInclusion] ?? false,
+			sortMode: opts.sort ?? "all",
 			attachedDataMap: new Map(),
 			autoFieldsCache: new Map(),
+			hasSiblingManyCollections: false, // Root level has no ancestors
 		};
 
 		// Fetch all attach collections upfront (this is the only async operation).
@@ -1085,7 +1318,11 @@ export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): FullHydrator<T, {}>
 export function createHydrator<T extends InputWithDefaultKey>(): FullHydrator<T, {}>;
 // Implementation
 export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<T, {}> {
-	return new HydratorImpl({ keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string) });
+	return new HydratorImpl({
+		keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string),
+		orderByKeys: false,
+		hasMultipleManyCollections: false, // No collections yet
+	});
 }
 
 /**
@@ -1096,19 +1333,19 @@ export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<
  *
  * The function will return a Promise that resolves to the hydrated output(s).
  */
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output[]>;
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]>;
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: Input,
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output>;
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
@@ -1127,6 +1364,13 @@ function applyCollectionMode<T>(
 ): T[] | T | null {
 	if (mode === "many") {
 		return outputs ?? [];
+	}
+
+	const count = outputs?.length ?? 0;
+
+	// For "one" and "oneOrThrow" modes, validate cardinality after deduplication
+	if (count > 1) {
+		throw new CardinalityViolationError(key, count);
 	}
 
 	const first = outputs?.[0];

@@ -1,7 +1,7 @@
 import { type Generated } from "kysely";
 
-import { integer, text } from "../schema/sqlite.ts";
-import { createDatabase } from "../schema/table.ts";
+import { integer, text } from "../experimental/schema/sqlite.ts";
+import { createDatabase } from "../experimental/schema/table.ts";
 
 export interface User {
 	id: Generated<number>;

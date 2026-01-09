@@ -41,6 +41,14 @@ export function prefixSelectArg(
 
 /**
  * Produces selections for a parent query to select everything selected in a
+ * subquery, without any aliasing.
+ */
+export function hoistSelections(qb: k.AliasedSelectQueryBuilder<any, string>) {
+	return hoistAndPrefixSelections("", qb);
+}
+
+/**
+ * Produces selections for a parent query to select everything selected in a
  * subquery, but aliased with the given prefix.
  */
 export function hoistAndPrefixSelections(

@@ -1,62 +1,64 @@
 {
-  "name": "kysely-hydrate",
-  "version": "0.4.2",
-  "description": "Explicit ORM-style queries with Kysely",
-  "license": "MIT",
-  "author": {
-    "name": "Giaco Corsiglia",
-    "url": "https://giacocorsiglia.com"
-  },
-  "homepage": "https://github.com/GiacoCorsiglia/kysely-hydrate#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/GiacoCorsiglia/kysely-hydrate.git"
-  },
-  "bugs": {
-    "url": "https://github.com/GiacoCorsiglia/kysely-hydrate/issues"
-  },
-  "type": "module",
-  "exports": {
-    ".": "./dist/index.mjs",
-    "./package.json": "./package.json"
-  },
-  "main": "./dist/index.mjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
-  "files": [
-    "dist"
-  ],
-  "scripts": {
-    "build": "tsdown",
-    "release": "./scripts/release.sh",
-    "test": "node --test",
-    "test:postgres": "RUN_POSTGRES_TESTS=1 node --test src/query-builder.postgres.test.ts",
-    "typecheck": "tsgo",
-    "typecheck:tsc": "tsc",
-    "lint": "oxlint",
-    "format": "oxfmt",
-    "prepublishOnly": "npm run build"
-  },
-  "packageManager": "npm@10.9.4",
-  "engines": {
-    "node": ">=22.18.0"
-  },
-  "peerDependencies": {
-    "kysely": "^0.28"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22",
-    "@types/pg": "^8.16.0",
-    "@typescript/native-preview": "^7.0.0-dev.20251207.1",
-    "better-sqlite3": "^12.4.1",
-    "expect-type": "^1.3.0",
-    "kysely": "^0.28.7",
-    "oxfmt": "^0.16.0",
-    "oxlint": "^1.31.0",
-    "pg": "^8.16.3",
-    "postgres-array": "^3.0.4",
-    "tsdown": "^0.17.1",
-    "typescript": "^5.9.3"
-  }
+	"name": "kysely-hydrate",
+	"version": "0.4.2",
+	"description": "Explicit ORM-style queries with Kysely",
+	"homepage": "https://github.com/GiacoCorsiglia/kysely-hydrate#readme",
+	"bugs": {
+		"url": "https://github.com/GiacoCorsiglia/kysely-hydrate/issues"
+	},
+	"license": "MIT",
+	"author": {
+		"name": "Giaco Corsiglia",
+		"url": "https://giacocorsiglia.com"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/GiacoCorsiglia/kysely-hydrate.git"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"main": "./dist/index.mjs",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.mts",
+	"exports": {
+		".": "./dist/index.mjs",
+		"./experimental": "./dist/experimental.mjs",
+		"./package.json": "./package.json"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"release": "./scripts/release.sh",
+		"test": "node --test",
+		"test:postgres": "RUN_POSTGRES_TESTS=1 node --test src/**/*.postgres*.test.ts",
+		"test:all": "RUN_POSTGRES_TESTS=1 node --test",
+		"typecheck": "tsgo",
+		"typecheck:tsc": "tsc",
+		"lint": "oxlint",
+		"format": "oxfmt",
+		"prepublishOnly": "npm run build"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.13",
+		"@types/node": "^22",
+		"@types/pg": "^8.16.0",
+		"@typescript/native-preview": "^7.0.0-dev.20260108.1",
+		"better-sqlite3": "^12.4.1",
+		"expect-type": "^1.3.0",
+		"kysely": "^0.28.7",
+		"oxfmt": "^0.23.0",
+		"oxlint": "^1.38.0",
+		"pg": "^8.16.3",
+		"postgres-array": "^3.0.4",
+		"tsdown": "^0.17.1",
+		"typescript": "^5.9.3"
+	},
+	"peerDependencies": {
+		"kysely": "^0.28"
+	},
+	"engines": {
+		"node": ">=22.18.0"
+	},
+	"packageManager": "npm@10.9.4"
 }

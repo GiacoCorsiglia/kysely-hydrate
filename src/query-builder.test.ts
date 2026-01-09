@@ -712,10 +712,19 @@ test("attachOne: returns first match or null", async () => {
 			"latestPost",
 			async (userRows) => {
 				const userIds = userRows.map((u) => u.id);
+				// Use a subquery with DISTINCT ON or GROUP BY to ensure exactly one post per user
 				return db
 					.selectFrom("posts")
 					.select(["posts.id", "posts.user_id", "posts.title"])
 					.where("posts.user_id", "in", userIds)
+					.where("posts.id", "in", (eb) =>
+						eb
+							.selectFrom("posts as p")
+							.select("p.id")
+							.whereRef("p.user_id", "=", "posts.user_id")
+							.orderBy("p.id", "asc")
+							.limit(1),
+					)
 					.execute();
 			},
 			{ matchChild: "user_id" },
@@ -737,10 +746,19 @@ test("attachOneOrThrow: returns entity when exists", async () => {
 			"requiredPost",
 			async (userRows) => {
 				const userIds = userRows.map((u) => u.id);
+				// Use a subquery to ensure exactly one post per user
 				return db
 					.selectFrom("posts")
 					.select(["posts.id", "posts.user_id", "posts.title"])
 					.where("posts.user_id", "in", userIds)
+					.where("posts.id", "in", (eb) =>
+						eb
+							.selectFrom("posts as p")
+							.select("p.id")
+							.whereRef("p.user_id", "=", "posts.user_id")
+							.orderBy("p.id", "asc")
+							.limit(1),
+					)
 					.execute();
 			},
 			{ matchChild: "user_id" },

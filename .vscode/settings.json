@@ -1,17 +1,14 @@
 {
-  "typescript.experimental.useTsgo": true,
+	"typescript.experimental.useTsgo": true,
 
-  "oxc.fmt.experimental": true,
+	"oxc.fmt.experimental": true,
 
-  "editor.defaultFormatter": "oxc.oxc-vscode",
-  "editor.codeActionsOnSave": {
-    "source.fixAll.oxc": "always"
-  },
-  "[typescript]": {
-    "editor.defaultFormatter": "oxc.oxc-vscode"
-  },
-  "cSpell.words": [
-    "oxlint",
-    "oxfmt"
-  ]
+	"editor.defaultFormatter": "oxc.oxc-vscode",
+	"editor.codeActionsOnSave": {
+		"source.fixAll.oxc": "always"
+	},
+	"[typescript]": {
+		"editor.defaultFormatter": "oxc.oxc-vscode"
+	},
+	"cSpell.words": ["oxlint", "oxfmt"]
 }

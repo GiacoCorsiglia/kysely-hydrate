@@ -7,9 +7,9 @@ import {
 	type UnknownRow,
 } from "kysely";
 
-import { type Provenance, traceLineage } from "./helpers/scope-resolver.ts";
 import { getMappedNodes } from "./mapped-expression.ts";
 import { type Database } from "./schema/table.ts";
+import { type Provenance, traceLineage } from "./scope-resolver.ts";
 
 export class HydratePlugin implements KyselyPlugin {
 	readonly #database: Database;

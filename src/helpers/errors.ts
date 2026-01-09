@@ -24,6 +24,15 @@ export class ExpectedOneItemError extends KyselyHydrateError {
 }
 
 /**
+ * Error thrown when a collection mode expects exactly one item but multiple are found.
+ */
+export class CardinalityViolationError extends KyselyHydrateError {
+	constructor(key: string, count: number) {
+		super(`Expected exactly one item for key ${key}, but got ${count}`);
+	}
+}
+
+/**
  * Error thrown when wildcard selections (SELECT * or table.*) are encountered in lineage tracing.
  */
 export class WildcardSelectionError extends KyselyHydrateError {

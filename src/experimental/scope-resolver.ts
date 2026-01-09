@@ -1,7 +1,5 @@
 import * as k from "kysely";
 
-import { type SomeColumnType } from "../schema/column-type.ts";
-import { type Database } from "../schema/table.ts";
 import {
 	AmbiguousColumnReferenceError,
 	UnsupportedAliasNodeTypeError,
@@ -9,7 +7,9 @@ import {
 	UnsupportedTableAliasNodeTypeError,
 	UnexpectedSelectionTypeError,
 	WildcardSelectionError,
-} from "./errors.ts";
+} from "../helpers/errors.ts";
+import { type SomeColumnType } from "./schema/column-type.ts";
+import { type Database } from "./schema/table.ts";
 
 type MapFn = (input: any) => unknown;
 

@@ -4,8 +4,9 @@ import { test } from "node:test";
 import * as k from "kysely";
 
 import { db, seedDb } from "../__tests__/sqlite.ts";
-import { type SomeColumnType } from "../schema/column-type.ts";
-import { AmbiguousColumnReferenceError } from "./errors.ts";
+import { AmbiguousColumnReferenceError } from "../helpers/errors.ts";
+import { getMappedNodes, map } from "./mapped-expression.ts";
+import { type SomeColumnType } from "./schema/column-type.ts";
 import { type Provenance, traceLineage } from "./scope-resolver.ts";
 
 function getQueryNode(query: k.SelectQueryBuilder<any, any, any>): k.SelectQueryNode {
@@ -993,9 +994,6 @@ test("from: multiple tables with qualified unique columns", () => {
 		]),
 	);
 });
-
-// Map function tests
-import { getMappedNodes, map } from "../mapped-expression.ts";
 
 test("mapFns: simple map on column reference", () => {
 	const mapFn = (x: any) => x;

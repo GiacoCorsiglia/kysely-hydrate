@@ -8,24 +8,18 @@
  */
 
 import assert from "node:assert";
-import { after, before, describe, test } from "node:test";
+import { describe, test } from "node:test";
 
 import { CamelCasePlugin } from "kysely";
 
-import { db, setupDatabase, teardownDatabase } from "./__tests__/postgres.ts";
+import { getDbForTest } from "./__tests__/postgres.ts";
 import { hydrate } from "./query-builder.ts";
 
 // Skip all tests if not explicitly enabled
 const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
 
 describe("PostgreSQL tests", { skip: !shouldRun }, () => {
-	before(async () => {
-		await setupDatabase();
-	});
-
-	after(async () => {
-		await teardownDatabase();
-	});
+	const db = getDbForTest();
 
 	test("innerJoinLateral: adds inner join lateral", async () => {
 		const users = await hydrate(db.selectFrom("users").select(["users.id", "users.username"]), "id")
@@ -578,8 +572,9 @@ describe("PostgreSQL tests", { skip: !shouldRun }, () => {
 	});
 
 	test("toRootQuery: enables pagination with lateral joins", async () => {
-		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"]))
-			.hasMany("posts", ({ leftJoinLateral }) =>
+		const builder = hydrate(db.selectFrom("users").select(["users.id", "users.username"])).hasMany(
+			"posts",
+			({ leftJoinLateral }) =>
 				leftJoinLateral(
 					(eb) =>
 						hydrate(
@@ -593,7 +588,7 @@ describe("PostgreSQL tests", { skip: !shouldRun }, () => {
 						).as("p"),
 					(join) => join.onTrue(),
 				),
-			);
+		);
 
 		const page1 = await builder
 			.toRootQuery()
