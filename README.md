@@ -110,7 +110,7 @@ type Result = Array<{
 		category: {
 			id: number;
 			name: string;
-      // Includes computed field:
+			// Includes computed field:
 			upperName: string;
 		};
 	}>;
@@ -178,9 +178,9 @@ type Result = Array<{ id: number; username: string }>;
 ```
 
 > [!WARNING]
-> When using the `querySet()` API, you cannot use `.selectAll()` in your
-> queries, because Kysely Hydrate must introspect your queries for the shape
-> of names of their selections.
+> When using the `querySet()` API, you cannot use `.selectAll()`, because Kysely
+> Hydrate must introspect your queries for the names of their selections at
+> runtime.
 
 ### Keying and deduplication with keyBy
 
