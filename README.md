@@ -220,7 +220,7 @@ Instead of "mapping" joins after they happen, Kysely Hydrate treats joins as str
 
 Nested query sets are isolated in subqueries to prevent naming collisions and ensure correct scoping.
 
-#### `*JoinOne` (Object relations)
+#### "One" relations (objects) with `.*JoinOne()`
 
 Use `innerJoinOne` or `leftJoinOne` to hydrate a single nested object.
 
@@ -281,7 +281,7 @@ error during hydration if the relationship is missing.
 > if your query returns multiple rows for a `*One` join (e.g., multiple profiles
 > for the same user).
 
-#### `*JoinMany` (Array relations)
+#### "Many" relations (arrays) with `.*JoinMany()`
 
 Use `innerJoinMany` or `leftJoinMany` to hydrate a nested array of objects.
 
