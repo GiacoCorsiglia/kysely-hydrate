@@ -144,7 +144,6 @@ type Result = Array<{
   - [Prefixed collections with `.has*()`](#prefixed-collections-with-has)
   - [Composing hydrators with `.extend()`](#composing-hydrators-with-extend)
 - [FAQ](#faq)
-- [Acknowledgements](#acknowledgements)
 
 ## Installation
 
