@@ -532,13 +532,12 @@ test("orderBy: with nested one-many (user -> profile -> posts)", async () => {
 		.innerJoinOne(
 			"profile",
 			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"]))
-					.leftJoinMany(
-						"posts",
-						(init2) => init2((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
-						"posts.user_id",
-						"profile.user_id",
-					),
+				init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
+					"posts",
+					(init2) => init2((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+					"posts.user_id",
+					"profile.user_id",
+				),
 			"profile.user_id",
 			"user.id",
 		)
@@ -641,16 +640,15 @@ test("orderBy: with nested many-many (user -> posts -> comments)", async () => {
 		.leftJoinMany(
 			"posts",
 			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]))
-					.leftJoinMany(
-						"comments",
-						(init2) =>
-							init2((eb) =>
-								eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"]),
-							),
-						"comments.post_id",
-						"posts.id",
-					),
+				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+					"comments",
+					(init2) =>
+						init2((eb) =>
+							eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"]),
+						),
+					"comments.post_id",
+					"posts.id",
+				),
 			"posts.user_id",
 			"user.id",
 		)
@@ -760,23 +758,23 @@ test("orderBy: with nested many-many-many (user -> posts -> comments -> replies)
 		.leftJoinMany(
 			"posts",
 			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]))
-					.leftJoinMany(
-						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"]))
-								.leftJoinMany(
-									"replies",
-									(init3) =>
-										init3((eb) =>
-											eb.selectFrom("replies").select(["id", "content", "comment_id", "user_id"]),
-										),
-									"replies.comment_id",
-									"comments.id",
+				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+					"comments",
+					(init2) =>
+						init2((eb) =>
+							eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"]),
+						).leftJoinMany(
+							"replies",
+							(init3) =>
+								init3((eb) =>
+									eb.selectFrom("replies").select(["id", "content", "comment_id", "user_id"]),
 								),
-						"comments.post_id",
-						"posts.id",
-					),
+							"replies.comment_id",
+							"comments.id",
+						),
+					"comments.post_id",
+					"posts.id",
+				),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1004,11 +1002,7 @@ test("orderBy: custom keyBy column", async () => {
 
 test("orderBy: composite keyBy", async () => {
 	const posts = await querySet(db)
-		.init(
-			"post",
-			db.selectFrom("posts").select(["id", "user_id", "title"]),
-			["user_id", "id"],
-		)
+		.init("post", db.selectFrom("posts").select(["id", "user_id", "title"]), ["user_id", "id"])
 		// No explicit orderBy, should order by keyBy (user_id, id)
 		.execute();
 
