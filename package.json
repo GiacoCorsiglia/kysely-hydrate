@@ -31,6 +31,7 @@
     "release": "./scripts/release.sh",
     "test": "node --test",
     "test:postgres": "RUN_POSTGRES_TESTS=1 node --test src/**/*.postgres*.test.ts",
+    "test:all": "RUN_POSTGRES_TESTS=1 node --test",
     "typecheck": "tsgo",
     "typecheck:tsc": "tsc",
     "lint": "oxlint",

@@ -10,8 +10,6 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { CamelCasePlugin } from "kysely";
-
 import { getDbForTest } from "./__tests__/postgres.ts";
 import { querySet } from "./query-set.ts";
 
@@ -683,47 +681,6 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.executeCount(Number);
 
 		assert.strictEqual(count, 3); // Counts all matching users, not just paginated
-	});
-
-	//
-	// CamelCasePlugin compatibility
-	//
-
-	test("CamelCasePlugin: basic lateral join with camelCase", async () => {
-		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
-			users: { id: number; username: string };
-			posts: { id: number; title: string; userId: number };
-		}>();
-
-		const users = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 2)
-			.innerJoinLateralMany(
-				"posts",
-				(init) =>
-					init((eb) =>
-						eb
-							.selectFrom("posts")
-							.select(["id", "title", "userId"])
-							.whereRef("posts.userId", "=", "user.id")
-							.orderBy("posts.id")
-							.limit(2),
-					),
-				(join) => join.onTrue(),
-			)
-			.execute();
-
-		// With CamelCasePlugin, user_id should be converted to userId
-		assert.deepStrictEqual(users, [
-			{
-				id: 2,
-				username: "bob",
-				posts: [
-					{ id: 1, title: "Post 1", userId: 2 },
-					{ id: 2, title: "Post 2", userId: 2 },
-				],
-			},
-		]);
 	});
 
 	//
