@@ -68,6 +68,9 @@ interface TQuery<in out DB = any, in out TB extends keyof DB = any> {
 	O: any;
 }
 
+type InferTQuery<Q extends AnySelectQueryBuilder> =
+	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O> ? { DB: DB; TB: TB; O: O } : never;
+
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
 
 interface TJoinCollection {
@@ -2014,15 +2017,6 @@ type TOrderableColumnsWithJoin<
 	? T["OrderableColumns"] | ApplyPrefixWithSep<Key, TNested["OrderableColumns"]>
 	: T["OrderableColumns"];
 
-type TJoinedQuery<JoinedQuery extends k.SelectQueryBuilder<any, any, any>> =
-	JoinedQuery extends k.SelectQueryBuilder<infer JoinedDB, infer JoinedTB, infer JoinedRow>
-		? {
-				DB: JoinedDB;
-				TB: JoinedTB;
-				O: JoinedRow;
-			}
-		: never;
-
 type TQuerySetWithJoin<
 	T extends TQuerySet,
 	Key extends string,
@@ -2040,7 +2034,7 @@ type TQuerySetWithJoin<
 		Key,
 		{ Prototype: "Join"; Type: Type; Value: TNested }
 	>;
-	JoinedQuery: TJoinedQuery<JoinedQuery>;
+	JoinedQuery: InferTQuery<JoinedQuery>;
 	OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
 	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, NestedHydratedRow>;
 }>;
@@ -2856,11 +2850,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 ////////////////////////////////////////////////////////////
 
 interface InitialQuerySet<
-	DB,
-	BaseAlias extends string,
-	BaseDB,
-	BaseTB extends keyof BaseDB,
-	BaseO,
+	in out DB,
+	in out BaseAlias extends string,
+	in out BaseDB,
+	in out BaseTB extends keyof BaseDB,
+	in out BaseO,
 > extends QuerySet<{
 	DB: DB;
 	IsMapped: false;
@@ -2879,23 +2873,25 @@ interface InitialQuerySet<
 	HydratedOutput: BaseO;
 }> {}
 
-type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
-type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
-type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
+// type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
+// type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
+// type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
 
 // A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
 // such as with expressions.
-interface SelectCreator<DB, TB extends keyof DB> {
+interface SelectCreator<in out DB, in out TB extends keyof DB> {
 	selectFrom: k.ExpressionBuilder<DB, TB>["selectFrom"];
 }
 
-type SelectQueryBuilderFactory<
-	DB,
-	TB extends keyof DB,
-	BaseDB,
-	BaseTB extends keyof BaseDB,
-	BaseO,
-> = (eb: SelectCreator<DB, TB>) => k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+interface SelectQueryBuilderFactory<
+	in out DB,
+	in out TB extends keyof DB,
+	in out BaseDB,
+	in out BaseTB extends keyof BaseDB,
+	in out BaseO,
+> {
+	(eb: SelectCreator<DB, TB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+}
 
 type SelectQueryBuilderOrFactory<
 	DB,
@@ -2907,7 +2903,7 @@ type SelectQueryBuilderOrFactory<
 	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
 	| SelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
 
-interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
+interface InitWithAlias<in out DB, in out TB extends keyof DB, in out Alias extends string> {
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
 		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
@@ -2918,13 +2914,11 @@ interface InitWithAlias<DB, TB extends keyof DB, Alias extends string> {
 	<
 		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		BaseDB = InferDB<Q>,
-		BaseTB extends keyof BaseDB = InferTB<Q>,
-		BaseO = InferO<Q>,
+		TQ extends TQuery = InferTQuery<Q>,
 	>(
 		query: F,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+		keyBy: KeyBy<NoInfer<TQ["O"]>>,
+	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
 }
 
 /**
@@ -3009,14 +3003,12 @@ class QuerySetCreator<in out DB> {
 		Alias extends string,
 		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		BaseDB = InferDB<Q>,
-		BaseTB extends keyof BaseDB = InferTB<Q>,
-		BaseO = InferO<Q>,
+		TQ extends TQuery = InferTQuery<Q>,
 	>(
 		alias: Alias,
 		query: F,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
+		keyBy: KeyBy<NoInfer<TQ["O"]>>,
+	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
 	init(
 		alias: string,
 		query: any,
