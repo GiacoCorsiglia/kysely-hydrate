@@ -78,7 +78,7 @@ const userQuerySet = await querySet(db)
 	)
 	// Modify collections after they've been added to the query set.
 	.modify("posts", (posts) =>
-		// Application-level join: Attach authors to posts
+		// Application-level join: Attach category to posts
 		posts.attachOneOrThrow(
 			"category",
 			async (posts) =>
@@ -96,27 +96,25 @@ const count = await userQuerySet.executeCount();
 
 // Execute the query and hydrate the result.
 const users = await userQuerySet.execute();
+// ⬇ Result:
+type Result = Array<{
+	id: number;
+	email: string;
 
-// Result:
-const result = [
-	{
-		id: 1,
-		email: "...",
-		posts: [
-			{
-				id: 2,
-				title: "...",
-				commentsCount: 42,
-				categoryId: 3,
-				category: {
-					id: 3,
-					name: "...",
-					upperName: "...",
-				},
-			},
-		],
-	},
-];
+	posts: Array<{
+		id: number;
+		title: string;
+		commentsCount: number;
+		categoryId: number;
+
+		category: {
+			id: number;
+			name: string;
+      // Includes computed field:
+			upperName: string;
+		};
+	}>;
+}>;
 ```
 
 ## Table of Contents
