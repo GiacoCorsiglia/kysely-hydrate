@@ -30,6 +30,11 @@ export function hasAnyPrefix(string: string): boolean {
 
 export type ApplyPrefix<Prefix extends string, Key extends string = ""> = `${Prefix}${Key}`;
 
+export type ApplyPrefixWithSep<
+	Prefix extends string,
+	Key extends string = "",
+> = `${Prefix}${SEP}${Key}`;
+
 /**
  * Applies a prefix to a key.
  *

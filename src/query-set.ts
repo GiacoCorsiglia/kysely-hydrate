@@ -18,7 +18,12 @@
 
 import * as k from "kysely";
 
-import { type ApplyPrefixes, type MakePrefix, makePrefix } from "./helpers/prefixes.ts";
+import {
+	type ApplyPrefixes,
+	type ApplyPrefixWithSep,
+	type MakePrefix,
+	makePrefix,
+} from "./helpers/prefixes.ts";
 import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
 	type Extend,
@@ -121,6 +126,11 @@ interface TQuerySet {
 	 */
 	JoinedQuery: TQuery;
 	/**
+	 * Columns that can be used in ORDER BY clauses (i.e., columns from
+	 * cardinality-one joins).
+	 */
+	OrderableColumns: string;
+	/**
 	 * The final shape of the hydrated output row.
 	 */
 	HydratedOutput: any;
@@ -140,6 +150,7 @@ interface TMapped<in out T extends TQuerySet, in out Output> {
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
 	JoinedQuery: T["JoinedQuery"];
+	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Output;
 }
 
@@ -154,6 +165,7 @@ interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQ
 		TB: T["JoinedQuery"]["TB"];
 		O: T["JoinedQuery"]["O"];
 	};
+	OrderableColumns: T["OrderableColumns"] | (keyof BaseQuery["O"] & string);
 	// Extend in this order because we are expanding the input type, but it still
 	// needs to be overwritten by .extras() and whatnot.
 	HydratedOutput: Extend<BaseQuery["O"], TOutput<T>>;
@@ -166,6 +178,7 @@ interface TWithOutput<in out T extends TQuerySet, in out Output> {
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
 	JoinedQuery: T["JoinedQuery"];
+	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Output;
 }
 
@@ -176,6 +189,7 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 	BaseQuery: T["BaseQuery"];
 	Collections: T["Collections"];
 	JoinedQuery: T["JoinedQuery"];
+	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Extend<TOutput<T>, Output>;
 }
 
@@ -706,6 +720,74 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * ```
 	 */
 	clearOffset(): this;
+
+	/**
+	 * Adds an ORDER BY clause to the query.  Note that query sets are always
+	 * ordered by the keyBy columns used to deduplicate rows (default `id`) to
+	 * guarantee stable ordering (sorted ascending).  This method allows you to
+	 * add additional ordering criteria to the query.  If you do, the keyBy
+	 * columns will be used as a tie-breaker (appended to the end of the ORDER BY
+	 * clause).
+	 *
+	 * To customize the keyBy behavior, you may explicitly call `.orderBy()` with
+	 * one of the keyBy columns.  If you do, that column will be inserted into the
+	 * ORDER BY clause in the position of your call, with any remaining keyBy
+	 * columns appended to the end of the query.
+	 *
+	 * To completely disable the keyBy behavior, you may call `.noKeyOrdering()`.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinOne(
+	 *     "profile",
+	 *     (init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+	 *     "profile.user_id",
+	 *     "user.id"
+	 *   )
+	 *   // Reference base table column
+	 *   .orderBy("username")
+	 *   // Reference nested join column from cardinality-one join
+	 *   .orderBy("profile$$bio")
+	 *   .execute();
+	 * // Returns users ordered by "username", then by "profile.bio".
+	 * ```
+	 */
+	orderBy(expr: T["OrderableColumns"], modifiers?: k.OrderByModifiers): this;
+
+	/**
+	 * Clears custom ORDER BY clauses from the query (note, the query will still
+	 * be ordered by the keyBy columns).
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .orderBy("username")
+	 *   .clearOrderBy()
+	 *   .execute();
+	 * // Returns users ordered by "id".
+	 * ```
+	 */
+	clearOrderBy(): this;
+
+	/**
+	 * By default, query sets are ordered by the keyBy columns used to deduplicate
+	 * rows (default `id`) to guarantee stable ordering (sorted ascending).  Call
+	 * this method with `false` to disable this behavior for this query set.  Call
+	 * it with `true` to re-enable it.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .orderByKeys(false)
+	 *   .execute();
+	 * // Returns users ordered by "id".
+	 * ```
+	 */
+	orderByKeys(enabled?: boolean): this;
 }
 
 /**
@@ -1809,6 +1891,7 @@ interface TQuerySetWithAttach<
 		Key,
 		{ Prototype: "Attach"; Type: Type; Value: FetchFnReturn }
 	>;
+	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: ExtendWith<TOutput<T>, Key, AttachedOutput>;
 }
 
@@ -1894,6 +1977,17 @@ type JoinCallbackExpression<
 	ToTableExpression<Key, TNested>
 >;
 
+type CardinalityOneJoinType = "InnerJoinOne" | "LeftJoinOne" | "LeftJoinOneOrThrow";
+
+type TOrderableColumnsWithJoin<
+	T extends TQuerySet,
+	Key extends string,
+	Type extends TJoinType,
+	TNested extends TQuerySet,
+> = Type extends CardinalityOneJoinType
+	? T["OrderableColumns"] | ApplyPrefixWithSep<Key, TNested["OrderableColumns"]>
+	: T["OrderableColumns"];
+
 type TQuerySetWithJoin<
 	T extends TQuerySet,
 	Key extends string,
@@ -1918,6 +2012,7 @@ type TQuerySetWithJoin<
 					TB: JoinedTB;
 					O: JoinedRow;
 				};
+				OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
 				HydratedOutput: ExtendWith<TOutput<T>, Key, NestedHydratedRow>;
 			}
 		: never
@@ -2057,8 +2152,9 @@ interface QuerySetProps {
 	attachCollections: Map<string, AttachCollection>;
 	limit: LimitOrOffset;
 	offset: LimitOrOffset;
-	// TODO
+	// TODO: What should this shape be?
 	orderBy: unknown;
+	orderByKeys: boolean;
 }
 
 /**
@@ -2201,14 +2297,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	#applyOrderBy(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
 		const { baseAlias, keyBy } = this.#props;
 
-		// TODO: this.#props.orderBy.
+		// TODO: Apply this.#props.orderBy.
 
 		// Always order by the key(s); as tie breakers if nothing else.
-		if (typeof keyBy === "string") {
-			qb = qb.orderBy(`${baseAlias}.${keyBy}`, "asc");
-		} else {
-			for (const key of keyBy) {
-				qb = qb.orderBy(`${baseAlias}.${key}`, "asc");
+		if (this.#props.orderByKeys) {
+			if (typeof keyBy === "string") {
+				qb = qb.orderBy(`${baseAlias}.${keyBy}`, "asc");
+			} else {
+				for (const key of keyBy) {
+					qb = qb.orderBy(`${baseAlias}.${key}`, "asc");
+				}
 			}
 		}
 
@@ -2643,6 +2741,29 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			offset: null,
 		});
 	}
+
+	orderBy(...args: any[]): any {
+		// TODO: Handle args correctly.
+		return this.#clone({
+			// TODO: Do the right thing here (probably append to an array).
+			orderBy: args,
+		});
+	}
+
+	clearOrderBy(): any {
+		return this.#clone({
+			// TODO: Probably set to an empty array?
+			orderBy: null,
+		});
+	}
+
+	orderByKeys(enabled: boolean = true): any {
+		return this.#clone({
+			orderByKeys: enabled,
+			// Also apply the setting to the hydrator.
+			hydrator: this.#props.hydrator.orderByKeys(enabled),
+		});
+	}
 }
 
 ////////////////////////////////////////////////////////////
@@ -2667,6 +2788,8 @@ interface InitialQuerySet<
 	Collections: {};
 	// The joined query mostly looks like the base query.
 	JoinedQuery: InitialJoinedQuery<BaseDB, BaseAlias, BaseO>;
+	// No orderable columns other than the base query yet.
+	OrderableColumns: keyof BaseO & string;
 	// The hydrated output is the same as the base query output; no mapping yet.
 	HydratedOutput: BaseO;
 }> {}
@@ -2827,6 +2950,7 @@ class QuerySetCreator<in out DB> {
 			limit: null,
 			offset: null,
 			orderBy: null,
+			orderByKeys: true,
 		});
 	}
 }

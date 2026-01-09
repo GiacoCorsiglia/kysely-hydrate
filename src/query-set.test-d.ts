@@ -1494,6 +1494,77 @@ interface Comment {
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
 }
 
+//
+// orderBy
+//
+
+// orderBy with base column name
+
+{
+	const result = querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.orderBy("username")
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+// orderBy with string modifier
+
+{
+	const result = querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.orderBy("username", "desc" as "asc" | "desc")
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+// orderBy with callback modifier
+
+{
+	const result = querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.orderBy("username", (ob) => ob.desc().nullsFirst())
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+// orderBy with nested join (one).
+
+{
+	const result = querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.innerJoinOne(
+			"profile",
+			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			"profile.user_id",
+			"user.id",
+		)
+		.orderBy("username") // Still accepts base query columns.
+		.orderBy("profile$$bio") // Accepts prefixed nested join columns.
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			profile: { id: number; bio: string | null; user_id: number };
+		}[]
+	>();
+}
+
+// Rejects nonsense key
+
+{
+	querySet(db)
+		.init("user", db.selectFrom("users").select(["id", "username"]))
+		// @ts-expect-error - nonsense key
+		.orderBy("nonExistent")
+		.execute();
+}
+
 ////////////////////////////////////////////////////////////
 // Section 31: Query Compilation - toBaseQuery
 ////////////////////////////////////////////////////////////
