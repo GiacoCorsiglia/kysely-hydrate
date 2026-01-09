@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 
 import { ExpectedOneItemError, KeyByMismatchError } from "./helpers/errors.ts";
-import { createHydrator, hydrateData } from "./hydrator.ts";
+import { createHydrator, hydrate } from "./hydrator.ts";
 
 // Test data types
 interface User {
@@ -25,7 +25,7 @@ test("fields: includes specified fields as-is", async () => {
 		name: true,
 	});
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [
 		{ id: 1, name: "Alice" },
@@ -41,7 +41,7 @@ test("fields: accepts array shorthand for including fields", async () => {
 
 	const hydrator = createHydrator<User>("id").fields(["id", "name"]);
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [
 		{ id: 1, name: "Alice" },
@@ -57,7 +57,7 @@ test("fields: transforms field values with functions", async () => {
 		name: (name) => name.toUpperCase(),
 	});
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "ALICE" }]);
 });
@@ -81,7 +81,7 @@ test("fields: transformations work at nested level", async () => {
 			}),
 		);
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result[0]?.posts[0]?.title, "HELLO WORLD");
 });
@@ -95,7 +95,7 @@ test("extras: computes additional fields from input", async () => {
 			displayName: (input) => `User ${input.name}`,
 		});
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [{ id: 1, displayName: "User Alice" }]);
 });
@@ -118,7 +118,7 @@ test("extras: work at nested level", async () => {
 				}),
 		);
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result[0]?.posts[0]?.fullTitle, "Post #10: Post");
 });
@@ -128,7 +128,7 @@ test("omit: removes specified fields from output", async () => {
 
 	const hydrator = createHydrator<User>("id").fields({ id: true, name: true }).omit(["name"]);
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [{ id: 1 }]);
 	assert.strictEqual("name" in result[0]!, false);
@@ -151,7 +151,7 @@ test("omit: works with extras to hide implementation details", async () => {
 		})
 		.omit(["firstName", "lastName"]);
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [{ id: 1, fullName: "Alice Smith" }]);
 	assert.strictEqual("firstName" in result[0]!, false);
@@ -175,7 +175,7 @@ test("omit: works at nested level", async () => {
 			h("id").fields({ id: true, title: true, content: true }).omit(["content"]),
 		);
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.deepStrictEqual(result[0]?.posts[0], { id: 10, title: "Post" });
 	assert.strictEqual("content" in result[0]!.posts[0]!, false);
@@ -203,7 +203,7 @@ test("composite keys: groups by multiple fields", async () => {
 		})
 		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.deepStrictEqual(result[0], {
@@ -258,7 +258,7 @@ test("composite keys: work at nested level", async () => {
 				.hasMany("comments", "comments$$", (h) => h("id").fields({ id: true, text: true })),
 		);
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result[0]?.posts.length, 1);
 	assert.strictEqual(result[0]?.posts[0]?.comments.length, 2);
@@ -283,7 +283,7 @@ test("composite keys: skips rows where any key part is null", async () => {
 		value: true,
 	});
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result.length, 1);
 	assert.deepStrictEqual(result[0], { key1: "a", key2: 1, value: "valid" });
@@ -309,7 +309,7 @@ test("hasMany: creates nested array collections", async () => {
 		.fields({ id: true, name: true })
 		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.deepStrictEqual(result[0], {
@@ -362,7 +362,7 @@ test("hasMany: handles multiple nesting levels", async () => {
 				.hasMany("comments", "comments$$", (h) => h("id").fields({ id: true, content: true })),
 		);
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result[0]?.posts[0]?.comments.length, 2);
 	assert.deepStrictEqual(result[0]?.posts[0]?.comments[0], {
@@ -389,13 +389,13 @@ test("hasOne: returns first nested entity or null", async () => {
 		.fields({ id: true, name: true })
 		.hasOne("profile", "profile$$", (h) => h("name").fields({ name: true, age: true }));
 
-	const withProfile = await hydrateData(usersWithProfile, hydrator);
+	const withProfile = await hydrate(usersWithProfile, hydrator);
 	assert.deepStrictEqual(withProfile[0]?.profile, {
 		name: "Alice P.",
 		age: 30,
 	});
 
-	const withoutProfile = await hydrateData(usersWithoutProfile, hydrator);
+	const withoutProfile = await hydrate(usersWithoutProfile, hydrator);
 	assert.strictEqual(withoutProfile[0]?.profile, null);
 });
 
@@ -413,7 +413,7 @@ test("hasOneOrThrow: returns nested entity when exists", async () => {
 		.fields({ id: true, name: true })
 		.hasOneOrThrow("profile", "profile$$", (h) => h("name").fields({ name: true, age: true }));
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.deepStrictEqual(result[0]?.profile, { name: "Alice P.", age: 30 });
 });
@@ -433,7 +433,7 @@ test("hasOneOrThrow: throws when nested entity is missing", async () => {
 		.hasOneOrThrow("profile", "profile$$", (h) => h("name").fields({ name: true, age: true }));
 
 	await assert.rejects(async () => {
-		await hydrateData(rows, hydrator);
+		await hydrate(rows, hydrator);
 	}, ExpectedOneItemError);
 });
 
@@ -462,7 +462,7 @@ test("attachMany: fetches and matches related entities", async () => {
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.strictEqual(result[0]?.posts.length, 2);
@@ -521,14 +521,14 @@ test("attachMany: calls fetchFn once", async () => {
 			.fields({ id: true, userId: true, title: true })
 			.attachMany("comments", fetchComments, { matchChild: "postId", toParent: "id" });
 
-		return await hydrateData(posts, postHydrator);
+		return await hydrate(posts, postHydrator);
 	};
 
 	const hydrator = createHydrator<User>("id")
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	// Each fetch function should be called exactly once
 	assert.strictEqual(userPostsFetchCount, 1);
@@ -553,7 +553,7 @@ test("attachMany: returns empty array when no matches", async () => {
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.ok(Array.isArray(result[0]?.posts));
 	assert.strictEqual(result[0]?.posts.length, 0);
@@ -570,7 +570,7 @@ test("attachMany: uses compareTo for custom matching keys", async () => {
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "authorId", toParent: "id" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result[0]?.posts.length, 1);
 	assert.deepStrictEqual(result[0]?.posts[0], {
@@ -607,7 +607,7 @@ test("attachMany: works with composite keys", async () => {
 			toParent: ["key1", "key2"],
 		});
 
-	const result = await hydrateData(entities, hydrator);
+	const result = await hydrate(entities, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.strictEqual(result[0]?.related.length, 2);
@@ -628,14 +628,14 @@ test("attachOne: returns single match or null", async () => {
 		.fields({ id: true, name: true })
 		.attachOne("latestPost", fetchPosts, { matchChild: "userId" });
 
-	const withMatch = await hydrateData(usersWithMatch, hydrator);
+	const withMatch = await hydrate(usersWithMatch, hydrator);
 	assert.deepStrictEqual(withMatch[0]?.latestPost, {
 		id: 10,
 		userId: 1,
 		title: "Only Post",
 	});
 
-	const withoutMatch = await hydrateData(usersWithoutMatch, hydrator);
+	const withoutMatch = await hydrate(usersWithoutMatch, hydrator);
 	assert.strictEqual(withoutMatch[0]?.latestPost, null);
 });
 
@@ -654,7 +654,7 @@ test("attachOne: throws on cardinality violation", async () => {
 		.attachOne("latestPost", fetchPosts, { matchChild: "userId" });
 
 	await assert.rejects(
-		async () => await hydrateData(users, hydrator),
+		async () => await hydrate(users, hydrator),
 		(err: Error) => {
 			assert.ok(err.message.includes("Expected exactly one item"));
 			assert.ok(err.message.includes("latestPost"));
@@ -702,14 +702,14 @@ test("attachOne: works at nested level", async () => {
 				toParent: "id",
 			});
 
-		return await hydrateData(posts, postHydrator);
+		return await hydrate(posts, postHydrator);
 	};
 
 	const hydrator = createHydrator<User>("id")
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result[0]?.posts[0]?.latestComment?.content, "Comment 1");
 	assert.strictEqual(result[1]?.posts[0]?.latestComment?.content, "Comment 2");
@@ -726,7 +726,7 @@ test("attachOneOrThrow: returns entity when exists", async () => {
 		.fields({ id: true, name: true })
 		.attachOneOrThrow("requiredPost", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result[0]?.requiredPost, {
 		id: 10,
@@ -747,7 +747,7 @@ test("attachOneOrThrow: throws when no match exists", async () => {
 		.attachOneOrThrow("requiredPost", fetchPosts, { matchChild: "userId" });
 
 	await assert.rejects(async () => {
-		await hydrateData(users, hydrator);
+		await hydrate(users, hydrator);
 	}, ExpectedOneItemError);
 });
 
@@ -772,14 +772,14 @@ test("attachOneOrThrow: works at nested level", async () => {
 				toParent: "id",
 			});
 
-		return await hydrateData(posts, postHydrator);
+		return await hydrate(posts, postHydrator);
 	};
 
 	const hydrator = createHydrator<User>("id")
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result[0]?.posts[0]?.author, {
 		id: 100,
@@ -809,7 +809,7 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 				toParent: "id",
 			});
 
-		return await hydrateData(posts, postHydrator);
+		return await hydrate(posts, postHydrator);
 	};
 
 	const hydrator = createHydrator<User>("id")
@@ -817,7 +817,7 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
 	await assert.rejects(async () => {
-		await hydrateData(users, hydrator);
+		await hydrate(users, hydrator);
 	}, ExpectedOneItemError);
 });
 
@@ -844,7 +844,7 @@ test("attachMany: accepts Executable return from fetchFn", async () => {
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.strictEqual(result[0]?.posts.length, 1);
@@ -864,7 +864,7 @@ test("attachOne: accepts Executable return from fetchFn", async () => {
 		.fields({ id: true, name: true })
 		.attachOne("latestPost", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result[0]?.latestPost, { id: 10, userId: 1, title: "Post" });
 });
@@ -883,7 +883,7 @@ test("attachMany: accepts Promise<Executable> return from fetchFn", async () => 
 		.fields({ id: true, name: true })
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result[0]?.posts.length, 1);
 });
@@ -900,7 +900,7 @@ test("hydrate: handles single input", async () => {
 		name: true,
 	});
 
-	const result = await hydrateData(user, hydrator);
+	const result = await hydrate(user, hydrator);
 
 	assert.deepStrictEqual(result, { id: 1, name: "Alice" });
 });
@@ -913,7 +913,7 @@ test("hydrate: handles empty array", async () => {
 		name: true,
 	});
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, []);
 });
@@ -935,7 +935,7 @@ test("hydrate: skips entities with null keys", async () => {
 		name: true,
 	});
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.deepStrictEqual(result[0], { id: 1, name: "Alice" });
@@ -945,7 +945,7 @@ test("hydrate: skips entities with null keys", async () => {
 test("hydrate function: accepts inline hydrator creation", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
-	const result = await hydrateData(users, (keyBy) => keyBy("id").fields({ id: true, name: true }));
+	const result = await hydrate(users, (keyBy) => keyBy("id").fields({ id: true, name: true }));
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
 });
@@ -958,9 +958,9 @@ test("chaining methods: creates immutable configurations", async () => {
 
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
-	const resultBase = await hydrateData(users, base);
-	const resultWithName = await hydrateData(users, withName);
-	const resultWithExtra = await hydrateData(users, withExtra);
+	const resultBase = await hydrate(users, base);
+	const resultWithName = await hydrate(users, withName);
+	const resultWithExtra = await hydrate(users, withExtra);
 
 	// Each configuration should be independent
 	assert.deepStrictEqual(resultBase, [{ id: 1 }]);
@@ -990,7 +990,7 @@ test("mixing has and attach collections", async () => {
 		.hasOne("profile", "profile$$", (h) => h("bio").fields({ bio: true }))
 		.attachMany("posts", fetchPosts, { matchChild: "userId" });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.deepStrictEqual(result[0]?.profile, { bio: "Developer" });
@@ -1056,7 +1056,7 @@ test("complex nesting: has and attach at multiple levels", async () => {
 				.attachMany("tags", fetchTags, { matchChild: "postId", toParent: "id" }),
 		);
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	// Verify fetch counts
 	assert.strictEqual(authorsFetchCount, 1);
@@ -1085,7 +1085,7 @@ test("extend: merges fields from two hydrators", async () => {
 	const nameHydrator = createHydrator<User>("id").fields({ name: true });
 
 	const combined = baseHydrator.extend(nameHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
 });
@@ -1103,7 +1103,7 @@ test("extend: other hydrator's fields take precedence", async () => {
 	});
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "alice-other" }]);
 });
@@ -1126,7 +1126,7 @@ test("extend: merges extras from two hydrators", async () => {
 	});
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1153,7 +1153,7 @@ test("extend: other hydrator's extras take precedence", async () => {
 	});
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.strictEqual(result[0]?.greeting, "Hi");
 });
@@ -1186,7 +1186,7 @@ test("extend: merges collections from two hydrators", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(rows, combined);
+	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1222,7 +1222,7 @@ test("extend: other hydrator's collections take precedence", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(rows, combined);
+	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1265,7 +1265,7 @@ test("extend: works with composite keys", async () => {
 	});
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(rows, combined);
+	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [{ userId: 1, postId: 10, content: "Hello" }]);
 });
@@ -1283,13 +1283,13 @@ test("extend: works bidirectionally (no constraint on OtherInput)", async () => 
 
 	// Direction 1: User extended with AdminUser
 	const combined1 = userHydrator.extend(adminHydrator);
-	const result1 = await hydrateData(users, combined1);
+	const result1 = await hydrate(users, combined1);
 
 	assert.deepStrictEqual(result1, [{ id: 1, name: "Alice", role: "admin" }]);
 
 	// Direction 2: AdminUser extended with User (reverse)
 	const combined2 = adminHydrator.extend(userHydrator);
-	const result2 = await hydrateData(users, combined2);
+	const result2 = await hydrate(users, combined2);
 
 	assert.deepStrictEqual(result2, [{ id: 1, name: "Alice", role: "admin" }]);
 });
@@ -1324,7 +1324,7 @@ test("extend: merges hasOne collections", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(rows, combined);
+	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1366,7 +1366,7 @@ test("extend: merges hasOneOrThrow collections", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(rows, combined);
+	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1414,7 +1414,7 @@ test("extend: merges attachMany collections", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1452,7 +1452,7 @@ test("extend: merges attachOne collections", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1490,7 +1490,7 @@ test("extend: merges attachOneOrThrow collections", async () => {
 	);
 
 	const combined = baseHydrator.extend(otherHydrator);
-	const result = await hydrateData(users, combined);
+	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
 		{
@@ -1515,7 +1515,7 @@ test("createHydrator: keyBy defaults to 'id' when input has id", async () => {
 
 	const hydrator = createHydrator<User>().fields({ id: true, name: true });
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [
 		{ id: 1, name: "Alice" },
@@ -1540,7 +1540,7 @@ test("hasMany: keyBy defaults to 'id' when nested input has id", async () => {
 		.fields({ id: true, name: true })
 		.hasMany("posts", "posts$$", (create) => create().fields({ id: true, title: true }));
 
-	const result = await hydrateData(data, hydrator);
+	const result = await hydrate(data, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.strictEqual(result[0]?.posts.length, 2);
@@ -1567,7 +1567,7 @@ test("hasOne: keyBy defaults to 'id' when nested input has id", async () => {
 		.fields({ id: true, title: true })
 		.hasOne("author", "author$$", (create) => create().fields({ id: true, name: true }));
 
-	const result = await hydrateData(data, hydrator);
+	const result = await hydrate(data, hydrator);
 
 	assert.strictEqual(result.length, 1);
 	assert.deepStrictEqual(result[0]?.author, { id: 1, name: "Alice" });
@@ -1588,7 +1588,7 @@ test("hasOneOrThrow: keyBy defaults to 'id' when nested input has id", async () 
 		.fields({ id: true, name: true })
 		.hasOneOrThrow("profile", "profile$$", (create) => create().fields({ id: true, bio: true }));
 
-	const result = await hydrateData(data, hydrator);
+	const result = await hydrate(data, hydrator);
 
 	assert.strictEqual(result.length, 1);
 	assert.deepStrictEqual(result[0]?.profile, { id: 1, bio: "Bio for Alice" });
@@ -1640,7 +1640,7 @@ test("multiple nested levels: keyBy defaults to 'id' at all levels", async () =>
 				),
 		);
 
-	const result = await hydrateData(data, hydrator);
+	const result = await hydrate(data, hydrator);
 
 	assert.strictEqual(result.length, 1);
 	assert.strictEqual(result[0]?.posts.length, 2);
@@ -1707,7 +1707,7 @@ test("hasMany: multiple sibling collections at same level", async () => {
 		)
 		.hasMany("users", "users$$", (h) => h("id").fields({ id: true, username: true }));
 
-	const result = await hydrateData(raw, hydrator);
+	const result = await hydrate(raw, hydrator);
 
 	// Expected: 2 posts
 	// Post 1: 2 comments, 1 user (deduplicated by keyBy)
@@ -1759,7 +1759,7 @@ test("map: transforms hydrated output", async () => {
 		.fields({ id: true, name: true })
 		.map((user) => ({ userId: user.id, userName: user.name }));
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.strictEqual(result.length, 2);
 	assert.deepStrictEqual(result[0], { userId: 1, userName: "Alice" });
@@ -1775,7 +1775,7 @@ test("map: allows chaining multiple transformations", async () => {
 		.map((user) => ({ ...user, nameLength: user.uppercaseName.length }))
 		.map((user) => ({ final: `${user.uppercaseName} (${user.nameLength})` }));
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [{ final: "ALICE (5)" }]);
 });
@@ -1801,7 +1801,7 @@ test("map: transforms into class instances", async () => {
 		.fields({ id: true, name: true })
 		.map((user) => new UserModel(user.id, user.name));
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.ok(result[0] instanceof UserModel);
 	assert.strictEqual(result[0]?.greet(), "Hello, I'm Alice");
@@ -1830,7 +1830,7 @@ test("map: works with nested collections", async () => {
 		)
 		.map((user) => ({ userName: user.name, postCount: user.posts.length, posts: user.posts })); // Map parent
 
-	const result = await hydrateData(rows, hydrator);
+	const result = await hydrate(rows, hydrator);
 
 	assert.strictEqual(result.length, 1);
 	assert.deepStrictEqual(result[0], {
@@ -1868,7 +1868,7 @@ test("map: works with attached collections", async () => {
 			postTitles: user.posts.map((p) => p.title),
 		}));
 
-	const result = await hydrateData(users, hydrator);
+	const result = await hydrate(users, hydrator);
 
 	assert.deepStrictEqual(result, [
 		{

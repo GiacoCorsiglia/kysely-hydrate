@@ -1333,19 +1333,19 @@ export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<
  *
  * The function will return a Promise that resolves to the hydrated output(s).
  */
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output[]>;
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]>;
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: Input,
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output>;
-export function hydrateData<Input, Output>(
+export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {

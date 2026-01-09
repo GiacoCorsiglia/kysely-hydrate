@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { test } from "node:test";
 
-import { createHydrator, hydrateData } from "./hydrator.ts";
+import { createHydrator, hydrate } from "./hydrator.ts";
 
 //
 // Kitchen Sink Test: Mega Hydration with Everything
@@ -272,7 +272,7 @@ test("kitchen sink: mega hydration with deep nesting, cartesian products, and mi
 				.hasMany("tags", "tags$$", (h) => h("id").fields({ id: true, name: true })),
 		);
 
-	const result = await hydrateData(data, hydrator);
+	const result = await hydrate(data, hydrator);
 
 	// One massive assertion with the entire expected result
 	assert.deepStrictEqual(result, [
