@@ -3031,6 +3031,10 @@ class QuerySetCreator<in out DB> {
 		query: any,
 		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
 	): InitialQuerySet<DB, string, any, any, any> {
+		return this.#createQuerySet(alias, query, keyBy);
+	}
+
+	#createQuerySet(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY) {
 		const baseQuery = typeof query === "function" ? query(this.#db) : query;
 
 		return new QuerySetImpl({
