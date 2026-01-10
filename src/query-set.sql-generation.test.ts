@@ -21,7 +21,7 @@ import { querySet } from "./query-set.ts";
 
 test("SQL: executeCount with no joins - simple count query", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 3);
 
 	const sql = qs.toCountQuery().compile().sql;
@@ -35,10 +35,10 @@ test("SQL: executeCount with no joins - simple count query", async () => {
 
 test("SQL: executeCount with innerJoinOne - join included in count", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -56,10 +56,10 @@ test("SQL: executeCount with innerJoinOne - join included in count", async () =>
 
 test("SQL: executeCount with leftJoinOne - join included in count", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -76,10 +76,10 @@ test("SQL: executeCount with leftJoinOne - join included in count", async () => 
 
 test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -98,10 +98,10 @@ test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async ()
 
 test("SQL: executeCount with leftJoinMany - join omitted from count", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -117,28 +117,28 @@ test("SQL: executeCount with leftJoinMany - join omitted from count", async () =
 
 test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinOne(
 			"setting",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "user_id"])),
 			"setting.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
 		.leftJoinMany(
 			"comments",
-			(init) => init((eb) => eb.selectFrom("comments").select(["id", "content"])),
+			(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content"])),
 			"user.id",
 			"user.id",
 		)
@@ -168,11 +168,11 @@ test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern",
 
 test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 					"comments",
 					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
@@ -201,10 +201,10 @@ test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", asyn
 
 test("SQL: pagination without many-joins - no nested subquery", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -227,10 +227,10 @@ test("SQL: pagination without many-joins - no nested subquery", async () => {
 
 test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -258,22 +258,22 @@ test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
 
 test("SQL: pagination with mixed joins - nested subquery with correct structure", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinOne(
 			"setting",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "user_id"])),
 			"setting.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -309,10 +309,10 @@ test("SQL: pagination with mixed joins - nested subquery with correct structure"
 
 test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -331,10 +331,10 @@ test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", a
 
 test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joins", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -366,10 +366,10 @@ test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joi
 
 test("SQL: toQuery with pagination and cardinality-one only - applies limit directly", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -398,7 +398,7 @@ test("SQL: toQuery with pagination and cardinality-one only - applies limit dire
 
 test("SQL: executeExists - wraps query in EXISTS check", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999);
 
 	const sql = qs.toExistsQuery().compile().sql;
@@ -412,10 +412,10 @@ test("SQL: executeExists - wraps query in EXISTS check", async () => {
 
 test("SQL: executeExists with joins - includes joins in EXISTS check", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -431,7 +431,7 @@ test("SQL: executeExists with joins - includes joins in EXISTS check", async () 
 
 test("SQL: executeExists ignores limit and offset", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 3)
 		.limit(1)
 		.offset(2);
@@ -450,16 +450,16 @@ test("SQL: executeExists ignores limit and offset", async () => {
 
 test("SQL: toBaseQuery strips all joins and returns base query", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)

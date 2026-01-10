@@ -12,11 +12,11 @@ test("leftJoinOne: toJoinedQuery shows nullable columns", async () => {
 	// Need a user without a profile to test nullability
 	// All users 1-10 have profiles, so we'll need to add where clause that won't match
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
 				),
@@ -49,11 +49,11 @@ test("leftJoinOne: toJoinedQuery shows nullable columns", async () => {
 
 test("leftJoinOne: execute returns null when no match", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
 				),
@@ -72,10 +72,10 @@ test("leftJoinOne: execute returns null when no match", async () => {
 
 test("leftJoinOne: execute returns object when match exists", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -104,11 +104,11 @@ test("leftJoinOne: execute returns object when match exists", async () => {
 
 test("leftJoinOne: executeCount counts all base records", async () => {
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profiles match
 				),
@@ -124,11 +124,11 @@ test("leftJoinOne: executeCount counts all base records", async () => {
 
 test("leftJoinOne: executeExists checks existence", async () => {
 	const exists = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profiles match
 				),
@@ -144,10 +144,10 @@ test("leftJoinOne: executeExists checks existence", async () => {
 
 test("leftJoinOne: executeTakeFirst with join", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -163,11 +163,11 @@ test("leftJoinOne: executeTakeFirst with join", async () => {
 
 test("leftJoinOne: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 3)
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)

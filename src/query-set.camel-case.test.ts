@@ -35,7 +35,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const posts = await querySet(camelDb)
-			.init("post", camelDb.selectFrom("posts").select(["id", "userId", "title"]))
+			.selectAs("post", camelDb.selectFrom("posts").select(["id", "userId", "title"]))
 			.where("posts.id", "in", [1, 2])
 			.execute();
 
@@ -57,12 +57,12 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const users = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
 					),
 				"posts.userId",
@@ -93,12 +93,12 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const users = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2])
 			.leftJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
 					),
 				"posts.userId",
@@ -134,11 +134,11 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const users = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 1)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "userId", "bio"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "userId", "bio"])),
 				"profile.userId",
 				"user.id",
 			)
@@ -164,11 +164,11 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const posts = await querySet(camelDb)
-			.init("post", camelDb.selectFrom("posts").select(["id", "title", "userId"]))
+			.selectAs("post", camelDb.selectFrom("posts").select(["id", "title", "userId"]))
 			.where("posts.id", "=", 1)
 			.leftJoinOne(
 				"author",
-				(init) => init((eb) => eb.selectFrom("users").select(["id", "username"])),
+				(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
 				"author.id",
 				"post.userId",
 			)
@@ -196,12 +196,12 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const users = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "userId"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
@@ -253,12 +253,12 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const rows = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
 					),
 				"posts.userId",
@@ -297,11 +297,11 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 		}>();
 
 		const count = await querySet(camelDb)
-			.init("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "userId"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "userId"])),
 				"posts.userId",
 				"user.id",
 			)

@@ -23,7 +23,7 @@ import { querySet } from "./query-set.ts";
 
 test("orderBy: orders by single column ascending", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", "asc")
 		.execute();
 
@@ -44,7 +44,7 @@ test("orderBy: orders by single column ascending", async () => {
 
 test("orderBy: orders by single column descending", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", "desc")
 		.execute();
 
@@ -65,7 +65,7 @@ test("orderBy: orders by single column descending", async () => {
 
 test("orderBy: orders by multiple columns", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.orderBy("username", "desc")
 		.orderBy("id", "asc")
 		.execute();
@@ -87,7 +87,7 @@ test("orderBy: orders by multiple columns", async () => {
 
 test("orderBy: with orderByKeys disabled", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderByKeys(false)
 		.orderBy("username", "desc")
 		.execute();
@@ -109,7 +109,7 @@ test("orderBy: with orderByKeys disabled", async () => {
 
 test("orderBy: with default keyBy ordering", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// No explicit orderBy, should default to ordering by id (keyBy)
 		.execute();
 
@@ -131,7 +131,7 @@ test("orderBy: with default keyBy ordering", async () => {
 
 test("clearOrderBy: removes custom ordering but keeps keyBy ordering", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", "desc")
 		.clearOrderBy()
 		.execute();
@@ -153,7 +153,7 @@ test("clearOrderBy: removes custom ordering but keeps keyBy ordering", async () 
 
 test("orderByKeys: can be re-enabled after being disabled", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderByKeys(false)
 		.orderByKeys(true)
 		.execute();
@@ -179,10 +179,10 @@ test("orderByKeys: can be re-enabled after being disabled", async () => {
 
 test("orderBy: orders by base column with innerJoinOne", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -206,10 +206,10 @@ test("orderBy: orders by base column with innerJoinOne", async () => {
 
 test("orderBy: orders by joined column with innerJoinOne", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -233,10 +233,10 @@ test("orderBy: orders by joined column with innerJoinOne", async () => {
 
 test("orderBy: orders by multiple columns including joined columns with leftJoinOne", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -266,10 +266,10 @@ test("orderBy: orders by multiple columns including joined columns with leftJoin
 
 test("orderBy: orders base records with leftJoinMany", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -324,10 +324,10 @@ test("orderBy: orders base records with leftJoinMany", async () => {
 
 test("orderBy: orders base records with innerJoinMany", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -380,16 +380,16 @@ test("orderBy: orders base records with innerJoinMany", async () => {
 
 test("orderBy: orders by base and cardinality-one joined columns with cardinality-many join", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -472,7 +472,7 @@ test("orderBy: orders by base and cardinality-one joined columns with cardinalit
 
 test("orderBy: works correctly with limit", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", "desc")
 		.limit(3)
 		.execute();
@@ -487,7 +487,7 @@ test("orderBy: works correctly with limit", async () => {
 
 test("orderBy: works correctly with limit and offset", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", "asc")
 		.limit(3)
 		.offset(2)
@@ -504,10 +504,10 @@ test("orderBy: works correctly with limit and offset", async () => {
 
 test("orderBy: works correctly with leftJoinMany and pagination", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -528,11 +528,11 @@ test("orderBy: works correctly with leftJoinMany and pagination", async () => {
 
 test("orderBy: with nested one-many (user -> profile -> posts)", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
 					"posts",
 					(init2) => init2((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 					"posts.user_id",
@@ -636,11 +636,11 @@ test("orderBy: with nested one-many (user -> profile -> posts)", async () => {
 
 test("orderBy: with nested many-many (user -> posts -> comments)", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
 					(init2) =>
 						init2((eb) =>
@@ -754,11 +754,11 @@ test("orderBy: with nested many-many (user -> posts -> comments)", async () => {
 
 test("orderBy: with nested many-many-many (user -> posts -> comments -> replies)", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
 					(init2) =>
 						init2((eb) =>
@@ -959,7 +959,7 @@ test("orderBy: with nested many-many-many (user -> posts -> comments -> replies)
 
 test("orderBy: keyBy as tiebreaker when custom ordering has duplicates", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.orderBy("email", "asc")
 		.execute();
 
@@ -981,7 +981,7 @@ test("orderBy: keyBy as tiebreaker when custom ordering has duplicates", async (
 
 test("orderBy: custom keyBy column", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]), "username")
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]), "username")
 		// No explicit orderBy, should order by keyBy (username)
 		.execute();
 
@@ -1002,7 +1002,7 @@ test("orderBy: custom keyBy column", async () => {
 
 test("orderBy: composite keyBy", async () => {
 	const posts = await querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "user_id", "title"]), ["user_id", "id"])
+		.selectAs("post", db.selectFrom("posts").select(["id", "user_id", "title"]), ["user_id", "id"])
 		// No explicit orderBy, should order by keyBy (user_id, id)
 		.execute();
 

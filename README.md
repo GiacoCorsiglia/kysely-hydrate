@@ -44,14 +44,15 @@ For example:
 import { querySet } from "kysely-hydrate";
 
 const categoriesQuerySet = querySet(db)
-	.init("category", (eb) => eb.selectFrom("categories").select(["id", "name"]))
+	.selectAs("category", db.selectFrom("categories").select(["id", "name"]))
 	// Add computed fields and other application-level transformations.
 	.extras({
 		upperName: (row) => row.name.toUpperCase(),
 	});
 
-const postsQuerySet = querySet(db).init("posts", (eb) =>
-	eb.selectFrom("posts").select((eb) => [
+const postsQuerySet = querySet(db).selectAs(
+	"posts",
+	db.selectFrom("posts").select((eb) => [
 		"id",
 		"title",
 		"categoryId",
@@ -65,8 +66,8 @@ const postsQuerySet = querySet(db).init("posts", (eb) =>
 );
 
 const userQuerySet = await querySet(db)
-	// Initialize with a base query and an alias ("user")
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "email"]))
+	// Initialize with a base select query and an alias ("user")
+	.selectAs("user", db.selectFrom("users").select(["id", "email"]))
 	// Add a database-level LEFT JOIN that hydrates into a "posts" array
 	.leftJoinMany(
 		"posts",
@@ -171,7 +172,7 @@ import { querySet } from "kysely-hydrate";
 
 // Select users and give the base row the alias "user"
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.execute();
 // ⬇
 type Result = Array<{ id: number; username: string }>;
@@ -201,13 +202,13 @@ them (row explosion) and group nested collections correctly.
 
 ```ts
 // Default: only allowed by TypeScript if you have selected "id"
-querySet(db).init("user", db.selectFrom("users").select(["id", "name"]));
+querySet(db).selectAs("user", db.selectFrom("users").select(["id", "name"]));
 
 // Explicit: use a specific unique column
-querySet(db).init("product", db.selectFrom("products").select(["sku", "name"]), "sku");
+querySet(db).selectAs("product", db.selectFrom("products").select(["sku", "name"]), "sku");
 
 // Composite: use multiple columns
-querySet(db).init(
+querySet(db).selectAs(
 	"item",
 	db.selectFrom("order_items").select(["orderId", "productId", "quantity"]),
 	["orderId", "productId"],
@@ -231,12 +232,13 @@ Use `innerJoinOne` or `leftJoinOne` to hydrate a single nested object.
 To add a join, pass a query set to one of the join methods:
 
 ```ts
-const profileQuerySet = querySet(db).init("profile", (eb) =>
-	eb.selectFrom("profiles").select(["id", "bio", "userId"]),
+const profileQuerySet = querySet(db).selectAs(
+	"profile",
+	db.selectFrom("profiles").select(["id", "bio", "userId"]),
 );
 
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinOne(
 		"userProfile", // The key for the nested object on the parent.
 		profileQuerySet,
@@ -258,11 +260,11 @@ is identical to the above.
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinOne(
 		"profile", // The key for the nested object on the parent.
-		(init) =>
-			init(
+		(nest) =>
+			nest(
 				"profile", // Alias for the nested table
 				(eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"]),
 			),
@@ -291,10 +293,10 @@ Use `innerJoinMany` or `leftJoinMany` to hydrate a nested array of objects.
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.leftJoinMany(
 		"posts",
-		(init) => init("post", (eb) => eb.selectFrom("posts").select(["id", "title", "authorId"])),
+		(nest) => nest("post", (eb) => eb.selectFrom("posts").select(["id", "title", "authorId"])),
 		"post.authorId",
 		"user.id",
 	)
@@ -337,10 +339,10 @@ inner joins).
 
 ```ts
 const query = querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinMany(
 		"posts",
-		(init) => init("post", db.selectFrom("posts").select(["id", "title"])),
+		(nest) => nest("post", (eb) => eb.selectFrom("posts").select(["id", "title"])),
 		"post.userId",
 		"user.id",
 	)
@@ -380,10 +382,10 @@ applies the limit to the parent rows first.
 ```ts
 // Get the first 10 users, plus all their posts
 const result = await querySet(db)
-  .init("user", ...)
-  .innerJoinMany("posts", ...) // Has-many join
-  .limit(10)
-  .execute();
+	.selectAs("user", ...)
+	.innerJoinMany("posts", ...) // Has-many join
+	.limit(10)
+	.execute();
 ```
 
 ###### Generated SQL strategy:
@@ -427,18 +429,20 @@ subqueries while still getting hydrated output.
 ```ts
 // Get users and their LATEST 3 posts
 const query = querySet(db)
-  .init("user", ...)
-  .leftJoinLateralMany(
-    "latestPosts",
-    (init) => init("post",
-      db.selectFrom("posts")
-        .select(["id", "title"])
-        .whereRef("posts.userId", "=", "user.id") // Correlated reference
-        .orderBy("createdAt", "desc")
-        .limit(3)
-    ),
-    (join) => join.onTrue()
-  );
+	.selectAs("user", db.selectFrom("users").select(["id"]))
+	.leftJoinLateralMany(
+		"latestPosts",
+		(nest) =>
+			nest("post", (eb) =>
+				eb
+					.selectFrom("posts")
+					.select(["id", "title"])
+					.whereRef("posts.userId", "=", "user.id") // Correlated reference
+					.orderBy("createdAt", "desc")
+					.limit(3),
+			),
+		(join) => join.onTrue(),
+	);
 ```
 
 This compiles to a standard `LEFT JOIN LATERAL`, hoisting the columns
@@ -456,7 +460,7 @@ Provide a callback as the only argument to `.modify()` to modify the base query.
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.modify((qb) => qb.where("isActive", "=", true)); // Add a WHERE clause
 ```
 
@@ -464,7 +468,7 @@ Because adding where clauses is so common, the above is equivalent to:
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.where("isActive", "=", true); // Add a WHERE clause to the base query
 ```
 
@@ -474,10 +478,10 @@ Pass the key of the collection to modify it.
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select("id"))
+	.selectAs("user", db.selectFrom("users").select("id"))
 	.leftJoinMany(
 		"posts",
-		(init) => init("post", db.selectFrom("posts").select(["id", "title", "userId"])),
+		(nest) => nest("post", db.selectFrom("posts").select(["id", "title", "userId"])),
 		"post.userId",
 		"user.id",
 	)
@@ -501,7 +505,7 @@ per execution, no matter how deeply it is nested.
 
 ```ts
 const posts = await querySet(db)
-	.init("post", db.selectFrom("posts").select(["id", "title", "authorId"]))
+	.selectAs("post", db.selectFrom("posts").select(["id", "title", "authorId"]))
 	.attachOne(
 		"author",
 		// 1. Receive all parent rows
@@ -568,27 +572,28 @@ by matching `authors.id` to `posts.authorId`:
 
 ```ts
 const posts = await querySet(db)
-  .init("posts", (eb) => eb
-    .selectFrom("posts")
-    .select(["posts.id", "posts.title", "posts.authorId"])
-  ),
-  .attachOne(
-    "author",
-    async (posts) =>
-      db
-        .selectFrom("authors")
-        .select(["authors.id", "authors.name"])
-        .where("authors.id", "in", posts.map((p) => p.authorId))
-        .execute(),
-    { matchChild: "id", toParent: "authorId" },
-  )
-  .execute();
+	.selectAs("posts", db.selectFrom("posts").select(["posts.id", "posts.title", "posts.authorId"]))
+	.attachOne(
+		"author",
+		async (posts) =>
+			db
+				.selectFrom("authors")
+				.select(["authors.id", "authors.name"])
+				.where(
+					"authors.id",
+					"in",
+					posts.map((p) => p.authorId),
+				)
+				.execute(),
+		{ matchChild: "id", toParent: "authorId" },
+	)
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  title: string;
-  authorId: number;
-  author: { id: number; name: string } | null;
+	id: number;
+	title: string;
+	authorId: number;
+	author: { id: number; name: string } | null;
 }>;
 ```
 
@@ -598,7 +603,7 @@ for things that _aren’t_ database rows: HTTP calls, caches, etc.
 ```ts
 // Example: Attach feature flags from a cached HTTP endpoint
 const users = await querySet(db)
-	.init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.email"]))
+	.selectAs("users", db.selectFrom("users").select(["users.id", "users.email"]))
 	.attachMany(
 		"flags",
 		async (users) => {
@@ -623,13 +628,13 @@ This is especially useful if your attach function returns a query set:
 
 ```ts
 const authorsQuerySet = querySet(db)
-  .init("authors", (eb) => eb
+  .selectAs("authors", db
     .selectFrom("authors")
     .select(["authors.id", "authors.name"])
   );
 
 const posts = await querySet(db)
-  .init("posts", (eb) => eb
+  .selectAs("posts", db
     .selectFrom("posts")
     .select(["posts.id", "posts.title", "posts.authorId"])
   ),
@@ -669,7 +674,7 @@ still appends the unique key(s) at the end as a tie-breaker.
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 	// Sort by username descending
 	.orderBy("username", "desc")
 	.execute();
@@ -692,11 +697,11 @@ especially if these columns are not indexed.
 
 ```ts
 const users = await querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinOne(
 		"profile",
-		(init) => init("p", db.selectFrom("profiles").select(["id", "bio", "userId"])),
-		"p.userId",
+		(nest) => nest("p", (eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+		"profile.userId",
 		"user.id",
 	)
 	// Sort by the joined profile's bio
@@ -716,7 +721,7 @@ Consider the following example:
 
 ```ts
 const usersQuerySet = querySet(db)
-	.init("user", db.selectFrom("users").select(["id", "username"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	// Order users by username.
 	.orderBy("username")
 	.leftJoinMany(
@@ -761,7 +766,7 @@ the parent entities, not the exploded SQL rows.
 
 ```ts
 const result = await querySet(db)
-  .init("user", db.selectFrom("users").select("id"))
+  .selectAs("user", db.selectFrom("users").select("id"))
   .leftJoinMany("posts", ...)
   .limit(10) // Returns exactly 10 users, even if they have 1000 posts combined
   .offset(20)
@@ -801,7 +806,7 @@ JavaScript after the query.
 
 ```ts
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "email", "metadata"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "email", "metadata"]))
 	.mapFields({
 		// email: string -> string
 		email: (email) => email.toLowerCase(),
@@ -824,7 +829,7 @@ JavaScript after the query runs.
 
 ```ts
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "firstName", "lastName"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "firstName", "lastName"]))
 	.extras({
 		fullName: (row) => `${row.firstName} ${row.lastName}`,
 	})
@@ -845,7 +850,7 @@ fields used for computed properties.
 
 ```ts
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "firstName", "lastName"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "firstName", "lastName"]))
 	.extras({
 		fullName: (row) => `${row.firstName} ${row.lastName}`,
 	})
@@ -877,7 +882,7 @@ class UserModel {
 }
 
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "name"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
 	.map((user) => new UserModel(user.id, user.name))
 	.execute();
 // ⬇
@@ -891,7 +896,7 @@ previous transformation.
 
 ```ts
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "name"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
 	.map((user) => ({ ...user, nameUpper: user.name.toUpperCase() }))
 	.map((user) => ({ id: user.id, display: user.nameUpper }))
 	.execute();
@@ -907,11 +912,11 @@ to parents:
 
 ```ts
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id"]))
+	.selectAs("user", db.selectFrom("users").select(["id"]))
 	.leftJoinMany(
 		"posts",
-		(init) =>
-			init("post", (eb) => eb.selectFrom("posts").select(["id", "title"]))
+		(nest) =>
+			nest("post", (eb) => eb.selectFrom("posts").select(["id", "title"]))
 				// Transform child:
 				.map((post) => ({ postId: post.id, postTitle: post.title })),
 		"post.userId",
@@ -943,7 +948,7 @@ transformation function, which could break your mapping logic.
 
 ```ts
 const mapped = querySet(db)
-  .init("user", ...)
+  .selectAs("user", ...)
   .map((user) => ({ userId: user.id }));
 
 // ✅ These work:
@@ -976,7 +981,7 @@ const userHydrator = createHydrator<{
 
 // Reuse in query #1:
 const users = await querySet(db)
-	.init("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 	.with(userHydrator)
 	.execute();
 // ⬇
@@ -984,7 +989,7 @@ type Result1 = Array<{ id: number; username: string; displayName: string }>;
 
 // Reuse in query #2 (different root query, same hydration rules):
 const author = await querySet(db)
-	.init("user", (eb) =>
+	.selectAs("user", (eb) =>
 		eb
 			.selectFrom("posts")
 			.innerJoin("users", "users.id", "posts.authorId")
@@ -1283,11 +1288,11 @@ database-level JSON-aggregation to nest related rows in your queries (e.g.,
 types.
 
 Most noticeably, timestamp columns, which your driver might usually convert to
-`Date` instances, will be returned as strings when nested inside JSON. More
-dangerously, Postgres serializes bigints to JSON numbers with more digits than
-can fit in JavaScript's native `number`, causing data loss.
+`Date` or `Temporal` instances, will be returned as strings when nested inside
+JSON. More dangerously, Postgres serializes bigints to JSON numbers with more
+digits than can fit in JavaScript's native `number`, causing data loss.
 
-To address this problem, your query builder must maintain a runtime
+To address this problem, your query builder or orm must maintain a runtime
 understanding of your database schema, so that it knows how to select and
 hydrate JSON from the database into the correct types.
 
@@ -1325,11 +1330,6 @@ dependency.
 ### Does it work with Bun or Deno?
 
 It should run anywhere Kysely runs, but I haven't tested it on anything but Node.js.
-
-### Can you publish this to JSR?
-
-I already had to figure out how to publish things to npm. But, who am I
-kidding—if this project gets a real user, I'd be happy to look into JSR!
 
 ## Acknowledgements
 

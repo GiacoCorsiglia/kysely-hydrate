@@ -25,12 +25,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("innerJoinLateralMany: basic usage with limit", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -56,12 +56,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("leftJoinLateralMany: handles users without posts", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2])
 			.leftJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -92,10 +92,10 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("crossJoinLateralMany: creates cartesian product with limit", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
-			.crossJoinLateralMany("allPosts", (init) =>
-				init((eb) =>
+			.crossJoinLateralMany("allPosts", (nest) =>
+				nest((eb) =>
 					eb
 						.selectFrom("posts")
 						.select(["id", "title"])
@@ -124,12 +124,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("innerJoinLateralOne: fetches single related entity", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralOne(
 				"latestPost",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -152,12 +152,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("leftJoinLateralOne: returns null when no match", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2])
 			.leftJoinLateralOne(
 				"latestPost",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -185,12 +185,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("leftJoinLateralOneOrThrow: returns entity when exists", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.leftJoinLateralOneOrThrow(
 				"latestPost",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -214,12 +214,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 	test("leftJoinLateralOneOrThrow: throws when no match", async () => {
 		await assert.rejects(async () => {
 			await querySet(db)
-				.init("user", db.selectFrom("users").select(["id", "username"]))
+				.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 				.where("users.id", "=", 1)
 				.leftJoinLateralOneOrThrow(
 					"latestPost",
-					(init) =>
-						init((eb) =>
+					(nest) =>
+						nest((eb) =>
 							eb
 								.selectFrom("posts")
 								.select(["id", "title"])
@@ -239,12 +239,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("nested lateral joins: posts with comments at both levels", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -297,12 +297,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("lateral joins with mapFields transformation", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -330,12 +330,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("lateral joins with extras", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -363,12 +363,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("lateral joins with omit", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title", "user_id"])
@@ -394,15 +394,15 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("nested lateral joins with transformations at multiple levels", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.mapFields({
 				username: (username) => username.toUpperCase(),
 			})
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -479,12 +479,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("multiple lateral joins: posts and comments as siblings", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -496,8 +496,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			)
 			.leftJoinLateralOne(
 				"latestComment",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("comments")
 							.select(["id", "content"])
@@ -528,11 +528,11 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("limit: limits base records with lateral joins", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -553,11 +553,11 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("offset: skips base records with lateral joins", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -578,11 +578,11 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("pagination: limit + offset with lateral joins", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -612,12 +612,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("executeCount: counts base records with innerJoinLateralMany", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2, 3])
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -637,12 +637,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("executeCount: counts base records with leftJoinLateralMany", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2])
 			.leftJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -662,12 +662,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("executeCount: ignores limit/offset with lateral joins", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)
 			.leftJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -689,12 +689,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("toJoinedQuery: shows flattened rows with lateral joins", async () => {
 		const rows = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -727,12 +727,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("toJoinedQuery: nested lateral joins show double prefixes", async () => {
 		const rows = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -771,18 +771,18 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("mixed: innerJoinOne and innerJoinLateralMany", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -809,12 +809,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("mixed: innerJoinMany and innerJoinLateralOne", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					),
 				"posts.user_id",
@@ -822,8 +822,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			)
 			.innerJoinLateralOne(
 				"latestComment",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("comments")
 							.select(["id", "content"])
@@ -854,12 +854,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("modify: add where clause to lateral join collection", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -886,12 +886,12 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 
 	test("modify: add extras to lateral join collection", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])

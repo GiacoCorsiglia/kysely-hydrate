@@ -14,17 +14,17 @@ test("mixed: multiple innerJoinOne on same QuerySet", async () => {
 	// Use specific post IDs to ensure exactly one post per user
 	// User 2 (bob) -> post 1, User 3 (carol) -> post 3, User 4 (dave) -> post 4
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinOne(
 			"primaryPost",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
@@ -59,17 +59,17 @@ test("mixed: multiple innerJoinOne on same QuerySet", async () => {
 
 test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns", async () => {
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinOne(
 			"primaryPost",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
@@ -118,11 +118,11 @@ test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns
 
 test("mixed: leftJoinOne and innerJoinOne together", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No match
 				),
@@ -131,8 +131,8 @@ test("mixed: leftJoinOne and innerJoinOne together", async () => {
 		)
 		.innerJoinOne(
 			"primaryPost",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
@@ -172,16 +172,16 @@ test("mixed: multiple innerJoinMany on same QuerySet with cartesian product", as
 	// Post 1: 2 comments × 1 user = 2 rows, but hydrator deduplicates sibling collections
 	// Post 2: 1 comment × 1 user = 1 row
 	const posts = await querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
 		.innerJoinMany(
 			"comments",
-			(init) => init((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+			(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
 			"comments.post_id",
 			"post.id",
 		)
 		.innerJoinMany(
 			"users",
-			(init) => init((eb) => eb.selectFrom("users").select(["id", "username"])),
+			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
 			"users.id",
 			"post.user_id",
 		)
@@ -225,11 +225,11 @@ test("mixed: multiple innerJoinMany on same QuerySet with cartesian product", as
 
 test("mixed: toJoinedQuery with multiple innerJoinMany shows row explosion", async () => {
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 3),
 				),
 			"posts.user_id",
@@ -237,7 +237,7 @@ test("mixed: toJoinedQuery with multiple innerJoinMany shows row explosion", asy
 		)
 		.innerJoinMany(
 			"profiles",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profiles.user_id",
 			"user.id",
 		)
@@ -285,16 +285,16 @@ test("mixed: toJoinedQuery with multiple innerJoinMany shows row explosion", asy
 
 test("mixed: innerJoinOne and innerJoinMany together", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -340,16 +340,16 @@ test("mixed: innerJoinOne and innerJoinMany together", async () => {
 
 test("mixed: leftJoinOne and leftJoinMany together", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -380,16 +380,16 @@ test("mixed: leftJoinOne and leftJoinMany together", async () => {
 
 test("mixed: executeCount with multiple joins counts unique base records", async () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -407,16 +407,16 @@ test("mixed: executeCount with multiple joins counts unique base records", async
 
 test("mixed: pagination with multiple joins uses nested subquery", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -436,17 +436,17 @@ test("mixed: pagination with multiple joins uses nested subquery", async () => {
 
 test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one", async () => {
 	const base = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinOne(
 			"primaryPost",
-			(init) =>
-				init(
+			(nest) =>
+				nest(
 					(eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
 				),
@@ -464,11 +464,11 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one
 
 test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-many", async () => {
 	const base = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 3),
 				),
 			"posts.user_id",
@@ -476,7 +476,7 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-man
 		)
 		.innerJoinMany(
 			"profiles",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profiles.user_id",
 			"user.id",
 		)
@@ -491,16 +491,16 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-man
 
 test("mixed: toQuery without pagination equals toJoinedQuery for mixed joins", async () => {
 	const base = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)

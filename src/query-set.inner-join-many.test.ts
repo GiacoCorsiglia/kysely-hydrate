@@ -11,10 +11,10 @@ import { querySet } from "./query-set.ts";
 test("innerJoinMany: toJoinedQuery shows row explosion with $$ prefixes", async () => {
 	// User 2 (bob) has 4 posts (ids: 1, 2, 5, 12)
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -58,10 +58,10 @@ test("innerJoinMany: toJoinedQuery shows row explosion with $$ prefixes", async 
 
 test("innerJoinMany: execute returns hydrated arrays", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -87,10 +87,10 @@ test("innerJoinMany: execute returns hydrated arrays", async () => {
 test("innerJoinMany: execute returns multiple users with their posts", async () => {
 	// User 2 (bob) has 4 posts, User 3 (carol) has 2 posts
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -124,10 +124,10 @@ test("innerJoinMany: execute returns multiple users with their posts", async () 
 test("innerJoinMany: filters out base records without matches", async () => {
 	// User 1 (alice) has no posts, so should be filtered out by inner join
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -152,10 +152,10 @@ test("innerJoinMany: filters out base records without matches", async () => {
 
 test("innerJoinMany: executeTakeFirst returns first base record with all children", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -177,10 +177,10 @@ test("innerJoinMany: executeTakeFirst returns first base record with all childre
 test("innerJoinMany: executeCount counts unique base records (not exploded rows)", async () => {
 	// User 2 and 3 have posts
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -193,10 +193,10 @@ test("innerJoinMany: executeCount counts unique base records (not exploded rows)
 
 test("innerJoinMany: executeExists checks if any base records exist", async () => {
 	const exists = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -208,11 +208,11 @@ test("innerJoinMany: executeExists checks if any base records exist", async () =
 
 test("innerJoinMany: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -228,10 +228,10 @@ test("innerJoinMany: toBaseQuery returns base query without joins", async () => 
 
 test("innerJoinMany: callback join condition with onRef", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			(join) => join.onRef("posts.user_id", "=", "user.id"),
 		)
 		.where("users.id", "=", 2)
@@ -253,12 +253,12 @@ test("innerJoinMany: callback join condition with onRef", async () => {
 });
 
 test("innerJoinMany: pre-built QuerySet variant", async () => {
-	const postsQuery = querySet(db).init("post", (eb) =>
+	const postsQuery = querySet(db).selectAs("post", (eb) =>
 		eb.selectFrom("posts").select(["id", "title", "user_id"]),
 	);
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany("posts", postsQuery, "posts.user_id", "user.id")
 		.where("users.id", "=", 2)
 		.execute();

@@ -17,7 +17,10 @@ import { querySet } from "./query-set.ts";
 //
 
 test("SQL: base query with column alias", () => {
-	const qs = querySet(db).init("user", db.selectFrom("users").select(["id", "username as name"]));
+	const qs = querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id", "username as name"]),
+	);
 
 	const sql = qs.toQuery().compile().sql;
 
@@ -27,11 +30,11 @@ test("SQL: base query with column alias", () => {
 
 test("SQL: innerJoinMany with column aliases are correctly prefixed", () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		);
@@ -52,11 +55,11 @@ test("SQL: innerJoinMany with column aliases are correctly prefixed", () => {
 
 test("SQL: doubly-prefixed aliases for deeply nested collections", () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"]),
 				).innerJoinMany(
 					"comments",
@@ -86,11 +89,11 @@ test("SQL: doubly-prefixed aliases for deeply nested collections", () => {
 
 test("SQL: mixed aliased and non-aliased columns", () => {
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name", "email"]))
 		.innerJoinOne(
 			"profile",
-			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+			(nest) =>
+				nest((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		);
@@ -116,10 +119,10 @@ test("SQL: mixed aliased and non-aliased columns", () => {
 
 test("SQL: leftJoinOne with column alias", () => {
 	const qs = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "title as postTitle", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "title as postTitle", "user_id"]))
 		.leftJoinOne(
 			"author",
-			(init) => init((eb) => eb.selectFrom("users").select(["id", "username as authorName"])),
+			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username as authorName"])),
 			"author.id",
 			"post.user_id",
 		);
@@ -144,7 +147,10 @@ test("SQL: leftJoinOne with column alias", () => {
 
 test("execute: base query with column alias returns aliased field name", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "<=", 3))
+		.selectAs(
+			"user",
+			db.selectFrom("users").select(["id", "username as name"]).where("id", "<=", 3),
+		)
 		.execute();
 
 	assert.deepStrictEqual(users, [
@@ -156,11 +162,11 @@ test("execute: base query with column alias returns aliased field name", async (
 
 test("execute: innerJoinMany with column aliases hydrates correctly", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb
 						.selectFrom("posts")
 						.select(["id", "title as postTitle", "user_id"])
@@ -186,13 +192,13 @@ test("execute: innerJoinMany with column aliases hydrates correctly", async () =
 
 test("execute: leftJoinOne with column aliases hydrates correctly", async () => {
 	const posts = await querySet(db)
-		.init(
+		.selectAs(
 			"post",
 			db.selectFrom("posts").select(["id", "title as postTitle", "user_id"]).where("id", "=", 1),
 		)
 		.leftJoinOne(
 			"author",
-			(init) => init((eb) => eb.selectFrom("users").select(["id", "username as authorName"])),
+			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username as authorName"])),
 			"author.id",
 			"post.user_id",
 		)
@@ -210,11 +216,11 @@ test("execute: leftJoinOne with column aliases hydrates correctly", async () => 
 
 test("execute: innerJoinOne with column aliases hydrates correctly", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 1))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 1))
 		.innerJoinOne(
 			"profile",
-			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+			(nest) =>
+				nest((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -231,11 +237,11 @@ test("execute: innerJoinOne with column aliases hydrates correctly", async () =>
 
 test("execute: nested joins with column aliases at multiple levels", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb
 						.selectFrom("posts")
 						.select(["id", "title as postTitle", "user_id"])
@@ -285,14 +291,14 @@ test("execute: nested joins with column aliases at multiple levels", async () =>
 
 test("execute: mixed aliased and non-aliased columns in same query", async () => {
 	const users = await querySet(db)
-		.init(
+		.selectAs(
 			"user",
 			db.selectFrom("users").select(["id", "username as name", "email"]).where("id", "=", 1),
 		)
 		.innerJoinOne(
 			"profile",
-			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+			(nest) =>
+				nest((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -310,11 +316,11 @@ test("execute: mixed aliased and non-aliased columns in same query", async () =>
 
 test("execute: leftJoinMany with column aliases and empty results", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 1))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 1))
 		.leftJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -332,11 +338,11 @@ test("execute: leftJoinMany with column aliases and empty results", async () => 
 
 test("execute: toJoinedQuery with column aliases shows prefixed aliases", async () => {
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
+		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb
 						.selectFrom("posts")
 						.select(["id", "title as postTitle", "user_id"])

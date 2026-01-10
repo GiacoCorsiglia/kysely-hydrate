@@ -10,7 +10,7 @@ import { querySet } from "./query-set.ts";
 
 test("execute: returns array of hydrated rows", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.execute();
 
 	assert.ok(Array.isArray(users));
@@ -31,7 +31,7 @@ test("execute: returns array of hydrated rows", async () => {
 
 test("executeTakeFirst: returns first row or undefined", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.executeTakeFirst();
 
 	assert.deepStrictEqual(user, { id: 1, username: "alice" });
@@ -39,7 +39,7 @@ test("executeTakeFirst: returns first row or undefined", async () => {
 
 test("executeTakeFirst: returns undefined when no rows", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
 		.executeTakeFirst();
 
 	assert.strictEqual(user, undefined);
@@ -47,7 +47,7 @@ test("executeTakeFirst: returns undefined when no rows", async () => {
 
 test("executeTakeFirstOrThrow: returns first row", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.executeTakeFirstOrThrow();
 
 	assert.deepStrictEqual(user, { id: 1, username: "alice" });
@@ -56,14 +56,14 @@ test("executeTakeFirstOrThrow: returns first row", async () => {
 test("executeTakeFirstOrThrow: throws when no rows", async () => {
 	await assert.rejects(async () => {
 		await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
 			.executeTakeFirstOrThrow();
 	});
 });
 
 test("init: defaults keyBy to 'id'", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.execute();
 
 	assert.strictEqual(users.length, 10);
@@ -83,7 +83,7 @@ test("init: defaults keyBy to 'id'", async () => {
 
 test("init: accepts explicit keyBy", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]), "username")
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]), "username")
 		.execute();
 
 	assert.strictEqual(users.length, 10);
@@ -103,7 +103,7 @@ test("init: accepts explicit keyBy", async () => {
 
 test("init: accepts factory function", async () => {
 	const users = await querySet(db)
-		.init("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
 		.execute();
 
 	assert.strictEqual(users.length, 10);
@@ -123,7 +123,7 @@ test("init: accepts factory function", async () => {
 
 test("toBaseQuery: returns underlying base query", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.toBaseQuery();
 
 	const rows = await baseQuery.execute();
@@ -144,7 +144,7 @@ test("toBaseQuery: returns underlying base query", async () => {
 
 test("toQuery: returns opaque query builder", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.toQuery();
 
 	const rows = await query.execute();

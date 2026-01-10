@@ -11,10 +11,10 @@ import { querySet } from "./query-set.ts";
 test("leftJoinMany: toJoinedQuery shows nullable columns for no matches", async () => {
 	// User 1 (alice) has no posts
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -38,10 +38,10 @@ test("leftJoinMany: toJoinedQuery shows nullable columns for no matches", async 
 test("leftJoinMany: toJoinedQuery shows row explosion when matches exist", async () => {
 	// User 2 (bob) has 4 posts
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -86,10 +86,10 @@ test("leftJoinMany: toJoinedQuery shows row explosion when matches exist", async
 test("leftJoinMany: execute returns empty array when no matches", async () => {
 	// User 1 (alice) has no posts
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -108,10 +108,10 @@ test("leftJoinMany: execute returns empty array when no matches", async () => {
 
 test("leftJoinMany: execute returns hydrated arrays when matches exist", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -136,10 +136,10 @@ test("leftJoinMany: execute returns hydrated arrays when matches exist", async (
 test("leftJoinMany: execute includes all base records (with and without matches)", async () => {
 	// User 1 (alice) has no posts, User 2 (bob) has 4 posts
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -168,10 +168,10 @@ test("leftJoinMany: execute includes all base records (with and without matches)
 
 test("leftJoinMany: executeTakeFirst returns first base record with all children", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -193,10 +193,10 @@ test("leftJoinMany: executeTakeFirst returns first base record with all children
 test("leftJoinMany: executeCount counts all base records", async () => {
 	// Should count all 3 users (alice, bob, carol) even though alice has no posts
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -208,10 +208,10 @@ test("leftJoinMany: executeCount counts all base records", async () => {
 
 test("leftJoinMany: executeExists checks existence", async () => {
 	const exists = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -223,11 +223,11 @@ test("leftJoinMany: executeExists checks existence", async () => {
 
 test("leftJoinMany: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 2)
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -243,10 +243,10 @@ test("leftJoinMany: toBaseQuery returns base query without joins", async () => {
 
 test("leftJoinMany: callback join condition with onRef", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			(join) => join.onRef("posts.user_id", "=", "user.id"),
 		)
 		.where("users.id", "<=", 2)
@@ -273,12 +273,12 @@ test("leftJoinMany: callback join condition with onRef", async () => {
 });
 
 test("leftJoinMany: pre-built QuerySet variant", async () => {
-	const postsQuery = querySet(db).init("post", (eb) =>
+	const postsQuery = querySet(db).selectAs("post", (eb) =>
 		eb.selectFrom("posts").select(["id", "title", "user_id"]),
 	);
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany("posts", postsQuery, "posts.user_id", "user.id")
 		.where("users.id", "<=", 2)
 		.execute();

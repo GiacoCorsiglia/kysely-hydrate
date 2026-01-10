@@ -10,10 +10,10 @@ import { querySet } from "./query-set.ts";
 
 test("leftJoinOneOrThrow: toJoinedQuery shows non-nullable columns", async () => {
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -42,10 +42,10 @@ test("leftJoinOneOrThrow: toJoinedQuery shows non-nullable columns", async () =>
 
 test("leftJoinOneOrThrow: execute returns object when match exists", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -70,11 +70,11 @@ test("leftJoinOneOrThrow: execute returns object when match exists", async () =>
 test("leftJoinOneOrThrow: execute throws when no match", async () => {
 	await assert.rejects(async () => {
 		await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinOneOrThrow(
 				"profile",
-				(init) =>
-					init(
+				(nest) =>
+					nest(
 						(eb) =>
 							eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
 					),
@@ -88,10 +88,10 @@ test("leftJoinOneOrThrow: execute throws when no match", async () => {
 
 test("leftJoinOneOrThrow: executeCount counts all base records", async () => {
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -103,10 +103,10 @@ test("leftJoinOneOrThrow: executeCount counts all base records", async () => {
 
 test("leftJoinOneOrThrow: executeExists checks existence", async () => {
 	const exists = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -118,10 +118,10 @@ test("leftJoinOneOrThrow: executeExists checks existence", async () => {
 
 test("leftJoinOneOrThrow: executeTakeFirst with join", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -137,11 +137,11 @@ test("leftJoinOneOrThrow: executeTakeFirst with join", async () => {
 
 test("leftJoinOneOrThrow: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 3)
 		.leftJoinOneOrThrow(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)

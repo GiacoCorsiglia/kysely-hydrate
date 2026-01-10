@@ -27,7 +27,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: execute() with no joins", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)
 			.execute();
 
@@ -37,7 +37,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeTakeFirst() with no joins", async () => {
 		const user = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 1)
 			.executeTakeFirst();
 
@@ -47,7 +47,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeCount() with no joins", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 5)
 			.executeCount(Number);
 
@@ -56,7 +56,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeExists() with no joins", async () => {
 		const exists = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 1)
 			.executeExists();
 
@@ -69,11 +69,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: innerJoinOne execute", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -85,11 +85,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: innerJoinOne executeCount", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -100,11 +100,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: leftJoinOne execute", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)
 			.leftJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -115,10 +115,10 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: leftJoinOne executeCount", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -133,11 +133,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: innerJoinMany execute", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -149,11 +149,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: innerJoinMany executeCount", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -165,11 +165,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: innerJoinMany toJoinedQuery execute", async () => {
 		const rows = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -183,11 +183,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: leftJoinMany execute", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2])
 			.leftJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -202,10 +202,10 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: crossJoinMany execute", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 2)
-			.crossJoinMany("allPosts", (init) =>
-				init((eb) =>
+			.crossJoinMany("allPosts", (nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(2),
 				),
 			)
@@ -223,7 +223,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: pagination with no joins", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.limit(3)
 			.offset(2)
 			.execute();
@@ -234,10 +234,10 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: pagination with innerJoinOne", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -251,10 +251,10 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: pagination with innerJoinMany", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -268,16 +268,16 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: pagination with mixed joins", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -295,12 +295,12 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: 3-level nesting users → posts → comments", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
@@ -321,12 +321,12 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: 3-level nesting with pagination", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+				(nest) =>
+					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 						"comments",
 						(init2) =>
 							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
@@ -346,18 +346,18 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: 4-level nesting with mixed cardinality", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
@@ -383,12 +383,12 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeCount with nested innerJoinMany", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 4)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+				(nest) =>
+					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 						"comments",
 						(init2) =>
 							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
@@ -406,34 +406,34 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeCount with mixed join types", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 5)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.leftJoinOne(
 				"profile2",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile2.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
 			.leftJoinMany(
 				"allPosts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"allPosts.user_id",
 				"user.id",
 			)
-			.crossJoinMany("crossPosts", (init) =>
-				init((eb) =>
+			.crossJoinMany("crossPosts", (nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(1),
 				),
 			)
@@ -450,7 +450,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeCount ignores limit and offset", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 5)
 			.limit(2)
 			.offset(1)
@@ -466,7 +466,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeExists with simple query", async () => {
 		const exists = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 1)
 			.executeExists();
 
@@ -475,17 +475,17 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeExists with joins", async () => {
 		const exists = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -496,7 +496,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: executeExists ignores limit", async () => {
 		const exists = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 5)
 			.limit(0) // Would normally return no results
 			.executeExists();
@@ -511,17 +511,17 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: toBaseQuery strips all joins", async () => {
 		const rows = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -537,18 +537,18 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: toJoinedQuery returns flat rows with prefixes", async () => {
 		const rows = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					),
 				"posts.user_id",
@@ -565,12 +565,12 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: toQuery vs toJoinedQuery without pagination", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) =>
+				(nest) =>
+					nest((eb) =>
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					),
 				"posts.user_id",
@@ -586,11 +586,11 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: toQuery vs toJoinedQuery with pagination differ", async () => {
 		const qs = querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -612,18 +612,18 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: empty result set with complex joins", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 999)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+				(nest) =>
+					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 						"comments",
 						(init2) =>
 							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
@@ -640,7 +640,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: empty result set executeCount", async () => {
 		const count = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 999)
 			.executeCount(Number);
 
@@ -649,7 +649,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: empty result set executeExists", async () => {
 		const exists = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 999)
 			.executeExists();
 
@@ -662,17 +662,17 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: multiple sibling many-joins", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
 			.leftJoinMany(
 				"allPosts",
-				(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"allPosts.user_id",
 				"user.id",
 			)
@@ -685,17 +685,17 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: multiple sibling one-joins", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.leftJoinOne(
 				"profile2",
-				(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile2.user_id",
 				"user.id",
 			)
@@ -712,13 +712,13 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 
 	test("kitchen sink: complex nested WHERE conditions", async () => {
 		const users = await querySet(db)
-			.init("user", db.selectFrom("users").select(["id", "username"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", ">=", 1)
 			.where("users.id", "<=", 5)
 			.innerJoinMany(
 				"posts",
-				(init) =>
-					init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).where(
+				(nest) =>
+					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).where(
 						"posts.id",
 						"<=",
 						10,

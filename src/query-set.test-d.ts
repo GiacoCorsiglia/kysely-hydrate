@@ -38,7 +38,7 @@ interface Comment {
 }
 
 ////////////////////////////////////////////////////////////
-// Section 1: Initialization (.init)
+// Section 1: Initialization (.selectAs)
 ////////////////////////////////////////////////////////////
 
 //
@@ -48,7 +48,7 @@ interface Comment {
 {
 	// Valid: default keyBy when "id" is selected
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
@@ -61,7 +61,7 @@ interface Comment {
 {
 	// Valid: explicit keyBy when "id" not selected
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["username", "email"]), "username")
+		.selectAs("user", db.selectFrom("users").select(["username", "email"]), "username")
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ username: string; email: string }[]>();
@@ -72,7 +72,7 @@ interface Comment {
 
 	querySet(db)
 		// @ts-expect-error - keyBy required when no "id"
-		.init("user", query);
+		.selectAs("user", query);
 }
 
 //
@@ -82,7 +82,7 @@ interface Comment {
 {
 	// Valid: factory with default keyBy
 	const result = querySet(db)
-		.init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
@@ -91,7 +91,7 @@ interface Comment {
 {
 	// Valid: factory with explicit keyBy
 	const result = querySet(db)
-		.init("user", (eb) => eb.selectFrom("users").select(["username"]), "username")
+		.selectAs("user", (eb) => eb.selectFrom("users").select(["username"]), "username")
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ username: string }[]>();
@@ -102,7 +102,7 @@ interface Comment {
 
 	querySet(db)
 		// @ts-expect-error - factory keyBy required when no "id"
-		.init("user", query);
+		.selectAs("user", query);
 }
 
 //
@@ -112,7 +112,7 @@ interface Comment {
 {
 	// Valid: pre-built query
 	const query = db.selectFrom("users").select(["id", "username"]);
-	const result = querySet(db).init("user", query).execute();
+	const result = querySet(db).selectAs("user", query).execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
 }
@@ -126,7 +126,7 @@ interface Comment {
 
 	querySet(db)
 		// @ts-expect-error - invalid keyBy (with default key by)
-		.init("user", query, "nonExistent");
+		.selectAs("user", query, "nonExistent");
 }
 
 {
@@ -134,7 +134,7 @@ interface Comment {
 
 	querySet(db)
 		// @ts-expect-error - invalid keyBy (without default key by)
-		.init("user", query, "invalid");
+		.selectAs("user", query, "invalid");
 }
 
 //
@@ -144,7 +144,7 @@ interface Comment {
 {
 	// Valid: array of keys
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]), ["id", "username"])
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]), ["id", "username"])
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
@@ -160,10 +160,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -183,13 +183,13 @@ interface Comment {
 //
 
 {
-	const profileQuery = querySet(db).init(
+	const profileQuery = querySet(db).selectAs(
 		"profile",
 		db.selectFrom("profiles").select(["id", "bio", "user_id"]),
 	);
 
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne("profile", profileQuery, "profile.user_id", "user.id")
 		.execute();
 
@@ -208,10 +208,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			(join) => join.onRef("profile.user_id", "=", "user.id"),
 		)
 		.execute();
@@ -231,11 +231,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).innerJoinOne(
+			(nest) =>
+				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).innerJoinOne(
 					"comments",
 					(init2) =>
 						init2((eb2) => eb2.selectFrom("comments").select(["user_id", "content"]), "user_id"),
@@ -267,10 +267,10 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id"])),
 			// @ts-expect-error - invalid left column
 			"profile.nonExistent",
 			"user.id",
@@ -279,10 +279,10 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id"])),
 			"profile.id",
 			// @ts-expect-error - invalid right column
 			"user.nonExistent",
@@ -299,10 +299,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -323,10 +323,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			(join) => join.onRef("posts.user_id", "=", "user.id"),
 		)
 		.execute();
@@ -350,10 +350,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -378,10 +378,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
 		.leftJoinOneOrThrow(
 			"author",
-			(init) => init((eb) => eb.selectFrom("users").select(["id", "username"])),
+			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
 			"author.id",
 			"post.user_id",
 		)
@@ -407,10 +407,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -435,9 +435,9 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany("comments", (init) =>
-			init((eb) => eb.selectFrom("comments").select(["id", "content"])),
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.crossJoinMany("comments", (nest) =>
+			nest((eb) => eb.selectFrom("comments").select(["id", "content"])),
 		)
 		.execute();
 
@@ -460,10 +460,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinLateralOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -484,10 +484,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinLateralMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -508,10 +508,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinLateralOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -532,10 +532,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
 		.leftJoinLateralOneOrThrow(
 			"author",
-			(init) => init((eb) => eb.selectFrom("users").select(["id", "username"])),
+			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
 			"author.id",
 			"post.user_id",
 		)
@@ -557,10 +557,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinLateralMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -581,9 +581,9 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinLateralMany("comments", (init) =>
-			init((eb) => eb.selectFrom("comments").select(["id", "content"])),
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.crossJoinLateralMany("comments", (nest) =>
+			nest((eb) => eb.selectFrom("comments").select(["id", "content"])),
 		)
 		.execute();
 
@@ -606,7 +606,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany(
 			"posts",
 			async (users) => {
@@ -632,13 +632,13 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany(
 			"posts",
 			(users) => {
 				expectTypeOf(users).toEqualTypeOf<{ id: number; username: string }[]>();
 				const userIds = users.map((u) => u.id);
-				return querySet(db).init("post", (eb) =>
+				return querySet(db).selectAs("post", (eb) =>
 					eb.selectFrom("posts").select(["id", "user_id", "title"]).where("user_id", "in", userIds),
 				);
 			},
@@ -661,7 +661,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany(
 			"posts",
 			(users) => {
@@ -690,7 +690,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "user_id", "title"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "user_id", "title"]))
 		.attachMany("comments", async () => [] as Comment[], { matchChild: "post_id", toParent: "id" })
 		.execute();
 
@@ -710,7 +710,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 
 		.attachMany("posts", async () => [] as Post[], {
 			// @ts-expect-error - matchChild field doesn't exist on attached type
@@ -720,7 +720,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany("posts", async () => [] as Post[], {
 			matchChild: "user_id",
 			// @ts-expect-error - toParent field doesn't exist on parent type
@@ -738,7 +738,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "user_id"]))
 		.attachOne("author", async () => [] as User[], { matchChild: "id", toParent: "user_id" })
 		.execute();
 
@@ -757,12 +757,12 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "user_id"]))
 		.attachOne(
 			"author",
 			(posts) => {
 				const userIds = [...new Set(posts.map((p) => p.user_id))];
-				return querySet(db).init("user", (eb) =>
+				return querySet(db).selectAs("user", (eb) =>
 					eb.selectFrom("users").select(["id", "username"]).where("id", "in", userIds),
 				);
 			},
@@ -789,7 +789,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("post", db.selectFrom("posts").select(["id", "user_id"]))
+		.selectAs("post", db.selectFrom("posts").select(["id", "user_id"]))
 		.attachOneOrThrow("author", async () => [] as User[], { matchChild: "id", toParent: "user_id" })
 		.execute();
 
@@ -812,7 +812,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.extras({
 			displayName: (row) => {
 				expectTypeOf(row).toEqualTypeOf<{ id: number; username: string; email: string }>();
@@ -837,7 +837,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.extras({
 			upper: (row) => row.username.toUpperCase(),
 			length: (row) => row.username.length,
@@ -860,7 +860,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.extras({
 			// @ts-expect-error - accessing non-existent field
 			invalid: (row) => row.nonExistent,
@@ -877,7 +877,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.mapFields({
 			username: (name) => {
 				expectTypeOf(name).toEqualTypeOf<string>();
@@ -895,7 +895,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.mapFields({
 			username: (name) => name.length,
 		})
@@ -910,7 +910,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.mapFields({
 			username: (name) => name.toUpperCase(),
 			email: (email) => email.length,
@@ -926,7 +926,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.mapFields({
 			// @ts-expect-error - field doesn't exist
 			nonExistent: (x: any) => x,
@@ -943,7 +943,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.omit(["email"])
 		.execute();
 
@@ -956,7 +956,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.omit(["username", "email"])
 		.execute();
 
@@ -969,7 +969,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// @ts-expect-error - cannot omit non-existent field
 		.omit(["nonExistent"]);
 }
@@ -988,7 +988,7 @@ interface Comment {
 	});
 
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.with(extraFields)
 		.execute();
 
@@ -1012,7 +1012,7 @@ interface Comment {
 		.map((u) => ({ userId: u.id }));
 
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.with(mappedHydrator)
 		.execute();
 
@@ -1032,7 +1032,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// @ts-expect-error - extraField not in row type
 		.with(createHydrator<{ id: number; username: string; extraField: string }>("id"));
 }
@@ -1047,7 +1047,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.extras({
 			displayName: (row) => `${row.username} <${row.email}>`,
 		})
@@ -1076,11 +1076,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
 					titleUpper: (post) => {
 						expectTypeOf(post).toEqualTypeOf<{ id: number; title: string; user_id: number }>();
 						return post.title.toUpperCase();
@@ -1106,11 +1106,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
 					title: (title) => {
 						expectTypeOf(title).toEqualTypeOf<string>();
 						return title.toUpperCase();
@@ -1136,11 +1136,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id", "content"])).omit([
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id", "content"])).omit([
 					"content",
 				]),
 			"posts.user_id",
@@ -1167,7 +1167,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", ">", 100))
 		.execute();
 
@@ -1180,7 +1180,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.select("email"))
 		.execute();
 
@@ -1193,7 +1193,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", ">", 100))
 		.modify((qb) => qb.select("email"))
 		.execute();
@@ -1207,7 +1207,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// @ts-expect-error - incompatible output type (can't select *fewer* columns).
 		.modify((qb) => qb.clearSelect())
 		.execute();
@@ -1223,10 +1223,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1250,10 +1250,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1277,10 +1277,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1311,11 +1311,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany(
 			"posts",
 			() =>
-				querySet(db).init("post", (eb) =>
+				querySet(db).selectAs("post", (eb) =>
 					eb.selectFrom("posts").select(["id", "user_id", "title"]),
 				),
 			{ matchChild: "user_id" },
@@ -1344,7 +1344,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany(
 			"posts",
 			(users) => {
@@ -1378,7 +1378,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany("posts", async () => [] as Post[], { matchChild: "user_id" })
 		.modify("posts", async (postsPromise) =>
 			(await postsPromise).map((p) => ({ ...p, upperTitle: p.title.toUpperCase() })),
@@ -1400,7 +1400,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// @ts-expect-error - collection key doesn't exist
 		.modify("nonExistent", (qs: any) => qs);
 }
@@ -1415,7 +1415,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", ">", 100)
 		.execute();
 
@@ -1428,7 +1428,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where((eb) => eb("username", "like", "%admin%"))
 		.execute();
 
@@ -1441,7 +1441,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", ">", 100)
 		.where((eb) => eb("username", "like", "%admin%"))
 		.execute();
@@ -1455,7 +1455,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// @ts-expect-error - column doesn't exist
 		.where("nonExistent", "=", "value");
 }
@@ -1470,7 +1470,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(10)
 		.offset(5)
 		.execute();
@@ -1484,7 +1484,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(10)
 		.offset(5)
 		.clearLimit()
@@ -1502,7 +1502,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username")
 		.execute();
 
@@ -1513,7 +1513,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", "desc" as "asc" | "desc")
 		.execute();
 
@@ -1524,7 +1524,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.orderBy("username", (ob) => ob.desc().nullsFirst())
 		.execute();
 
@@ -1535,10 +1535,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -1559,7 +1559,7 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		// @ts-expect-error - nonsense key
 		.orderBy("nonExistent")
 		.execute();
@@ -1571,7 +1571,7 @@ interface Comment {
 
 {
 	const base = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.toBaseQuery();
 
 	expectTypeOf(base).toEqualTypeOf<
@@ -1585,10 +1585,10 @@ interface Comment {
 
 {
 	const joined = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -1623,10 +1623,10 @@ interface Comment {
 
 {
 	const joined = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -1665,17 +1665,17 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 					"comments",
 					(init2) =>
 						init2((eb2) => eb2.selectFrom("comments").select(["id", "content", "post_id"])),
@@ -1709,7 +1709,7 @@ interface Comment {
 
 {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.toQuery();
 
 	// Opaque type with correct output shape
@@ -1724,7 +1724,7 @@ interface Comment {
 
 {
 	const countQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.toCountQuery();
 
 	const result = countQuery.execute();
@@ -1737,7 +1737,7 @@ interface Comment {
 
 {
 	const existsQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.toExistsQuery();
 
 	const result = existsQuery.execute();
@@ -1750,7 +1750,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
@@ -1762,7 +1762,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.executeTakeFirst();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string } | undefined>();
@@ -1774,7 +1774,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.executeTakeFirstOrThrow();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }>();
@@ -1790,7 +1790,7 @@ interface Comment {
 
 {
 	const count = querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.executeCount();
 
 	expectTypeOf(count).resolves.toEqualTypeOf<string | number | bigint>();
@@ -1802,7 +1802,7 @@ interface Comment {
 
 {
 	const count = querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.executeCount(Number);
 
 	expectTypeOf(count).resolves.toEqualTypeOf<number>();
@@ -1814,7 +1814,7 @@ interface Comment {
 
 {
 	const count = querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.executeCount(BigInt);
 
 	expectTypeOf(count).resolves.toEqualTypeOf<bigint>();
@@ -1826,7 +1826,7 @@ interface Comment {
 
 {
 	const count = querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.executeCount(String);
 
 	expectTypeOf(count).resolves.toEqualTypeOf<string>();
@@ -1838,7 +1838,7 @@ interface Comment {
 
 {
 	const exists = querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.modify((qb) => qb.where("username", "=", "alice"))
 		.executeExists();
 
@@ -1855,7 +1855,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((user) => {
 			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string }>();
 			return { userId: user.id, userName: user.username };
@@ -1871,7 +1871,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((user) => {
 			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string }>();
 			return { ...user, upper: user.username.toUpperCase() };
@@ -1895,7 +1895,7 @@ interface Comment {
 
 {
 	const mapped = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((u) => u.id);
 
 	// @ts-expect-error - cannot call innerJoinMany after map
@@ -1921,7 +1921,7 @@ interface Comment {
 
 {
 	const mapped = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((u) => u.id);
 
 	// @ts-expect-error - cannot call extras after map
@@ -1947,7 +1947,7 @@ interface Comment {
 
 {
 	const mapped = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((u) => u.id);
 
 	// @ts-expect-error - cannot call attachMany after map
@@ -1969,7 +1969,7 @@ interface Comment {
 
 {
 	const mapped = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((u) => u.id);
 
 	// These should work
@@ -1993,11 +1993,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).map((post) => {
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).map((post) => {
 					expectTypeOf(post).toEqualTypeOf<{ id: number; title: string; user_id: number }>();
 					return { postId: post.id, postTitle: post.title };
 				}),
@@ -2023,7 +2023,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany("posts", async () => [] as Post[], { matchChild: "user_id" })
 		.map((user) => {
 			expectTypeOf(user).toEqualTypeOf<{ id: number; username: string; posts: Post[] }>();
@@ -2044,11 +2044,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
 					(init2) =>
 						init2((eb2) => eb2.selectFrom("comments").select(["id", "content", "post_id"])),
@@ -2080,16 +2080,16 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -2111,16 +2111,16 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"requiredProfile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"requiredProfile.user_id",
 			"user.id",
 		)
 		.leftJoinOne(
 			"optionalProfile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "user_id", "bio"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "user_id", "bio"])),
 			"optionalProfile.user_id",
 			"user.id",
 		)
@@ -2146,11 +2146,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).attachMany(
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).attachMany(
 					"comments",
 					async () => [] as Comment[],
 					{ matchChild: "post_id", toParent: "id" },
@@ -2175,11 +2175,11 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany(
 			"posts",
 			() =>
-				querySet(db).init("post", (eb) =>
+				querySet(db).selectAs("post", (eb) =>
 					eb.selectFrom("posts").select(["id", "user_id", "title"]),
 				),
 			{ matchChild: "user_id" },
@@ -2211,10 +2211,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -2241,7 +2241,7 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.attachMany("posts", async () => [] as Post[], { matchChild: "user_id" })
 		.modify("posts", async (postsPromise) =>
 			(await postsPromise).map((p) => ({ ...p, upperTitle: p.title.toUpperCase() })),
@@ -2263,10 +2263,10 @@ interface Comment {
 
 {
 	const result = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -2298,7 +2298,7 @@ interface Comment {
 ////////////////////////////////////////////////////////////
 
 {
-	querySet(db).init(
+	querySet(db).selectAs(
 		"user",
 		db
 			.selectFrom("users")
@@ -2308,7 +2308,7 @@ interface Comment {
 }
 
 {
-	querySet(db).init(
+	querySet(db).selectAs(
 		"user",
 		// @ts-expect-error - invalid table in selectFrom
 		db.selectFrom("nonExistentTable"),
@@ -2321,11 +2321,11 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb
 						.selectFrom("posts")
 						// @ts-expect-error - invalid nested selection
@@ -2338,11 +2338,11 @@ interface Comment {
 
 {
 	querySet(db)
-		.init("user", db.selectFrom("users").select(["id"]))
+		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb
 						.selectFrom("posts")
 						// @ts-expect-error - selecting from table not in nested query

@@ -277,7 +277,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const qs = querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .modify((qb) => qb.where("isActive", "=", true));
 	 *
 	 * const baseQuery = qs.toBaseQuery();
@@ -343,7 +343,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const count = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany("posts", ...)
 	 *   .limit(10)
 	 *   .toCountQuery()
@@ -373,7 +373,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const existsQuery = querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .modify((qb) => qb.where("username", "=", "alice"))
 	 *   .toExistsQuery();
 	 *
@@ -399,9 +399,9 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
-	 *   .leftJoinMany("posts", (init) =>
-	 *     init("post", eb => eb.selectFrom("posts").select(["id", "title"])),
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany("posts", (nest) =>
+	 *     nest("post", eb => eb.selectFrom("posts").select(["id", "title"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -425,7 +425,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const user = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .modify((qb) => qb.where("id", "=", 1))
 	 *   .executeTakeFirst();
 	 *
@@ -446,7 +446,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const user = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .modify((qb) => qb.where("id", "=", 1))
 	 *   .executeTakeFirstOrThrow();
 	 *
@@ -462,7 +462,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * }
 	 *
 	 * const user = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .modify((qb) => qb.where("id", "=", 1))
 	 *   .executeTakeFirstOrThrow(UserNotFoundError);
 	 * ```
@@ -482,18 +482,18 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const count = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .executeCount(); // string | number | bigint
 	 * ```
 	 *
 	 * **Example with type conversion:**
 	 * ```ts
 	 * const count = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .executeCount(Number); // number
 	 *
 	 * const bigCount = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .executeCount(BigInt); // bigint
 	 * ```
 	 */
@@ -509,7 +509,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const hasActiveUsers = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id"]))
 	 *   .modify((qb) => qb.where("isActive", "=", true))
 	 *   .executeExists();
 	 *
@@ -547,7 +547,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * }
 	 *
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .map((row) => new User(row.id, row.username))
 	 *   .execute();
 	 *
@@ -561,7 +561,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * type User = AdminUser | RegularUser;
 	 *
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "role", "permissions"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "role", "permissions"]))
 	 *   .map((row): User => {
 	 *     if (row.role === "admin") {
 	 *       return { id: row.id, role: "admin", permissions: row.permissions ?? [] };
@@ -588,7 +588,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example - Adding WHERE clauses:**
 	 * ```ts
 	 * const activeUsers = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username", "isActive"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username", "isActive"]))
 	 *   .modify((qb) => qb.where("isActive", "=", true))
 	 *   .execute();
 	 * ```
@@ -596,7 +596,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example - Adding additional selections:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .modify((qb) =>
 	 *     qb
 	 *       .leftJoin("posts", "posts.userId", "users.id")
@@ -627,7 +627,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example - Simple where clause:**
 	 * ```ts
 	 * const activeUsers = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .where("users.isActive", "=", true)
 	 *   .execute();
 	 * ```
@@ -635,7 +635,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example - Expression-based where:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username", "age"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username", "age"]))
 	 *   .where((eb) => eb.or([
 	 *     eb("users.age", "<", 18),
 	 *     eb("users.age", ">", 65)
@@ -666,7 +666,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany("posts", ...)
 	 *   .limit(10)
 	 *   .execute();
@@ -685,7 +685,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const query = querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .limit(10);
 	 *
 	 * const allUsers = await query.clearLimit().execute();
@@ -704,7 +704,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany("posts", ...)
 	 *   .offset(20)
 	 *   .limit(10)
@@ -724,7 +724,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const query = querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .offset(20)
 	 *   .limit(10);
 	 *
@@ -751,10 +751,10 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinOne(
 	 *     "profile",
-	 *     (init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+	 *     (nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 	 *     "profile.user_id",
 	 *     "user.id"
 	 *   )
@@ -775,7 +775,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .orderBy("username")
 	 *   .clearOrderBy()
 	 *   .execute();
@@ -793,7 +793,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .orderByKeys(false)
 	 *   .execute();
 	 * // Returns users ordered by "id".
@@ -847,7 +847,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
+	 *   .selectAs("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
 	 *   .extras({
 	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
 	 *   })
@@ -877,7 +877,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name"]))
+	 *   .selectAs("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name"]))
 	 *   .mapFields({
 	 *     name: (name) => name.toUpperCase(),
 	 *   })
@@ -902,7 +902,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
+	 *   .selectAs("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
 	 *   .extras({
 	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
 	 *   })
@@ -935,7 +935,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .extras({ displayName: (u) => `${u.name} <${u.email}>` });
 	 *
 	 * const users = await querySet(db)
-	 *   .init("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name", "users.email"]))
+	 *   .selectAs("users", (eb) => eb.selectFrom("users").select(["users.id", "users.name", "users.email"]))
 	 *   .with(extraFields)
 	 *   .execute();
 	 * // ⬇
@@ -979,12 +979,12 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with QuerySet (recommended):**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "posts",
 	 *     (userRows) => {
 	 *       const userIds = userRows.map((u) => u.id);
-	 *       return querySet(db).init(
+	 *       return querySet(db).selectAs(
 	 *         "post",
 	 *         (eb) => eb.selectFrom("posts")
 	 *           .select(["id", "userId", "title"])
@@ -999,7 +999,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with SelectQueryBuilder:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "posts",
 	 *     (userRows) => {
@@ -1017,7 +1017,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with external API:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "socialPosts",
 	 *     async (userRows) => {
@@ -1057,12 +1057,12 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with QuerySet (recommended):**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init("post", (eb) => eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .selectAs("post", (eb) => eb.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .attachOne(
 	 *     "author",
 	 *     (postRows) => {
 	 *       const userIds = [...new Set(postRows.map((p) => p.userId))];
-	 *       return querySet(db).init(
+	 *       return querySet(db).selectAs(
 	 *         "user",
 	 *         (eb) => eb.selectFrom("users")
 	 *           .select(["id", "username"])
@@ -1077,7 +1077,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with SelectQueryBuilder:**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init("post", (eb) => eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .selectAs("post", (eb) => eb.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .attachOne(
 	 *     "author",
 	 *     (postRows) => {
@@ -1145,10 +1145,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with explicit join conditions:**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne(
 	 *     "author",  // Key (alias) - extra argument compared to Kysely
-	 *     (init) => init("user", eb => eb.selectFrom("users").select(["id", "username"])),
+	 *     (nest) => nest("user", eb => eb.selectFrom("users").select(["id", "username"])),
 	 *     "user.id",    // Same as Kysely's k1
 	 *     "post.userId", // Same as Kysely's k2
 	 *   )
@@ -1165,10 +1165,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with callback:**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne(
 	 *     "author",
-	 *     (init) => init("user", eb =>eb.selectFrom("users").select(["id", "username"])),
+	 *     (nest) => nest("user", eb =>eb.selectFrom("users").select(["id", "username"])),
 	 *     (join) => join.onRef("user.id", "=", "post.userId"),  // Same as Kysely's callback
 	 *   )
 	 *   .execute();
@@ -1177,10 +1177,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with pre-built query set:**
 	 * ```ts
 	 * const authorQuery = querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]));
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]));
 	 *
 	 * const posts = await querySet(db)
-	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne("author", authorQuery, "user.id", "post.userId")
 	 *   .execute();
 	 * ```
@@ -1221,10 +1221,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "posts",
-	 *     (init) => init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (nest) => nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1241,11 +1241,11 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with filtering in nested query:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "publishedPosts",
-	 *     (init) =>
-	 *       init("post", (eb) =>
+	 *     (nest) =>
+	 *       nest("post", (eb) =>
 	 *         eb
 	 *           .selectFrom("posts")
 	 *           .select(["id", "title", "userId"])
@@ -1297,10 +1297,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinOne(
 	 *     "profile",
-	 *     (init) => init("profile", eb => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+	 *     (nest) => nest("profile", eb => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
 	 *     "profile.userId",
 	 *     "user.id",
 	 *   )
@@ -1351,10 +1351,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example:**
 	 * ```ts
 	 * const posts = await querySet(db)
-	 *   .init("post", db.selectFrom("posts").select(["id", "title", "userId"]))
+	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .leftJoinOneOrThrow(
 	 *     "author",
-	 *     (init) => init("user", eb => eb.selectFrom("users").select(["id", "username"])),
+	 *     (nest) => nest("user", eb => eb.selectFrom("users").select(["id", "username"])),
 	 *     "user.id",
 	 *     "post.userId",
 	 *   )
@@ -1405,10 +1405,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (init) => init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (nest) => nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1425,15 +1425,15 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example with nested joins:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (init) =>
-	 *       init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *     (nest) =>
+	 *       nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"]))
 	 *         .leftJoinMany(
 	 *           "comments",
-	 *           (init) =>
-	 *             init("comment", eb => eb.selectFrom("comments").select(["id", "content", "postId"])),
+	 *           (nest) =>
+	 *             nest("comment", eb => eb.selectFrom("comments").select(["id", "content", "postId"])),
 	 *           "comment.postId",
 	 *           "post.id",
 	 *         ),
@@ -1694,7 +1694,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example - Modifying base query:**
 	 * ```ts
 	 * const activeUsers = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany("posts", ...)
 	 *   .modify((qb) => qb.where("isActive", "=", true))
 	 *   .execute();
@@ -1703,11 +1703,11 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example - Modifying a joined QuerySet with filtering:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (init) =>
-	 *       init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (nest) =>
+	 *       nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1722,11 +1722,11 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example - Adding nested attaches to a joined QuerySet:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "posts",
-	 *     (init) =>
-	 *       init("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     (nest) =>
+	 *       nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1736,7 +1736,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *       "metadata",
 	 *       (postRows) => {
 	 *         const postIds = postRows.map((p) => p.id);
-	 *         return querySet(db).init("metadata", (eb) =>
+	 *         return querySet(db).selectAs("metadata", (eb) =>
 	 *           eb.selectFrom("post_metadata")
 	 *             .select(["postId", "viewCount", "likeCount"])
 	 *             .where("postId", "in", postIds)
@@ -1762,12 +1762,12 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example - Modifying an attach collection (QuerySet):**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "posts",
 	 *     (userRows) => {
 	 *       const userIds = userRows.map((u) => u.id);
-	 *       return querySet(db).init("post", (eb) =>
+	 *       return querySet(db).selectAs("post", (eb) =>
 	 *         eb.selectFrom("posts")
 	 *           .select(["id", "title", "userId"])
 	 *           .where("userId", "in", userIds)
@@ -1786,7 +1786,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example - Modifying an attach collection (SelectQueryBuilder):**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "posts",
 	 *     (userRows) => {
@@ -1806,7 +1806,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Example - Transforming an external API attach collection:**
 	 * ```ts
 	 * const users = await querySet(db)
-	 *   .init("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .attachMany(
 	 *     "socialPosts",
 	 *     async (userRows) => {
@@ -1977,9 +1977,7 @@ interface QuerySetWithAttachOneOrThrow<
 
 type NestedQuerySetOrFactory<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> =
 	| MappedQuerySet<TNested>
-	| ((
-			nest: InitWithAlias<ToInitialJoinedDB<T>, ToInitialJoinedTB<T>, Alias>,
-	  ) => MappedQuerySet<TNested>);
+	| ((nest: NestFn<ToInitialJoinedDB<T>, ToInitialJoinedTB<T>, Alias>) => MappedQuerySet<TNested>);
 
 type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.AliasedExpression<
 	TNested["BaseQuery"]["O"],
@@ -2659,8 +2657,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			keyBy?: KeyBy<any>,
 		) => {
 			const creator = querySet(this.#props.db);
-			return creator.init(key, query as any, keyBy as any);
-		}) as any as InitWithAlias<any, any, any>;
+			return creator.selectAs(key, query as any, keyBy as any);
+		}) as any as NestFn<any, any, any>;
 
 		const resolved = typeof nestedQuerySet === "function" ? nestedQuerySet(nest) : nestedQuerySet;
 
@@ -2903,7 +2901,7 @@ type SelectQueryBuilderOrFactory<
 	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
 	| SelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
 
-interface InitWithAlias<in out DB, in out TB extends keyof DB, in out Alias extends string> {
+interface NestFn<in out DB, in out TB extends keyof DB, in out Alias extends string> {
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
 		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
@@ -2934,7 +2932,7 @@ class QuerySetCreator<in out DB> {
 	}
 
 	/**
-	 * Initializes a new query set with a base query and alias.
+	 * Initializes a new query set with a base select query and an alias.
 	 *
 	 * The alias is required and will be used to reference columns from the base
 	 * query in the generated SQL, including for any nested joins you add. You
@@ -2947,7 +2945,7 @@ class QuerySetCreator<in out DB> {
 	 *
 	 * **Example with query builder:**
 	 * ```ts
-	 * querySet(db).init(
+	 * querySet(db).selectAs(
 	 *   "user",
 	 *   db.selectFrom("users").select(["id", "username", "email"])
 	 * )
@@ -2955,7 +2953,7 @@ class QuerySetCreator<in out DB> {
 	 *
 	 * **Example with factory function:**
 	 * ```ts
-	 * querySet(db).init(
+	 * querySet(db).selectAs(
 	 *   "user",
 	 *   (eb) => eb.selectFrom("users").select(["id", "username", "email"])
 	 * )
@@ -2963,7 +2961,7 @@ class QuerySetCreator<in out DB> {
 	 *
 	 * **Example with custom keyBy:**
 	 * ```ts
-	 * querySet(db).init(
+	 * querySet(db).selectAs(
 	 *   "session",
 	 *   db.selectFrom("sessions").select(["sessionId", "userId"]),
 	 *   "sessionId" // Use sessionId instead of id
@@ -2972,7 +2970,7 @@ class QuerySetCreator<in out DB> {
 	 *
 	 * **Example with composite key:**
 	 * ```ts
-	 * querySet(db).init(
+	 * querySet(db).selectAs(
 	 *   "userRole",
 	 *   db.selectFrom("user_roles").select(["userId", "roleId"]),
 	 *   ["userId", "roleId"]
@@ -2984,7 +2982,7 @@ class QuerySetCreator<in out DB> {
 	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
 	 * @returns A new QuerySet.
 	 */
-	init<
+	selectAs<
 		Alias extends string,
 		BaseDB,
 		BaseTB extends keyof BaseDB,
@@ -2993,13 +2991,13 @@ class QuerySetCreator<in out DB> {
 		alias: Alias,
 		query: SelectQueryBuilderOrFactory<DB, never, BaseDB, BaseTB, BaseO>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	init<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
+	selectAs<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
 		alias: Alias,
 		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
 		keyBy: KeyBy<NoInfer<BaseO>>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	// Infer output from ReturnType<F> to avoid circular inference.
-	init<
+	selectAs<
 		Alias extends string,
 		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
@@ -3009,7 +3007,7 @@ class QuerySetCreator<in out DB> {
 		query: F,
 		keyBy: KeyBy<NoInfer<TQ["O"]>>,
 	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
-	init(
+	selectAs(
 		alias: string,
 		query: any,
 		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
@@ -3044,9 +3042,9 @@ class QuerySetCreator<in out DB> {
  * **Example:**
  * ```ts
  * const users = await querySet(db)
- *   .init("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
- *   .leftJoinMany("posts", (init) =>
- *     init("post", (eb) => eb.selectFrom("posts").select(["id", "userId", "title"])),
+ *   .selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
+ *   .leftJoinMany("posts", (nest) =>
+ *     nest("post", (eb) => eb.selectFrom("posts").select(["id", "userId", "title"])),
  *     "post.userId",
  *     "user.id",
  *   )

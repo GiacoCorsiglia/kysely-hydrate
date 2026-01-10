@@ -12,7 +12,7 @@ import { querySet } from "./query-set.ts";
 
 test("extras: add computed field at root level", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "<=", 3)
 		.extras({
 			displayName: (row) => `User: ${row.username}`,
@@ -28,7 +28,7 @@ test("extras: add computed field at root level", async () => {
 
 test("extras: add computed field with full row access", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "<=", 2)
 		.extras({
 			emailDomain: (row) => row.email.split("@")[1],
@@ -56,12 +56,12 @@ test("extras: add computed field with full row access", async () => {
 
 test("extras: add computed field in nested join", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
 					titleUpper: (row) => row.title.toUpperCase(),
 				}),
 			"posts.user_id",
@@ -85,7 +85,7 @@ test("extras: add computed field in nested join", async () => {
 
 test("extras: multiple extras on same QuerySet", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.extras({
 			first: (_) => "first",
@@ -102,7 +102,7 @@ test("extras: multiple extras on same QuerySet", async () => {
 
 test("mapFields: transform single field value", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 2)
 		.mapFields({
 			username: (value) => value.toUpperCase(),
@@ -117,7 +117,7 @@ test("mapFields: transform single field value", async () => {
 
 test("mapFields: transform multiple fields", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.mapFields({
 			id: (value) => `ID-${value}`,
@@ -130,7 +130,7 @@ test("mapFields: transform multiple fields", async () => {
 
 test("mapFields: unmapped fields remain unchanged", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
 		.mapFields({
 			username: (value) => value.toUpperCase(),
@@ -142,7 +142,7 @@ test("mapFields: unmapped fields remain unchanged", async () => {
 
 test("mapFields: type transformation (number to string)", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.mapFields({
 			id: (value) => String(value),
@@ -154,12 +154,12 @@ test("mapFields: type transformation (number to string)", async () => {
 
 test("mapFields: in nested join", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
 					title: (value) => value.toUpperCase(),
 				}),
 			"posts.user_id",
@@ -183,7 +183,7 @@ test("mapFields: in nested join", async () => {
 
 test("mapFields: multiple mapFields merge configurations", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.mapFields({
 			id: (value) => value * 10,
@@ -200,7 +200,7 @@ test("mapFields: multiple mapFields merge configurations", async () => {
 
 test("omit: remove single field from root", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
 		.omit(["email"])
 		.execute();
@@ -212,7 +212,7 @@ test("omit: remove single field from root", async () => {
 
 test("omit: remove multiple fields", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
 		.omit(["username", "email"])
 		.execute();
@@ -224,7 +224,7 @@ test("omit: remove multiple fields", async () => {
 
 test("omit: used with extras to hide intermediate fields", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
 		.extras({
 			displayName: (row) => `${row.username} (${row.email})`,
@@ -240,12 +240,12 @@ test("omit: used with extras to hide intermediate fields", async () => {
 
 test("omit: in nested join", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).omit(["user_id"]),
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).omit(["user_id"]),
 			"posts.user_id",
 			"user.id",
 		)
@@ -281,7 +281,7 @@ test("with: merges extras from hydrator", async () => {
 	});
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
 		.with(extraFields)
 		.execute();
@@ -309,7 +309,7 @@ test("with: merges mapFields from hydrator", async () => {
 	});
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.with(upperCaseHydrator)
 		.execute();
@@ -330,7 +330,7 @@ test("with: hydrator configuration takes precedence over existing", async () => 
 	});
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.mapFields({
 			username: (username) => username.toLowerCase(),
@@ -358,7 +358,7 @@ test("with: merges omit from hydrator", async () => {
 		.omit(["email"]);
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
 		.with(withOmit)
 		.execute();
@@ -386,12 +386,12 @@ test("with: works in nested QuerySet", async () => {
 		.omit(["user_id"]);
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).with(postHydrator),
+			(nest) =>
+				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).with(postHydrator),
 			"posts.user_id",
 			"user.id",
 		)
@@ -415,12 +415,12 @@ test("with: works in nested QuerySet", async () => {
 
 test("nested QuerySet with extras and omit", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.innerJoinOne(
 			"profile",
-			(init) =>
-				init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"]))
+			(nest) =>
+				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"]))
 					.omit(["user_id"])
 					.extras({
 						bioLength: (row) => row.bio?.length ?? 0,
@@ -441,7 +441,7 @@ test("nested QuerySet with extras and omit", async () => {
 
 test("multiple mapFields calls: later takes precedence for same field", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.mapFields({
 			username: (value) => value.toUpperCase(),
@@ -458,7 +458,7 @@ test("multiple mapFields calls: later takes precedence for same field", async ()
 
 test("map: transform entire output object", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 2)
 		.map((user) => ({
 			...user,
@@ -474,7 +474,7 @@ test("map: transform entire output object", async () => {
 
 test("map: transform into different shape", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.map((user) => `User #${user.id}: ${user.username}`)
 		.execute();
@@ -484,7 +484,7 @@ test("map: transform into different shape", async () => {
 
 test("map: chain multiple maps", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.map((user) => ({ ...user, step1: true }))
 		.map((user) => ({ ...user, step2: true }))
@@ -509,7 +509,7 @@ test("map: transform into class instances", async () => {
 	}
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.map((user) => new UserModel(user.id, user.username))
 		.execute();
@@ -523,11 +523,11 @@ test("map: transform into class instances", async () => {
 
 test("map: with nested joins", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)

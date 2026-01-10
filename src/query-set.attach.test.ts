@@ -19,7 +19,7 @@ test("attachMany: fetches and matches related entities", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "in", [2, 3])
 		.attachMany("posts", fetchPosts, { matchChild: "user_id" })
 		.execute();
@@ -57,7 +57,7 @@ test("attachMany: returns empty array when no matches", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.attachMany("posts", fetchPosts, { matchChild: "user_id" })
 		.execute();
@@ -82,7 +82,7 @@ test("attachMany: uses toParent for custom matching keys", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.attachMany("posts", fetchPosts, { matchChild: "user_id", toParent: "id" })
 		.execute();
@@ -104,14 +104,14 @@ test("attachMany: uses toParent for custom matching keys", async () => {
 
 test("attachMany: accepts QuerySet return from fetchFn", async () => {
 	const fetchPosts = () => {
-		return querySet(db).init(
+		return querySet(db).selectAs(
 			"post",
 			db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2),
 		);
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.attachMany("posts", fetchPosts, { matchChild: "user_id" })
 		.execute();
@@ -137,7 +137,7 @@ test("attachMany: accepts SelectQueryBuilder return from fetchFn", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.attachMany("posts", fetchPosts, { matchChild: "user_id" })
 		.execute();
@@ -167,12 +167,12 @@ test("attachMany: works at nested level", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				).attachMany("comments", fetchComments, { matchChild: "post_id", toParent: "id" }),
 			"posts.user_id",
@@ -212,13 +212,13 @@ test("attachOne: returns single match or null", async () => {
 	};
 
 	const usersWithProfile = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.attachOne("profile", fetchProfile, { matchChild: "user_id" })
 		.execute();
 
 	const usersWithoutProfile = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
 		.attachOne("profile", fetchProfile, { matchChild: "user_id" })
 		.execute();
@@ -241,7 +241,7 @@ test("attachOne: throws on cardinality violation", async () => {
 	};
 
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.attachOne("post", fetchPosts, { matchChild: "user_id" });
 
@@ -262,12 +262,12 @@ test("attachOne: works at nested level", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				).attachOne("latestComment", fetchLatestComment, { matchChild: "post_id", toParent: "id" }),
 			"posts.user_id",
@@ -308,7 +308,7 @@ test("attachOneOrThrow: returns entity when exists", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.attachOneOrThrow("requiredProfile", fetchProfile, { matchChild: "user_id" })
 		.execute();
@@ -333,7 +333,7 @@ test("attachOneOrThrow: throws when no match exists", async () => {
 	};
 
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.attachOneOrThrow("requiredProfile", fetchProfile, { matchChild: "user_id" });
 
@@ -348,12 +348,12 @@ test("attachOneOrThrow: works at nested level", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				).attachOneOrThrow("author", fetchAuthor, { matchChild: "id", toParent: "user_id" }),
 			"posts.user_id",
@@ -391,12 +391,12 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 	};
 
 	const qs = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1),
 				).attachOneOrThrow("requiredAuthor", fetchAuthor, {
 					matchChild: "id",
@@ -415,7 +415,7 @@ test("attachMany: modify attached QuerySet via init callback", async () => {
 	const fetchPosts = () => {
 		// Modify the QuerySet before returning it
 		return querySet(db)
-			.init(
+			.selectAs(
 				"post",
 				db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2),
 			)
@@ -426,7 +426,7 @@ test("attachMany: modify attached QuerySet via init callback", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.attachMany("posts", fetchPosts, { matchChild: "user_id" })
 		.execute();
@@ -458,12 +458,12 @@ test("attachMany: with nested join and attach combination", async () => {
 	};
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(init) =>
-				init((eb) =>
+			(nest) =>
+				nest((eb) =>
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				)
 					.attachMany("comments", fetchComments, { matchChild: "post_id", toParent: "id" })

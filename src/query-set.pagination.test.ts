@@ -12,7 +12,7 @@ import { querySet } from "./query-set.ts";
 
 test("pagination: limit without joins", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3);
 
 	const users = await query.execute();
@@ -26,7 +26,7 @@ test("pagination: limit without joins", async () => {
 
 test("pagination: offset without joins", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(1000) // SQLite requires LIMIT when using OFFSET
 		.offset(7);
 
@@ -41,7 +41,7 @@ test("pagination: offset without joins", async () => {
 
 test("pagination: limit and offset without joins", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
 		.offset(2);
 
@@ -58,10 +58,10 @@ test("pagination: limit and offset without joins", async () => {
 
 test("pagination: limit with innerJoinOne", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -78,10 +78,10 @@ test("pagination: limit with innerJoinOne", async () => {
 
 test("pagination: limit and offset with leftJoinOne", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -102,10 +102,10 @@ test("pagination: limit and offset with leftJoinOne", async () => {
 test("pagination: limit with innerJoinMany returns limited users with ALL their posts", async () => {
 	// User 2 has 4 posts, User 3 has 2 posts
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -126,10 +126,10 @@ test("pagination: limit with innerJoinMany returns limited users with ALL their 
 test("pagination: limit with leftJoinMany returns limited users with ALL their posts", async () => {
 	// User 1 has no posts, User 2 has 4 posts, User 3 has 2 posts
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -148,10 +148,10 @@ test("pagination: limit with leftJoinMany returns limited users with ALL their p
 test("pagination: offset with innerJoinMany skips base records correctly", async () => {
 	// User 2 has 4 posts, User 3 has 2 posts
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -171,10 +171,10 @@ test("pagination: offset with innerJoinMany skips base records correctly", async
 test("pagination: limit and offset with innerJoinMany", async () => {
 	// Get users with posts, starting from the 2nd user
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -195,7 +195,7 @@ test("pagination: limit and offset with innerJoinMany", async () => {
 
 test("pagination: executeCount ignores limit/offset", async () => {
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
 		.offset(2)
 		.executeCount(Number);
@@ -206,7 +206,7 @@ test("pagination: executeCount ignores limit/offset", async () => {
 
 test("pagination: executeExists ignores limit/offset", async () => {
 	const exists = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", ">", 100) // No users match
 		.limit(1)
 		.executeExists();
@@ -217,10 +217,10 @@ test("pagination: executeExists ignores limit/offset", async () => {
 
 test("pagination: executeCount with joins ignores limit/offset", async () => {
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(init) => init((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -236,7 +236,7 @@ test("pagination: executeCount with joins ignores limit/offset", async () => {
 
 test("pagination: clearLimit removes limit", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
 		.clearLimit()
 		.execute();
@@ -247,7 +247,7 @@ test("pagination: clearLimit removes limit", async () => {
 
 test("pagination: clearOffset removes offset", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.offset(7)
 		.clearOffset()
 		.execute();

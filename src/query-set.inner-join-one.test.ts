@@ -10,10 +10,10 @@ import { querySet } from "./query-set.ts";
 
 test("innerJoinOne: toJoinedQuery returns flat rows with $$ prefixes", async () => {
 	const rows = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -49,10 +49,10 @@ test("innerJoinOne: toJoinedQuery returns flat rows with $$ prefixes", async () 
 
 test("innerJoinOne: execute returns hydrated nested objects", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -81,10 +81,10 @@ test("innerJoinOne: execute returns hydrated nested objects", async () => {
 
 test("innerJoinOne: executeTakeFirst with join", async () => {
 	const user = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -100,10 +100,10 @@ test("innerJoinOne: executeTakeFirst with join", async () => {
 
 test("innerJoinOne: executeCount counts base records", async () => {
 	const count = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -115,10 +115,10 @@ test("innerJoinOne: executeCount counts base records", async () => {
 
 test("innerJoinOne: executeExists checks existence", async () => {
 	const exists = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -130,11 +130,11 @@ test("innerJoinOne: executeExists checks existence", async () => {
 
 test("innerJoinOne: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 4)
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -152,10 +152,10 @@ test("innerJoinOne: toBaseQuery returns base query without joins", async () => {
 
 test("innerJoinOne: callback join condition with onRef", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(init) => init((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			(join) => join.onRef("profile.user_id", "=", "user.id"),
 		)
 		.where("users.id", "<=", 2)
@@ -177,12 +177,12 @@ test("innerJoinOne: callback join condition with onRef", async () => {
 });
 
 test("innerJoinOne: pre-built QuerySet variant", async () => {
-	const profileQuery = querySet(db).init("profile", (eb) =>
+	const profileQuery = querySet(db).selectAs("profile", (eb) =>
 		eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
 	);
 
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne("profile", profileQuery, "profile.user_id", "user.id")
 		.where("users.id", "<=", 2)
 		.execute();

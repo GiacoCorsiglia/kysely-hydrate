@@ -10,7 +10,7 @@ import { querySet } from "./query-set.ts";
 
 test("modify: add WHERE clause", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", ">", 5))
 		.execute();
 
@@ -26,7 +26,7 @@ test("modify: add WHERE clause", async () => {
 
 test("modify: add additional SELECT", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.select("email"))
 		.execute();
 
@@ -47,7 +47,7 @@ test("modify: add additional SELECT", async () => {
 
 test("modify: multiple calls chained", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", "<=", 5))
 		.modify((qb) => qb.select("email"))
 		.execute();
@@ -64,7 +64,7 @@ test("modify: multiple calls chained", async () => {
 
 test("where: simple reference", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "=", 1)
 		.execute();
 
@@ -74,7 +74,7 @@ test("where: simple reference", async () => {
 
 test("where: with expression factory", async () => {
 	const users = await querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where((eb) => eb.or([eb("id", "=", 1), eb("id", "=", 2)]))
 		.execute();
 
@@ -87,7 +87,7 @@ test("where: with expression factory", async () => {
 
 test("toBaseQuery: returns modified base query", async () => {
 	const baseQuery = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", "<", 3))
 		.toBaseQuery();
 
@@ -101,7 +101,7 @@ test("toBaseQuery: returns modified base query", async () => {
 
 test("toQuery: returns opaque query builder with modifications", async () => {
 	const query = querySet(db)
-		.init("user", db.selectFrom("users").select(["id", "username"]))
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", "=", 1))
 		.toQuery();
 
