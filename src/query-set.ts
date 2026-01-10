@@ -2025,7 +2025,17 @@ interface QuerySetWithAttach<
 
 type NestedQuerySetOrFactory<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> =
 	| MappedQuerySet<TNested>
-	| ((nest: NestFn<ToInitialJoinedDB<T>, ToInitialJoinedTB<T>, Alias>) => MappedQuerySet<TNested>);
+	| NestCallback<T, Alias, TNested>;
+
+type NestCallback<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> = (
+	nest: NestFnFor<T, Alias>,
+) => MappedQuerySet<TNested>;
+
+type NestFnFor<T extends TQuerySet, Alias extends string> = NestFn<
+	ToInitialJoinedDB<T>,
+	ToInitialJoinedTB<T>,
+	Alias
+>;
 
 type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.AliasedExpression<
 	TNested["BaseQuery"]["O"],
