@@ -87,35 +87,6 @@ type AnyQueryBuilder =
 	| AnyInsertQueryBuilder
 	| AnyDeleteQueryBuilder;
 
-// interface AnyQueryBuilderMap {
-// 	Select: AnySelectQueryBuilder;
-// 	Update: AnyUpdateQueryBuilder;
-// 	Insert: AnyInsertQueryBuilder;
-// 	Delete: AnyDeleteQueryBuilder;
-// }
-
-// type AnyQueryBuilderFor<Q extends TQuery> = AnyQueryBuilderMap[Q["Type"]];
-
-// interface InferQueryFromBuilderForMap<Builder extends AnyQueryBuilder> {
-// 	Select: Builder extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
-// 		? { Type: "Select"; DB: DB; TB: TB; O: O; UT: never }
-// 		: never;
-// 	Update: Builder extends k.UpdateQueryBuilder<infer DB, infer TB, infer UT, infer O>
-// 		? { Type: "Update"; DB: DB; TB: TB; UT: UT; O: O }
-// 		: never;
-// 	Insert: Builder extends k.InsertQueryBuilder<infer DB, infer TB, infer O>
-// 		? { Type: "Insert"; DB: DB; TB: TB; O: O; UT: never }
-// 		: never;
-// 	Delete: Builder extends k.DeleteQueryBuilder<infer DB, infer TB, infer O>
-// 		? { Type: "Delete"; DB: DB; TB: TB; O: O; UT: never }
-// 		: never;
-// }
-
-// type InferQueryFromBuilderFor<
-// 	Q extends TQuery,
-// 	Builder extends AnyQueryBuilder,
-// > = InferQueryFromBuilderForMap<Builder>[Q["Type"]];
-
 type InferTQuery<Q extends AnySelectQueryBuilder> =
 	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
 		? { Type: "Select"; DB: DB; TB: TB; O: O; UT: never }
