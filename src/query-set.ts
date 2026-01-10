@@ -83,6 +83,24 @@ type InferTQuery<Q extends AnySelectQueryBuilder> =
 
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
 
+interface QueryBuilderForMap<Q extends TQuery> {
+	Select: SelectQueryBuilderFor<Q>;
+	Update: k.UpdateQueryBuilder<Q["DB"], Q["TB"], Q["UT"], Q["O"]>;
+	Insert: k.InsertQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+	Delete: k.DeleteQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+}
+
+type QueryBuilderFor<Q extends TQuery> = QueryBuilderForMap<Q>[Q["Type"]];
+
+interface QueryBuilderWithOutputForMap<Q extends TQuery, O> {
+	Select: k.SelectQueryBuilder<Q["DB"], Q["TB"], O>;
+	Update: k.UpdateQueryBuilder<Q["DB"], Q["TB"], Q["UT"], O>;
+	Insert: k.InsertQueryBuilder<Q["DB"], Q["TB"], O>;
+	Delete: k.DeleteQueryBuilder<Q["DB"], Q["TB"], O>;
+}
+
+type QueryBuilderWithOutputFor<Q extends TQuery, O> = QueryBuilderWithOutputForMap<Q, O>[Q["Type"]];
+
 interface TJoinCollection {
 	Prototype: "Join";
 	Type: "InnerJoinOne" | "InnerJoinMany" | "LeftJoinOne" | "LeftJoinOneOrThrow" | "LeftJoinMany";
@@ -299,7 +317,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * // SELECT id, username FROM users WHERE isActive = true
 	 * ```
 	 */
-	toBaseQuery(): SelectQueryBuilderFor<T["BaseQuery"]>;
+	toBaseQuery(): QueryBuilderFor<T["BaseQuery"]>;
 
 	/**
 	 * Returns the base query with all joins applied as nested subqueries.
@@ -623,9 +641,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 */
 	// You can't change the selection here.
 	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
-		modifier: (
-			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
-		) => k.SelectQueryBuilder<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], O>,
+		modifier: (qb: QueryBuilderFor<T["BaseQuery"]>) => QueryBuilderWithOutputFor<T["BaseQuery"], O>,
 	): this;
 
 	/**
@@ -1859,9 +1875,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 */
 	// Modify base query.
 	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
-		modifier: (
-			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
-		) => k.SelectQueryBuilder<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], O>,
+		modifier: (qb: QueryBuilderFor<T["BaseQuery"]>) => QueryBuilderWithOutputFor<T["BaseQuery"], O>,
 	): this;
 	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
 		modifier: (
@@ -2147,6 +2161,11 @@ interface QuerySetWithLeftJoinMany<
 ////////////////////////////////////////////////////////////
 
 type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
+type AnyQueryBuilder =
+	| AnySelectQueryBuilder
+	| k.UpdateQueryBuilder<any, any, any, any>
+	| k.InsertQueryBuilder<any, any, any>
+	| k.DeleteQueryBuilder<any, any, any>;
 
 type JoinMethod =
 	| "innerJoin"
@@ -2276,7 +2295,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#props.baseQuery.as(this.#props.baseAlias);
 	}
 
-	toBaseQuery(): AnySelectQueryBuilder {
+	toBaseQuery(): AnyQueryBuilder {
 		return this.#props.baseQuery;
 	}
 
@@ -2738,10 +2757,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Modification.
 	////////////////////////////////////////////////////////////
 
-	modify(
-		keyOrModifier: string | ((qb: AnySelectQueryBuilder) => AnySelectQueryBuilder),
-		modifier?: (value: any) => any,
-	): any {
+	modify(keyOrModifier: string | ((qb: any) => any), modifier?: (value: any) => any): any {
 		if (typeof keyOrModifier === "function") {
 			// It's safe to immediately apply modifications to the base query because
 			// it is scoped within its own subquery.  The types capture this.
@@ -3045,7 +3061,7 @@ class QuerySetCreator<in out DB> {
 			orderByKeys: true,
 			frontModifiers: [],
 			endModifiers: [],
-		});
+		}) as any;
 	}
 }
 
