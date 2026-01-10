@@ -156,11 +156,9 @@ export type SomeFetchFn<ParentInput, FetchFnReturn extends SomeFetchFnReturn> = 
 ) => FetchFnReturn;
 
 export type AttachedOutputFromFetchFnReturn<FetchFnReturn extends SomeFetchFnReturn> =
-	Awaited<FetchFnReturn> extends Iterable<infer AttachedOutput>
+	Awaited<FetchFnReturn> extends Iterable<infer AttachedOutput> | Executable<infer AttachedOutput>
 		? AttachedOutput
-		: Awaited<FetchFnReturn> extends Executable<infer AttachedOutput>
-			? AttachedOutput
-			: never;
+		: never;
 
 /**
  * Input argument for configuring the keys to use for matching attached data to parents.
