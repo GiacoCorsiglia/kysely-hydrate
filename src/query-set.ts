@@ -62,14 +62,24 @@ import {
 // Generics.
 ////////////////////////////////////////////////////////////
 
-interface TQuery<in out DB = any, in out TB extends keyof DB = any> {
+type TQueryType = "Select" | "Update" | "Insert" | "Delete";
+
+interface TQuery<in out DB = any, in out TB extends keyof DB = any, UT extends keyof DB = never> {
+	Type: TQueryType;
+
 	DB: DB;
 	TB: TB;
 	O: any;
+	/**
+	 * Updates have an additional table in scope---the one being updated.
+	 */
+	UT: UT;
 }
 
 type InferTQuery<Q extends AnySelectQueryBuilder> =
-	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O> ? { DB: DB; TB: TB; O: O } : never;
+	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
+		? { Type: "Select"; DB: DB; TB: TB; O: O; UT: never }
+		: never;
 
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
 
@@ -165,9 +175,11 @@ interface TJoinedQueryWithBaseQuery<
 	in out JoinedQuery extends TQuery,
 	in out BaseQuery extends TQuery,
 > {
+	Type: "Select";
 	DB: JoinedQuery["DB"] & { [_ in BaseAlias]: BaseQuery["O"] };
 	TB: JoinedQuery["TB"];
 	O: JoinedQuery["O"];
+	UT: never;
 }
 
 interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQuery> {
@@ -206,6 +218,7 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 }
 
 interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out BaseO> {
+	Type: "Select";
 	// The base query is wrapped in an alias in `SELECT $alias.* FROM (...) as
 	// $alias`, so it's treated as another table.
 	DB: DB & { [K in BaseAlias]: BaseO };
@@ -213,6 +226,8 @@ interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out 
 	TB: BaseAlias;
 	// The output is the same as the base query output.
 	O: BaseO;
+	// It's never an update.
+	UT: never;
 }
 
 type ToInitialJoinedDB<T extends TQuerySet> = DrainOuterGeneric<
@@ -1852,7 +1867,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 		modifier: (
 			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
 		) => k.SelectQueryBuilder<NewDB, NewTB, NewO>,
-	): QuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
+	): QuerySet<TWithBaseQuery<T, { Type: "Select"; DB: NewDB; TB: NewTB; O: NewO; UT: never }>>;
 	// Modify collection.
 	modify<
 		Key extends keyof T["Collections"] & string,
@@ -2858,9 +2873,11 @@ interface InitialQuerySet<
 	IsMapped: false;
 	BaseAlias: BaseAlias;
 	BaseQuery: {
+		Type: "Select";
 		DB: BaseDB;
 		TB: BaseTB;
 		O: BaseO;
+		UT: never;
 	};
 	Collections: {};
 	// The joined query mostly looks like the base query.
