@@ -26,8 +26,16 @@ import {
 	makePrefix,
 	SEP,
 } from "./helpers/prefixes.ts";
-import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
+	applyHoistedPrefixedSelections,
+	applyHoistedSelections,
+} from "./helpers/select-renamer.ts";
+import {
+	type AnySelectQueryBuilder,
+	type AnyDeleteQueryBuilder,
+	type AnyQueryBuilder,
+	type AnyUpdateQueryBuilder,
+	type AnyInsertQueryBuilder,
 	type DrainOuterGeneric,
 	type Extend,
 	type ExtendWith,
@@ -36,6 +44,7 @@ import {
 	type StrictEqual,
 	type StrictSubset,
 	assertNever,
+	isSelectQueryBuilder,
 	mapWithDeleted,
 } from "./helpers/utils.ts";
 import {
@@ -57,6 +66,7 @@ import {
 	DEFAULT_KEY_BY,
 	EnableAutoInclusion,
 } from "./hydrator.ts";
+import { InvalidJoinedQuerySetError } from "./index.ts";
 
 ////////////////////////////////////////////////////////////
 // Generics.
@@ -75,17 +85,6 @@ interface TQuery<in out DB = any, in out TB extends keyof DB = any, UT extends k
 	 */
 	UT: UT;
 }
-
-type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
-type AnyUpdateQueryBuilder = k.UpdateQueryBuilder<any, any, any, any>;
-type AnyInsertQueryBuilder = k.InsertQueryBuilder<any, any, any>;
-type AnyDeleteQueryBuilder = k.DeleteQueryBuilder<any, any, any>;
-
-type AnyQueryBuilder =
-	| AnySelectQueryBuilder
-	| AnyUpdateQueryBuilder
-	| AnyInsertQueryBuilder
-	| AnyDeleteQueryBuilder;
 
 type InferTQuery<Q extends AnySelectQueryBuilder> =
 	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
@@ -2209,7 +2208,7 @@ interface QuerySetOrderBy {
 interface QuerySetProps {
 	db: k.Kysely<any>;
 	baseAlias: string;
-	baseQuery: AnySelectQueryBuilder;
+	baseQuery: AnyQueryBuilder;
 	keyBy: KeyBy<any>;
 	hydrator: Hydrator<any, any>;
 	joinCollections: Map<string, JoinCollection>;
@@ -2287,12 +2286,39 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Query generation.
 	////////////////////////////////////////////////////////////
 
-	get #aliasedBaseQuery() {
-		return this.#props.baseQuery.as(this.#props.baseAlias);
-	}
-
 	toBaseQuery(): AnyQueryBuilder {
 		return this.#props.baseQuery;
+	}
+
+	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+		const { db, baseQuery, baseAlias } = this.#props;
+
+		// We always inline SELECT queries.
+		if (isSelectQueryBuilder(baseQuery)) {
+			const qb = db.selectFrom(baseQuery.as(baseAlias));
+			return applyHoistedSelections(qb, baseQuery, baseAlias);
+		}
+
+		// Non-select queries must be converted to a CTE.  Also, they cannot be nested.
+
+		if (isNested) {
+			throw new InvalidJoinedQuerySetError(baseAlias);
+		}
+
+		const queryCreator = isLocalSubquery ? db : db.with("__base", () => baseQuery);
+
+		let qb = queryCreator.selectFrom(`__base as ${baseAlias}`);
+
+		// If it's truly at the top level, we can safely use a `.selectAll()` here because these can't
+		// be nested anyway, so no further hoisting can happen.  These seems like a nice convenience so
+		// you can just do updateFrom().returningAll() and not have to redeclare your columns.  This
+		// should be 99% of use cases for writes unless you're actually applying a LIMIT or OFFSET to
+		// the response.
+		if (!isLocalSubquery) {
+			return qb.selectAll(baseAlias);
+		}
+
+		return applyHoistedSelections(qb, baseQuery, baseAlias);
 	}
 
 	/**
@@ -2336,14 +2362,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		collection: JoinCollection,
 	): AnySelectQueryBuilder {
 		// Add the join to the parent query.
+		const nestedQuery = collection.querySet.#toQuery(true, true);
+		const from = nestedQuery.as(key);
 		// This cast to a single method helps TypeScript follow the overloads.
-		const from = collection.querySet.#toQuery(true).as(key);
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
 		// Add the (prefixed) selections from the subquery to the parent query.
 		const prefix = makePrefix("", key);
-		const hoistedSelections = hoistAndPrefixSelections(prefix, from);
-		qb = qb.select(hoistedSelections);
+		qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
 
 		return qb;
 	}
@@ -2398,13 +2424,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 *   to WHERE EXISTS to avoid row explosion
 	 * - Cardinality-many non-filtering joins (leftJoinMany) - excluded entirely
 	 */
-	#toCardinalityOneQuery(): AnySelectQueryBuilder {
-		const { db, joinCollections } = this.#props;
+	#toCardinalityOneQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+		const { joinCollections } = this.#props;
 
-		let qb = db.selectFrom(this.#aliasedBaseQuery);
-
-		const hoistedSelects = hoistSelections(this.#aliasedBaseQuery);
-		qb = qb.select(hoistedSelects);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
 
 		for (const [key, collection] of joinCollections) {
 			// For count/exists queries:
@@ -2442,13 +2465,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#toJoinedQuery(isSubquery: boolean): AnySelectQueryBuilder {
-		const { db, joinCollections } = this.#props;
+	#toJoinedQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+		const { joinCollections } = this.#props;
 
-		let qb = db.selectFrom(this.#aliasedBaseQuery);
-
-		const hoistedSelects = hoistSelections(this.#aliasedBaseQuery);
-		qb = qb.select(hoistedSelects);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
 
 		for (const [key, collection] of joinCollections) {
 			qb = this.#addCollectionAsJoin(qb, key, collection);
@@ -2459,6 +2479,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Apply ordering---but only if we're not prefixed, because ordering in
 		// subqueries is ignored (well, "not guaranteed") unless you also have a
 		// LIMIT or OFFSET.
+		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
 		}
@@ -2467,30 +2488,53 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return this.#toJoinedQuery(false);
+		return this.#toJoinedQuery(false, false);
 	}
 
-	#toQuery(isSubquery: boolean): AnySelectQueryBuilder {
-		const { baseAlias, db, limit, offset, orderBy, joinCollections } = this.#props;
+	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
+	#toQuery<IsNested extends boolean>(
+		isNested: IsNested,
+		isLocalSubquery: boolean,
+	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
+		const { baseQuery, baseAlias, db, limit, offset, orderBy, joinCollections } = this.#props;
 
-		// If we have no joins (no row explosion) and no ordering (nothing referencing
-		// the baseAlias), we can just apply the limit and offset to the base query.
+		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
+		// baseAlias) we can do less nesting.
 		if (!joinCollections.size && !orderBy) {
-			return this.#applyLimitAndOffset(this.#props.baseQuery);
+			// No limit and offset and no joins means we can return as is for any type of query builder.
+			// No CTE, no subqueries, no nothing.
+			if (!limit && !offset) {
+				if (isNested && !isSelectQueryBuilder(baseQuery)) {
+					throw new InvalidJoinedQuerySetError(baseAlias);
+				}
+				return baseQuery as IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder;
+			}
+
+			// If it's a SELECT, we can just apply the limit and offset to the base query.
+			if (isSelectQueryBuilder(baseQuery)) {
+				return this.#applyLimitAndOffset(baseQuery);
+			}
+
+			// Otherwise, for writes, (unusual use case) we need to make it a CTE.  Just select all
+			// instead of hoisting, because these can't be nested anyway (so we will never need to hoist
+			// from here).
+			return this.#applyLimitAndOffset(
+				this.#getSelectFromBase(isNested, isLocalSubquery).selectAll(),
+			);
 		}
 
-		// If no pagination, just return the joined query.
+		// If no pagination, just return the joined query, even if it has row explosion.
 		if (!limit && !offset) {
-			return this.#toJoinedQuery(isSubquery);
+			return this.#toJoinedQuery(isNested, isLocalSubquery);
 		}
 
 		// If only cardinality-one joins, we can safely apply limit/offset to the
 		// joined query.
 		if (this.#isCardinalityOne()) {
-			return this.#applyLimitAndOffset(this.#toJoinedQuery(isSubquery));
+			return this.#applyLimitAndOffset(this.#toJoinedQuery(isNested, isLocalSubquery));
 		}
 
-		let cardinalityOneQuery = this.#toCardinalityOneQuery();
+		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery);
 
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
@@ -2500,9 +2544,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
 		let qb = db.selectFrom(aliasedCardinalityOneQuery);
-
-		const hoistedSelects = hoistSelections(aliasedCardinalityOneQuery);
-		qb = qb.select(hoistedSelects);
+		// Re-hoist ALL selections from the cardinality one query.  This will include base query
+		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
+		// hoisted further by parent queries.
+		qb = applyHoistedSelections(qb, cardinalityOneQuery, baseAlias);
 
 		// Add any cardinality-many joins.
 		for (const [key, collection] of joinCollections) {
@@ -2514,6 +2559,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Re-apply ordering since the order from the subquery is not guaranteed to
 		// be preserved.  This doesn't matter if we have a prefix because it means
 		// we're in a subquery already.
+		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
 		}
@@ -2529,12 +2575,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	toQuery(): AnySelectQueryBuilder {
-		return this.#toQuery(false);
+	toQuery(): any {
+		return this.#toQuery(false, false);
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
-		return this.#toCardinalityOneQuery()
+		return this.#toCardinalityOneQuery(false, false)
 			.clearSelect()
 			.select((eb) => eb.fn.countAll().as("count"));
 	}
@@ -2542,7 +2588,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	toExistsQuery(): OpaqueExistsQueryBuilder {
 		return this.#props.db.selectNoFrom(({ exists }) =>
 			exists(
-				this.#toCardinalityOneQuery()
+				this.#toCardinalityOneQuery(false, false)
 					.clearSelect()
 					.select((eb) => eb.lit(1).as("_")),
 			).as("exists"),
@@ -2683,7 +2729,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		...args: AnyJoinArgsTail
 	): any {
 		const nest = ((
-			query: SelectQueryBuilderOrFactory<any, any, any, any, any>,
+			query: NestedSelectQueryBuilderOrFactory<any, any, any, any, any>,
 			keyBy?: KeyBy<any>,
 		) => {
 			const creator = querySet(this.#props.db);
@@ -2906,21 +2952,18 @@ interface InitialQuerySet<
 
 // A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
 // such as with expressions.
-interface SelectCreator<in out DB, in out TB extends keyof DB> {
-	selectFrom: k.ExpressionBuilder<DB, TB>["selectFrom"];
-}
 
-interface SelectQueryBuilderFactory<
+interface NestedSelectQueryBuilderFactory<
 	in out DB,
 	in out TB extends keyof DB,
 	in out BaseDB,
 	in out BaseTB extends keyof BaseDB,
 	in out BaseO,
 > {
-	(eb: SelectCreator<DB, TB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+	(eb: k.ExpressionBuilder<DB, TB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
 }
 
-type SelectQueryBuilderOrFactory<
+type NestedSelectQueryBuilderOrFactory<
 	DB,
 	TB extends keyof DB,
 	BaseDB,
@@ -2928,18 +2971,56 @@ type SelectQueryBuilderOrFactory<
 	BaseO,
 > =
 	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
-	| SelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
+	| NestedSelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
+
+interface SelectQueryBuilderFactory<
+	in out DB,
+	in out BaseDB,
+	in out BaseTB extends keyof BaseDB,
+	in out BaseO,
+> {
+	(db: SelectCreator<DB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
+}
+
+type SelectQueryBuilderOrFactory<DB, BaseDB, BaseTB extends keyof BaseDB, BaseO> =
+	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
+	| SelectQueryBuilderFactory<DB, BaseDB, BaseTB, BaseO>;
+
+interface SelectCreator<DB> {
+	selectFrom: k.QueryCreator<DB>["selectFrom"];
+}
+interface InsertCreator<DB> {
+	insertInto: k.QueryCreator<DB>["insertInto"];
+}
+interface UpdateCreator<DB> {
+	updateTable: k.QueryCreator<DB>["updateTable"];
+}
+interface DeleteCreator<DB> {
+	deleteFrom: k.QueryCreator<DB>["deleteFrom"];
+}
+
+type AnySelectQueryBuilderFactory = (db: SelectCreator<any>) => AnySelectQueryBuilder;
+type AnyInsertQueryBuilderFactory = (db: InsertCreator<any>) => AnyInsertQueryBuilder;
+type AnyUpdateQueryBuilderFactory = (db: UpdateCreator<any>) => AnyUpdateQueryBuilder;
+type AnyDeleteQueryBuilderFactory = (db: DeleteCreator<any>) => AnyDeleteQueryBuilder;
+
+type AnyQueryBuilderFactory =
+	| AnySelectQueryBuilderFactory
+	| AnyInsertQueryBuilderFactory
+	| AnyUpdateQueryBuilderFactory
+	| AnyDeleteQueryBuilderFactory;
+type AnyQueryBuilderOrFactory = AnyQueryBuilder | AnyQueryBuilderFactory;
 
 interface NestFn<in out DB, in out TB extends keyof DB, in out Alias extends string> {
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
-		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
+		query: NestedSelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	<BaseDB, BaseTB extends keyof BaseDB, BaseO>(
-		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
+		query: NestedSelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
 		keyBy: KeyBy<NoInfer<BaseO>>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	<
-		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
+		F extends NestedSelectQueryBuilderFactory<DB, never, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
 		TQ extends TQuery = InferTQuery<Q>,
 	>(
@@ -3018,7 +3099,7 @@ class QuerySetCreator<in out DB> {
 		BaseO extends InputWithDefaultKey,
 	>(
 		alias: Alias,
-		query: SelectQueryBuilderOrFactory<DB, never, BaseDB, BaseTB, BaseO>,
+		query: SelectQueryBuilderOrFactory<DB, BaseDB, BaseTB, BaseO>,
 	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
 	selectAs<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
 		alias: Alias,
@@ -3028,7 +3109,7 @@ class QuerySetCreator<in out DB> {
 	// Infer output from ReturnType<F> to avoid circular inference.
 	selectAs<
 		Alias extends string,
-		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
+		F extends SelectQueryBuilderFactory<DB, any, any, any>,
 		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
 		TQ extends TQuery = InferTQuery<Q>,
 	>(
@@ -3044,7 +3125,11 @@ class QuerySetCreator<in out DB> {
 		return this.#createQuerySet(alias, query, keyBy);
 	}
 
-	#createQuerySet(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY) {
+	#createQuerySet(
+		alias: string,
+		query: AnyQueryBuilderOrFactory,
+		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
+	) {
 		const baseQuery = typeof query === "function" ? query(this.#db) : query;
 
 		return new QuerySetImpl({

@@ -1,3 +1,5 @@
+import * as k from "kysely";
+
 import { UnexpectedCaseError } from "./errors.ts";
 
 /**
@@ -87,4 +89,19 @@ export function mapWithDeleted<K, V>(map: Map<K, V>, key: K): Map<K, V> {
 	const clone = new Map(map);
 	clone.delete(key);
 	return clone;
+}
+
+export type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
+export type AnyUpdateQueryBuilder = k.UpdateQueryBuilder<any, any, any, any>;
+export type AnyInsertQueryBuilder = k.InsertQueryBuilder<any, any, any>;
+export type AnyDeleteQueryBuilder = k.DeleteQueryBuilder<any, any, any>;
+
+export type AnyQueryBuilder =
+	| AnySelectQueryBuilder
+	| AnyUpdateQueryBuilder
+	| AnyInsertQueryBuilder
+	| AnyDeleteQueryBuilder;
+
+export function isSelectQueryBuilder(o: unknown): o is AnySelectQueryBuilder {
+	return typeof o === "object" && o !== null && "isSelectQueryBuilder" in o;
 }

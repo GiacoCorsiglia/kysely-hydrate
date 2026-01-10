@@ -95,3 +95,15 @@ export class KeyByMismatchError extends KyselyHydrateError {
 		super(`Cannot extend hydrators with different keyBy: ${thisKeyBy} vs ${otherKeyBy}`);
 	}
 }
+
+/**
+ * Error thrown when attempting to nest a `QuerySet` with a write operation as a
+ * join inside another `QuerySet`.
+ */
+export class InvalidJoinedQuerySetError extends KyselyHydrateError {
+	constructor(baseAlias: string) {
+		super(
+			`You cannot join query sets with an UPDATE, INSERT, or CREATE base query (attempting to join query set with alias ${baseAlias})`,
+		);
+	}
+}
