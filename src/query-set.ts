@@ -621,7 +621,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 *   .execute();
 	 * ```
 	 */
-	// Simple overload for simple case.
+	// You can't change the selection here.
 	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
 		modifier: (
 			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
