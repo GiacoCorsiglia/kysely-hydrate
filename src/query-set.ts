@@ -93,12 +93,20 @@ type InferTQuery<Q extends AnySelectQueryBuilder> =
 		: never;
 
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+type UpdateQueryBuilderFor<Q extends TQuery> = k.UpdateQueryBuilder<
+	Q["DB"],
+	Q["TB"],
+	Q["UT"],
+	Q["O"]
+>;
+type InsertQueryBuilderFor<Q extends TQuery> = k.InsertQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+type DeleteQueryBuilderFor<Q extends TQuery> = k.DeleteQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
 
 interface QueryBuilderForMap<Q extends TQuery> {
 	Select: SelectQueryBuilderFor<Q>;
-	Update: k.UpdateQueryBuilder<Q["DB"], Q["TB"], Q["UT"], Q["O"]>;
-	Insert: k.InsertQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
-	Delete: k.DeleteQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+	Update: UpdateQueryBuilderFor<Q>;
+	Insert: InsertQueryBuilderFor<Q>;
+	Delete: DeleteQueryBuilderFor<Q>;
 }
 
 type QueryBuilderFor<Q extends TQuery> = QueryBuilderForMap<Q>[Q["Type"]];
