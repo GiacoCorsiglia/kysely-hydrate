@@ -904,6 +904,22 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * Calls a callback with the query set and returns the result.  Like {@link k.SelectQueryBuilder.$call}.
 	 */
 	$call<R>(callback: (qs: this) => R): R;
+
+	//
+	// Writes
+	//
+
+	insert<IQB extends k.InsertQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
+		iqb: InsertQueryBuilderOrFactory<T["DB"], IQB>,
+	): QuerySet<TWithBaseQuery<T, InferTInsertQuery<IQB>>>;
+
+	update<IQB extends k.UpdateQueryBuilder<any, any, any, T["BaseQuery"]["O"]>>(
+		iqb: UpdateQueryBuilderOrFactory<T["DB"], IQB>,
+	): QuerySet<TWithBaseQuery<T, InferTUpdateQuery<IQB>>>;
+
+	delete<IQB extends k.DeleteQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
+		iqb: DeleteQueryBuilderOrFactory<T["DB"], IQB>,
+	): QuerySet<TWithBaseQuery<T, InferTDeleteQuery<IQB>>>;
 }
 
 /**
@@ -2944,6 +2960,24 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	$call<R>(callback: (qs: this) => R): R {
 		return callback(this);
+	}
+
+	#asWrite(query: AnyQueryBuilderOrFactory): any {
+		return this.#clone({
+			baseQuery: typeof query === "function" ? query(this.#props.db) : query,
+		});
+	}
+
+	insert(iqb: AnyInsertQueryBuilder | AnyInsertQueryBuilderFactory) {
+		return this.#asWrite(iqb);
+	}
+
+	update(iqb: AnyUpdateQueryBuilder | AnyUpdateQueryBuilderFactory) {
+		return this.#asWrite(iqb);
+	}
+
+	delete(iqb: AnyDeleteQueryBuilder | AnyDeleteQueryBuilderFactory) {
+		return this.#asWrite(iqb);
 	}
 }
 
