@@ -2629,3 +2629,30 @@ interface Comment {
 			"user.id",
 		);
 }
+
+////////////////////////////////////////////////////////////
+// Section 48: Error Cases - Cannot nest writes
+////////////////////////////////////////////////////////////
+
+{
+	const write = querySet(db).insertAs(
+		"foo",
+		db
+			.insertInto("users")
+			.values({
+				email: "test",
+				username: "test",
+			})
+			.returningAll(),
+	);
+
+	querySet(db)
+		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id"]))
+		.innerJoinMany(
+			"user",
+			// @ts-expect-error Cannot nest a write query set
+			write,
+			"posts.user_id",
+			"user.id",
+		);
+}

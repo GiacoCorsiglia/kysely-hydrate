@@ -86,6 +86,10 @@ interface TQuery<in out DB = any, in out TB extends keyof DB = any, UT extends k
 	UT: UT;
 }
 
+interface TSelectQuery extends TQuery {
+	Type: "Select";
+}
+
 type InferTSelectQuery<Q extends AnySelectQueryBuilder> =
 	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
 		? { Type: "Select"; DB: DB; TB: TB; O: O; UT: never }
@@ -216,6 +220,10 @@ interface TQuerySet {
 	 * The final shape of the hydrated output row.
 	 */
 	HydratedOutput: any;
+}
+
+interface TSelectQuerySet extends TQuerySet {
+	BaseQuery: TSelectQuery;
 }
 
 type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
@@ -1271,13 +1279,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner join added.
 	 */
-	innerJoinOne<Key extends string, TNested extends TQuerySet>(
+	innerJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "InnerJoinOne", TNested>;
-	innerJoinOne<Key extends string, TNested extends TQuerySet>(
+	innerJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1344,13 +1352,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner join added.
 	 */
-	innerJoinMany<Key extends string, TNested extends TQuerySet>(
+	innerJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
-	innerJoinMany<Key extends string, TNested extends TQuerySet>(
+	innerJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1400,13 +1408,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left join added.
 	 */
-	leftJoinOne<Key extends string, TNested extends TQuerySet>(
+	leftJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "LeftJoinOne", TNested>;
-	leftJoinOne<Key extends string, TNested extends TQuerySet>(
+	leftJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1455,13 +1463,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left join added.
 	 */
-	leftJoinOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	leftJoinOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNested>;
-	leftJoinOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	leftJoinOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1541,13 +1549,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left join added.
 	 */
-	leftJoinMany<Key extends string, TNested extends TQuerySet>(
+	leftJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "LeftJoinMany", TNested>;
-	leftJoinMany<Key extends string, TNested extends TQuerySet>(
+	leftJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1571,7 +1579,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param querySet - A nested query set or factory function.
 	 * @returns A new QuerySet with the cross join added.
 	 */
-	crossJoinMany<Key extends string, TNested extends TQuerySet>(
+	crossJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
@@ -1597,13 +1605,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner lateral join added.
 	 */
-	innerJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	innerJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "InnerJoinOne", TNested>;
-	innerJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	innerJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1626,13 +1634,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner lateral join added.
 	 */
-	innerJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	innerJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
-	innerJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	innerJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1659,13 +1667,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left lateral join added.
 	 */
-	leftJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "LeftJoinOne", TNested>;
-	leftJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1688,13 +1696,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left lateral join added.
 	 */
-	leftJoinLateralOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNested>;
-	leftJoinLateralOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1717,13 +1725,13 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left lateral join added.
 	 */
-	leftJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 	): QuerySetWithJoin<T, Key, "LeftJoinMany", TNested>;
-	leftJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
@@ -1747,7 +1755,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param querySet - A nested query set or factory function.
 	 * @returns A new QuerySet with the cross lateral join added.
 	 */
-	crossJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	crossJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
@@ -1938,7 +1946,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	// Modify collection.
 	modify<
 		Key extends keyof T["Collections"] & string,
-		TNestedNew extends TQuerySet = never,
+		TNestedNew extends TSelectQuerySet = never,
 		NewValue extends SomeFetchFnReturn = never,
 	>(
 		key: Key,
@@ -1967,7 +1975,7 @@ type CollectionModifier<
 interface ModifyCollectionReturnMap<
 	T extends TQuerySet,
 	Key extends string,
-	TNestedNew extends TQuerySet,
+	TNestedNew extends TSelectQuerySet,
 	NewValue extends SomeFetchFnReturn,
 > {
 	InnerJoinOne: QuerySetWithJoin<T, Key, "InnerJoinOne", TNestedNew>;
@@ -2037,11 +2045,13 @@ interface QuerySetWithAttach<
 // that adjacent joins do not depend on each other.  (We furthermore cannot use
 // T["BaseQuery"] because that's not what the JoinedQuery ever looks like.)
 
-type NestedQuerySetOrFactory<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> =
-	| MappedQuerySet<TNested>
-	| NestCallback<T, Alias, TNested>;
+type NestedQuerySetOrFactory<
+	T extends TQuerySet,
+	Alias extends string,
+	TNested extends TSelectQuerySet,
+> = MappedQuerySet<TNested> | NestCallback<T, Alias, TNested>;
 
-type NestCallback<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> = (
+type NestCallback<T extends TQuerySet, Alias extends string, TNested extends TSelectQuerySet> = (
 	nest: NestFnFor<T, Alias>,
 ) => MappedQuerySet<TNested>;
 
@@ -2051,7 +2061,7 @@ type NestFnFor<T extends TQuerySet, Alias extends string> = NestFn<
 	Alias
 >;
 
-type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.AliasedExpression<
+type ToTableExpression<Key extends string, TNested extends TSelectQuerySet> = k.AliasedExpression<
 	TNested["BaseQuery"]["O"],
 	Key
 >;
@@ -2059,7 +2069,7 @@ type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.Aliase
 type JoinReferenceExpression<
 	T extends TQuerySet,
 	Key extends string,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = k.JoinReferenceExpression<
 	ToInitialJoinedDB<T>,
 	ToInitialJoinedTB<T>,
@@ -2069,7 +2079,7 @@ type JoinReferenceExpression<
 type JoinCallbackExpression<
 	T extends TQuerySet,
 	Key extends string,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = k.JoinCallbackExpression<
 	ToInitialJoinedDB<T>,
 	ToInitialJoinedTB<T>,
@@ -2082,12 +2092,16 @@ type TOrderableColumnsWithJoin<
 	T extends TQuerySet,
 	Key extends string,
 	Type extends TJoinType,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = Type extends CardinalityOneJoinType
 	? T["OrderableColumns"] | ApplyPrefixWithSep<Key, TNested["OrderableColumns"]>
 	: T["OrderableColumns"];
 
-type InnerJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+type InnerJoinOutput<
+	T extends TQuerySet,
+	TNested extends TSelectQuerySet,
+	Key extends string,
+> = Flatten<
 	// Extend the *JoinedQuery* output, which includes both the base output and also
 	// output from other joins.
 	T["JoinedQuery"]["O"] & ApplyPrefixes<MakeInitialPrefix<Key>, TNested["JoinedQuery"]["O"]>
@@ -2096,7 +2110,7 @@ type InnerJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends
 type TQueryWithInnerJoin<
 	T extends TQuerySet,
 	Key extends string,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = InferTSelectQuery<
 	k.SelectQueryBuilderWithInnerJoin<
 		ToInitialJoinedDB<T>,
@@ -2107,7 +2121,11 @@ type TQueryWithInnerJoin<
 >;
 
 // Compared to the inner join, the left joined output is nullable.
-type LeftJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
+type LeftJoinOutput<
+	T extends TQuerySet,
+	TNested extends TSelectQuerySet,
+	Key extends string,
+> = Flatten<
 	T["JoinedQuery"]["O"] &
 		ApplyPrefixes<MakeInitialPrefix<Key>, k.Nullable<TNested["JoinedQuery"]["O"]>>
 >;
@@ -2115,7 +2133,7 @@ type LeftJoinOutput<T extends TQuerySet, TNested extends TQuerySet, Key extends 
 type TQueryWithLeftJoin<
 	T extends TQuerySet,
 	Key extends string,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = InferTSelectQuery<
 	k.SelectQueryBuilderWithLeftJoin<
 		ToInitialJoinedDB<T>,
@@ -2128,7 +2146,7 @@ type TQueryWithLeftJoin<
 interface JoinedQueryMap<
 	in out T extends TQuerySet,
 	in out Key extends string,
-	in out TNested extends TQuerySet,
+	in out TNested extends TSelectQuerySet,
 > {
 	InnerJoinOne: TQueryWithInnerJoin<T, Key, TNested>;
 	InnerJoinMany: TQueryWithInnerJoin<T, Key, TNested>;
@@ -2138,7 +2156,7 @@ interface JoinedQueryMap<
 	LeftJoinMany: TQueryWithLeftJoin<T, Key, TNested>;
 }
 
-interface JoinHydratedRowMap<in out TNested extends TQuerySet> {
+interface JoinHydratedRowMap<in out TNested extends TSelectQuerySet> {
 	InnerJoinOne: TOutput<TNested>;
 	InnerJoinMany: TOutput<TNested>[];
 	LeftJoinOne: TOutput<TNested> | null;
@@ -2150,7 +2168,7 @@ type TQuerySetWithJoin<
 	T extends TQuerySet,
 	Key extends string,
 	Type extends TJoinType,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = Flatten<{
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
@@ -2170,7 +2188,7 @@ interface QuerySetWithJoin<
 	in out T extends TQuerySet,
 	in out Key extends string,
 	in out Type extends TJoinType,
-	in out TNested extends TQuerySet,
+	in out TNested extends TSelectQuerySet,
 > extends QuerySet<TQuerySetWithJoin<T, Key, Type, TNested>> {}
 
 ////////////////////////////////////////////////////////////
