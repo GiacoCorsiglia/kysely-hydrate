@@ -54,6 +54,15 @@ interface Comment {
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
 }
 
+{
+	// Valid: override default keyBy when "id" is selected
+	const result = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]), "username")
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
 //
 // Explicit keyBy required
 //
@@ -98,11 +107,9 @@ interface Comment {
 }
 
 {
-	const query = db.selectFrom("users").select(["username"]);
-
 	querySet(db)
 		// @ts-expect-error - factory keyBy required when no "id"
-		.selectAs("user", query);
+		.selectAs("user", (eb) => eb.selectFrom("users").select(["username"]));
 }
 
 //
@@ -122,19 +129,39 @@ interface Comment {
 //
 
 {
-	const query = db.selectFrom("users").select(["id"]);
-
-	querySet(db)
+	querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id"]),
 		// @ts-expect-error - invalid keyBy (with default key by)
-		.selectAs("user", query, "nonExistent");
+		"invalid",
+	);
 }
 
 {
-	const query = db.selectFrom("users").select(["username"]);
-
-	querySet(db)
+	querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["username"]),
 		// @ts-expect-error - invalid keyBy (without default key by)
-		.selectAs("user", query, "invalid");
+		"invalid",
+	);
+}
+
+{
+	querySet(db).selectAs(
+		"user",
+		(db) => db.selectFrom("users").select(["id"]),
+		// @ts-expect-error - invalid keyBy (with default key by)
+		"nonExistent",
+	);
+}
+
+{
+	querySet(db).selectAs(
+		"user",
+		(db) => db.selectFrom("users").select(["username"]),
+		// @ts-expect-error - invalid keyBy (without default key by)
+		"invalid",
+	);
 }
 
 //
@@ -148,6 +175,256 @@ interface Comment {
 		.execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//////
+// Nested initialization
+//////
+
+//
+// Default keyBy inference
+//
+
+{
+	// Valid: default keyBy when "id" is selected
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(db.selectFrom("posts").select(["id", "user_id"]));
+
+				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+}
+
+{
+	// Valid: override default keyBy when "id" is selected
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(db.selectFrom("posts").select(["id", "user_id"]), "user_id");
+
+				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+}
+
+//
+// Explicit keyBy required
+//
+
+{
+	// Valid: explicit keyBy when "id" not selected
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(db.selectFrom("posts").select(["title", "user_id"]), "title");
+
+				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<
+					{ title: string; user_id: number }[]
+				>();
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+}
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				// @ts-expect-error - keyBy required when no "id"
+				const nested = nest(db.selectFrom("posts").select(["title", "user_id"]));
+
+				return nested;
+			},
+			// @ts-expect-error - fallout from above
+			"posts.user_id",
+			"user.id",
+		);
+}
+
+//
+// Factory function variant
+//
+
+{
+	// Valid: factory with default keyBy
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest((eb) => eb.selectFrom("posts").select(["id", "user_id"]));
+
+				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+}
+
+{
+	// Valid: factory with explicit keyBy
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest((eb) => eb.selectFrom("posts").select(["title", "user_id"]), "title");
+
+				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<
+					{ title: string; user_id: number }[]
+				>();
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+}
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				// @ts-expect-error - keyBy required when no "id"
+				const nested = nest((eb) => eb.selectFrom("posts").select(["title", "user_id"]));
+
+				return nested;
+			},
+			// @ts-expect-error - fallout from above
+			"posts.user_id",
+			"user.id",
+		);
+}
+
+//
+// Invalid keyBy
+//
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(
+					db.selectFrom("posts").select(["id", "user_id"]),
+					// @ts-expect-error - invalid keyBy (with default key by)
+					"invalid",
+				);
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		);
+}
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(
+					db.selectFrom("posts").select(["user_id"]),
+					// @ts-expect-error - invalid keyBy (without default key by)
+					"invalid",
+				);
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		);
+}
+
+// Factory
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(
+					(eb) => eb.selectFrom("posts").select(["id", "user_id"]),
+					// @ts-expect-error - invalid keyBy (with default key by)
+					"invalid",
+				);
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		);
+}
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				// @ts-expect-error - invalid keyBy (without default key by)
+				const nested = nest((eb) => eb.selectFrom("posts").select(["user_id"]), "invalid");
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		);
+}
+
+//
+// Composite keyBy
+//
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id"]))
+		.innerJoinMany(
+			"posts",
+			(nest) => {
+				const nested = nest(db.selectFrom("posts").select(["id", "user_id"]), ["user_id", "id"]);
+
+				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
+
+				return nested;
+			},
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
 }
 
 ////////////////////////////////////////////////////////////

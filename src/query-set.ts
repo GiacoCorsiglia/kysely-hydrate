@@ -86,9 +86,24 @@ interface TQuery<in out DB = any, in out TB extends keyof DB = any, UT extends k
 	UT: UT;
 }
 
-type InferTQuery<Q extends AnySelectQueryBuilder> =
+type InferTSelectQuery<Q extends AnySelectQueryBuilder> =
 	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
 		? { Type: "Select"; DB: DB; TB: TB; O: O; UT: never }
+		: never;
+
+type InferTInsertQuery<Q extends AnyInsertQueryBuilder> =
+	Q extends k.InsertQueryBuilder<infer DB, infer TB, infer O>
+		? { Type: "Insert"; DB: DB; TB: TB; O: O; UT: never }
+		: never;
+
+type InferTUpdateQuery<Q extends AnyUpdateQueryBuilder> =
+	Q extends k.UpdateQueryBuilder<infer DB, infer TB, infer UT, infer O>
+		? { Type: "Update"; DB: DB; TB: TB; O: O; UT: UT }
+		: never;
+
+type InferTDeleteQuery<Q extends AnyDeleteQueryBuilder> =
+	Q extends k.DeleteQueryBuilder<infer DB, infer TB, infer O>
+		? { Type: "Delete"; DB: DB; TB: TB; O: O; UT: never }
 		: never;
 
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
@@ -2082,7 +2097,7 @@ type TQueryWithInnerJoin<
 	T extends TQuerySet,
 	Key extends string,
 	TNested extends TQuerySet,
-> = InferTQuery<
+> = InferTSelectQuery<
 	k.SelectQueryBuilderWithInnerJoin<
 		ToInitialJoinedDB<T>,
 		ToInitialJoinedTB<T>,
@@ -2101,7 +2116,7 @@ type TQueryWithLeftJoin<
 	T extends TQuerySet,
 	Key extends string,
 	TNested extends TQuerySet,
-> = InferTQuery<
+> = InferTSelectQuery<
 	k.SelectQueryBuilderWithLeftJoin<
 		ToInitialJoinedDB<T>,
 		ToInitialJoinedTB<T>,
@@ -2496,11 +2511,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isNested: IsNested,
 		isLocalSubquery: boolean,
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
-		const { baseQuery, baseAlias, db, limit, offset, orderBy, joinCollections } = this.#props;
+		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
+			this.#props;
 
 		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
 		// baseAlias) we can do less nesting.
-		if (!joinCollections.size && !orderBy) {
+		if (!joinCollections.size && !orderBy.length && !orderByKeys) {
 			// No limit and offset and no joins means we can return as is for any type of query builder.
 			// No CTE, no subqueries, no nothing.
 			if (!limit && !offset) {
@@ -2728,13 +2744,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		nestedQuerySet: NestedQuerySetOrFactory<any, any, any>,
 		...args: AnyJoinArgsTail
 	): any {
-		const nest = ((
-			query: NestedSelectQueryBuilderOrFactory<any, any, any, any, any>,
-			keyBy?: KeyBy<any>,
-		) => {
+		const nest = (query: NestedSelectQueryBuilderOrFactory<any, any, any>, keyBy?: KeyBy<any>) => {
 			const creator = querySet(this.#props.db);
 			return creator.selectAs(key, query as any, keyBy as any);
-		}) as any as NestFn<any, any, any>;
+		};
 
 		const resolved = typeof nestedQuerySet === "function" ? nestedQuerySet(nest) : nestedQuerySet;
 
@@ -2923,27 +2936,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 interface InitialQuerySet<
 	in out DB,
 	in out BaseAlias extends string,
-	in out BaseDB,
-	in out BaseTB extends keyof BaseDB,
-	in out BaseO,
+	in out BaseQuery extends TQuery,
 > extends QuerySet<{
 	DB: DB;
 	IsMapped: false;
 	BaseAlias: BaseAlias;
-	BaseQuery: {
-		Type: "Select";
-		DB: BaseDB;
-		TB: BaseTB;
-		O: BaseO;
-		UT: never;
-	};
+	BaseQuery: BaseQuery;
 	Collections: {};
 	// The joined query mostly looks like the base query.
-	JoinedQuery: InitialJoinedQuery<BaseDB, BaseAlias, BaseO>;
+	JoinedQuery: InitialJoinedQuery<BaseQuery["DB"], BaseAlias, BaseQuery["O"]>;
 	// No orderable columns other than the base query yet.
-	OrderableColumns: keyof BaseO & string;
+	OrderableColumns: keyof BaseQuery["O"] & string;
 	// The hydrated output is the same as the base query output; no mapping yet.
-	HydratedOutput: BaseO;
+	HydratedOutput: BaseQuery["O"];
 }> {}
 
 // type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
@@ -2953,38 +2958,13 @@ interface InitialQuerySet<
 // A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
 // such as with expressions.
 
-interface NestedSelectQueryBuilderFactory<
-	in out DB,
-	in out TB extends keyof DB,
-	in out BaseDB,
-	in out BaseTB extends keyof BaseDB,
-	in out BaseO,
-> {
-	(eb: k.ExpressionBuilder<DB, TB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
-}
+type NestedSelectQueryBuilderFactory<DB, TB extends keyof DB, SQB extends AnySelectQueryBuilder> = (
+	eb: k.ExpressionBuilder<DB, TB>,
+) => SQB;
 
-type NestedSelectQueryBuilderOrFactory<
-	DB,
-	TB extends keyof DB,
-	BaseDB,
-	BaseTB extends keyof BaseDB,
-	BaseO,
-> =
-	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
-	| NestedSelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
-
-interface SelectQueryBuilderFactory<
-	in out DB,
-	in out BaseDB,
-	in out BaseTB extends keyof BaseDB,
-	in out BaseO,
-> {
-	(db: SelectCreator<DB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
-}
-
-type SelectQueryBuilderOrFactory<DB, BaseDB, BaseTB extends keyof BaseDB, BaseO> =
-	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
-	| SelectQueryBuilderFactory<DB, BaseDB, BaseTB, BaseO>;
+type NestedSelectQueryBuilderOrFactory<DB, TB extends keyof DB, SQB extends AnySelectQueryBuilder> =
+	| SQB
+	| NestedSelectQueryBuilderFactory<DB, TB, SQB>;
 
 interface SelectCreator<DB> {
 	selectFrom: k.QueryCreator<DB>["selectFrom"];
@@ -2999,6 +2979,38 @@ interface DeleteCreator<DB> {
 	deleteFrom: k.QueryCreator<DB>["deleteFrom"];
 }
 
+type SelectQueryBuilderFactory<InitialDB, SQB extends AnySelectQueryBuilder> = (
+	db: SelectCreator<InitialDB>,
+) => SQB;
+
+type SelectQueryBuilderOrFactory<InitialDB, SQB extends AnySelectQueryBuilder> =
+	| SQB
+	| SelectQueryBuilderFactory<InitialDB, SQB>;
+
+type InsertQueryBuilderFactory<InitialDB, IQB extends AnyInsertQueryBuilder> = (
+	db: InsertCreator<InitialDB>,
+) => IQB;
+
+type InsertQueryBuilderOrFactory<InitialDB, IQB extends AnyInsertQueryBuilder> =
+	| IQB
+	| InsertQueryBuilderFactory<InitialDB, IQB>;
+
+type UpdateQueryBuilderFactory<InitialDB, UQB extends AnyUpdateQueryBuilder> = (
+	db: UpdateCreator<InitialDB>,
+) => UQB;
+
+type UpdateQueryBuilderOrFactory<InitialDB, UQB extends AnyUpdateQueryBuilder> =
+	| UQB
+	| UpdateQueryBuilderFactory<InitialDB, UQB>;
+
+type DeleteQueryBuilderFactory<InitialDB, DQB extends AnyDeleteQueryBuilder> = (
+	db: DeleteCreator<InitialDB>,
+) => DQB;
+
+type DeleteQueryBuilderOrFactory<InitialDB, DQB extends AnyDeleteQueryBuilder> =
+	| DQB
+	| DeleteQueryBuilderFactory<InitialDB, DQB>;
+
 type AnySelectQueryBuilderFactory = (db: SelectCreator<any>) => AnySelectQueryBuilder;
 type AnyInsertQueryBuilderFactory = (db: InsertCreator<any>) => AnyInsertQueryBuilder;
 type AnyUpdateQueryBuilderFactory = (db: UpdateCreator<any>) => AnyUpdateQueryBuilder;
@@ -3012,22 +3024,16 @@ type AnyQueryBuilderFactory =
 type AnyQueryBuilderOrFactory = AnyQueryBuilder | AnyQueryBuilderFactory;
 
 interface NestFn<in out DB, in out TB extends keyof DB, in out Alias extends string> {
-	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
-		query: NestedSelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	<BaseDB, BaseTB extends keyof BaseDB, BaseO>(
-		query: NestedSelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	<
-		F extends NestedSelectQueryBuilderFactory<DB, never, any, any, any>,
-		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		TQ extends TQuery = InferTQuery<Q>,
-	>(
-		query: F,
-		keyBy: KeyBy<NoInfer<TQ["O"]>>,
-	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
+	<SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
+		query: NestedSelectQueryBuilderOrFactory<DB, TB, SQB>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	<SQB extends AnySelectQueryBuilder>(
+		query: NestedSelectQueryBuilderOrFactory<DB, TB, SQB>,
+		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
 }
+
+type InferO<X> = X extends k.SelectQueryBuilder<any, any, infer O> ? O : never;
 
 /**
  * Factory for creating query sets. Obtained by calling {@link querySet}.
@@ -3039,6 +3045,30 @@ class QuerySetCreator<in out DB> {
 
 	constructor(db: k.Kysely<DB>) {
 		this.#db = db;
+	}
+
+	#createQuerySet(
+		alias: string,
+		query: AnyQueryBuilderOrFactory,
+		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
+	) {
+		const baseQuery = typeof query === "function" ? query(this.#db) : query;
+
+		return new QuerySetImpl({
+			db: this.#db,
+			baseAlias: alias,
+			baseQuery,
+			keyBy: keyBy,
+			hydrator: createHydrator().orderByKeys(),
+			joinCollections: new Map(),
+			attachCollections: new Map(),
+			limit: null,
+			offset: null,
+			orderBy: [],
+			orderByKeys: true,
+			frontModifiers: [],
+			endModifiers: [],
+		}) as any;
 	}
 
 	/**
@@ -3092,61 +3122,71 @@ class QuerySetCreator<in out DB> {
 	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
 	 * @returns A new QuerySet.
 	 */
-	selectAs<
-		Alias extends string,
-		BaseDB,
-		BaseTB extends keyof BaseDB,
-		BaseO extends InputWithDefaultKey,
-	>(
+	selectAs<Alias extends string, SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
 		alias: Alias,
-		query: SelectQueryBuilderOrFactory<DB, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	selectAs<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
+		query: SelectQueryBuilderOrFactory<DB, SQB>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	selectAs<Alias extends string, SQB extends AnySelectQueryBuilder>(
 		alias: Alias,
-		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	// Infer output from ReturnType<F> to avoid circular inference.
-	selectAs<
-		Alias extends string,
-		F extends SelectQueryBuilderFactory<DB, any, any, any>,
-		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		TQ extends TQuery = InferTQuery<Q>,
-	>(
-		alias: Alias,
-		query: F,
-		keyBy: KeyBy<NoInfer<TQ["O"]>>,
-	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
-	selectAs(
-		alias: string,
-		query: any,
-		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
-	): InitialQuerySet<DB, string, any, any, any> {
+		query: SelectQueryBuilderOrFactory<DB, SQB>,
+		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	selectAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
 		return this.#createQuerySet(alias, query, keyBy);
 	}
 
-	#createQuerySet(
-		alias: string,
-		query: AnyQueryBuilderOrFactory,
-		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
-	) {
-		const baseQuery = typeof query === "function" ? query(this.#db) : query;
+	/**
+	 * Like {@link selectAs} but receives an INSERT statement with a RETURNING clause that will be
+	 * inserted as a CTE.  Only supported by some dialects.
+	 */
+	insertAs<Alias extends string, IQB extends k.InsertQueryBuilder<any, any, InputWithDefaultKey>>(
+		alias: Alias,
+		query: InsertQueryBuilderOrFactory<DB, IQB>,
+	): InitialQuerySet<DB, Alias, InferTInsertQuery<IQB>>;
+	insertAs<Alias extends string, IQB extends AnyInsertQueryBuilder>(
+		alias: Alias,
+		query: InsertQueryBuilderOrFactory<DB, IQB>,
+		keyBy: KeyBy<InferO<NoInfer<IQB>>>,
+	): InitialQuerySet<DB, Alias, InferTInsertQuery<IQB>>;
+	insertAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
+	}
 
-		return new QuerySetImpl({
-			db: this.#db,
-			baseAlias: alias,
-			baseQuery,
-			keyBy: keyBy,
-			hydrator: createHydrator().orderByKeys(),
-			joinCollections: new Map(),
-			attachCollections: new Map(),
-			limit: null,
-			offset: null,
-			orderBy: [],
-			orderByKeys: true,
-			frontModifiers: [],
-			endModifiers: [],
-		}) as any;
+	/**
+	 * Like {@link insertAs} but receives an UPDATE statement with a RETURNING clause that will be
+	 * inserted as a CTE.  Only supported by some dialects.
+	 */
+	updateAs<
+		Alias extends string,
+		UQB extends k.UpdateQueryBuilder<any, any, any, InputWithDefaultKey>,
+	>(
+		alias: Alias,
+		query: UpdateQueryBuilderOrFactory<DB, UQB>,
+	): InitialQuerySet<DB, Alias, InferTUpdateQuery<UQB>>;
+	updateAs<Alias extends string, UQB extends AnyUpdateQueryBuilder>(
+		alias: Alias,
+		query: UpdateQueryBuilderOrFactory<DB, UQB>,
+		keyBy: KeyBy<InferO<NoInfer<UQB>>>,
+	): InitialQuerySet<DB, Alias, InferTUpdateQuery<UQB>>;
+	updateAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
+	}
+
+	/**
+	 * Like {@link insertAs} but receives a DELETE statement with a RETURNING clause that will be
+	 * inserted as a CTE.  Only supported by some dialects.
+	 */
+	deleteAs<Alias extends string, DQB extends k.DeleteQueryBuilder<any, any, InputWithDefaultKey>>(
+		alias: Alias,
+		query: DeleteQueryBuilderOrFactory<DB, DQB>,
+	): InitialQuerySet<DB, Alias, InferTDeleteQuery<DQB>>;
+	deleteAs<Alias extends string, UQB extends AnyDeleteQueryBuilder>(
+		alias: Alias,
+		query: DeleteQueryBuilderOrFactory<DB, UQB>,
+		keyBy: KeyBy<InferO<NoInfer<UQB>>>,
+	): InitialQuerySet<DB, Alias, InferTDeleteQuery<UQB>>;
+	deleteAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
 	}
 }
 
