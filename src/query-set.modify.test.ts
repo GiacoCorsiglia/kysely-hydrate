@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 2: Simple Base Query Modifications
 //
 
-test("modify: add WHERE clause", async () => {
+describe("query-set: modify", () => {
+	test("modify: add WHERE clause", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", ">", 5))
@@ -24,7 +25,7 @@ test("modify: add WHERE clause", async () => {
 	]);
 });
 
-test("modify: add additional SELECT", async () => {
+	test("modify: add additional SELECT", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.select("email"))
@@ -45,7 +46,7 @@ test("modify: add additional SELECT", async () => {
 	]);
 });
 
-test("modify: multiple calls chained", async () => {
+	test("modify: multiple calls chained", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", "<=", 5))
@@ -62,7 +63,7 @@ test("modify: multiple calls chained", async () => {
 	]);
 });
 
-test("where: simple reference", async () => {
+	test("where: simple reference", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "=", 1)
@@ -72,7 +73,7 @@ test("where: simple reference", async () => {
 	assert.deepStrictEqual(users, [{ id: 1, username: "alice" }]);
 });
 
-test("where: with expression factory", async () => {
+	test("where: with expression factory", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where((eb) => eb.or([eb("id", "=", 1), eb("id", "=", 2)]))
@@ -85,7 +86,7 @@ test("where: with expression factory", async () => {
 	]);
 });
 
-test("toBaseQuery: returns modified base query", async () => {
+	test("toBaseQuery: returns modified base query", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", "<", 3))
@@ -99,7 +100,7 @@ test("toBaseQuery: returns modified base query", async () => {
 	]);
 });
 
-test("toQuery: returns opaque query builder with modifications", async () => {
+	test("toQuery: returns opaque query builder with modifications", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.modify((qb) => qb.where("id", "=", 1))
@@ -108,4 +109,5 @@ test("toQuery: returns opaque query builder with modifications", async () => {
 	const rows = await query.execute();
 	assert.strictEqual(rows.length, 1);
 	assert.deepStrictEqual(rows, [{ id: 1, username: "alice" }]);
+});
 });

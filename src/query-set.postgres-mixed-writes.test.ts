@@ -12,7 +12,7 @@ const shouldSkip = !process.env.RUN_POSTGRES_TESTS;
 // Tests
 //
 
-describe("Postgres: Mixed write operations", { skip: shouldSkip }, () => {
+describe("query-set: postgres-mixed-writes", { skip: shouldSkip }, () => {
 	//
 	// Test 38: Chaining write operations
 	//

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 4: leftJoinMany Tests
 //
 
-test("leftJoinMany: toJoinedQuery shows nullable columns for no matches", async () => {
+describe("query-set: left-join-many", () => {
+	test("leftJoinMany: toJoinedQuery shows nullable columns for no matches", async () => {
 	// User 1 (alice) has no posts
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -35,7 +36,7 @@ test("leftJoinMany: toJoinedQuery shows nullable columns for no matches", async 
 	]);
 });
 
-test("leftJoinMany: toJoinedQuery shows row explosion when matches exist", async () => {
+	test("leftJoinMany: toJoinedQuery shows row explosion when matches exist", async () => {
 	// User 2 (bob) has 4 posts
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -83,7 +84,7 @@ test("leftJoinMany: toJoinedQuery shows row explosion when matches exist", async
 	]);
 });
 
-test("leftJoinMany: execute returns empty array when no matches", async () => {
+	test("leftJoinMany: execute returns empty array when no matches", async () => {
 	// User 1 (alice) has no posts
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -106,7 +107,7 @@ test("leftJoinMany: execute returns empty array when no matches", async () => {
 	]);
 });
 
-test("leftJoinMany: execute returns hydrated arrays when matches exist", async () => {
+	test("leftJoinMany: execute returns hydrated arrays when matches exist", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
@@ -133,7 +134,7 @@ test("leftJoinMany: execute returns hydrated arrays when matches exist", async (
 	]);
 });
 
-test("leftJoinMany: execute includes all base records (with and without matches)", async () => {
+	test("leftJoinMany: execute includes all base records (with and without matches)", async () => {
 	// User 1 (alice) has no posts, User 2 (bob) has 4 posts
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -166,7 +167,7 @@ test("leftJoinMany: execute includes all base records (with and without matches)
 	]);
 });
 
-test("leftJoinMany: executeTakeFirst returns first base record with all children", async () => {
+	test("leftJoinMany: executeTakeFirst returns first base record with all children", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
@@ -190,7 +191,7 @@ test("leftJoinMany: executeTakeFirst returns first base record with all children
 	});
 });
 
-test("leftJoinMany: executeCount counts all base records", async () => {
+	test("leftJoinMany: executeCount counts all base records", async () => {
 	// Should count all 3 users (alice, bob, carol) even though alice has no posts
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -206,7 +207,7 @@ test("leftJoinMany: executeCount counts all base records", async () => {
 	assert.strictEqual(count, 3);
 });
 
-test("leftJoinMany: executeExists checks existence", async () => {
+	test("leftJoinMany: executeExists checks existence", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
@@ -221,7 +222,7 @@ test("leftJoinMany: executeExists checks existence", async () => {
 	assert.strictEqual(exists, true);
 });
 
-test("leftJoinMany: toBaseQuery returns base query without joins", async () => {
+	test("leftJoinMany: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 2)
@@ -241,7 +242,7 @@ test("leftJoinMany: toBaseQuery returns base query without joins", async () => {
 	]);
 });
 
-test("leftJoinMany: callback join condition with onRef", async () => {
+	test("leftJoinMany: callback join condition with onRef", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
@@ -272,7 +273,7 @@ test("leftJoinMany: callback join condition with onRef", async () => {
 	]);
 });
 
-test("leftJoinMany: pre-built QuerySet variant", async () => {
+	test("leftJoinMany: pre-built QuerySet variant", async () => {
 	const postsQuery = querySet(db).selectAs("post", (eb) =>
 		eb.selectFrom("posts").select(["id", "title", "user_id"]),
 	);
@@ -301,4 +302,5 @@ test("leftJoinMany: pre-built QuerySet variant", async () => {
 			],
 		},
 	]);
+});
 });

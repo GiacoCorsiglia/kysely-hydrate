@@ -16,7 +16,7 @@ import { querySet } from "./query-set.ts";
 // Skip all tests if not explicitly enabled
 const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
 
-describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
+describe("query-set: postgres-lateral", { skip: !shouldRun }, () => {
 	const db = getDbForTest();
 
 	//

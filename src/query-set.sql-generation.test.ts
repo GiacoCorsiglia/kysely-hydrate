@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -25,7 +25,8 @@ function snapshot(template: TemplateStringsArray) {
 		.trim();
 }
 
-test("snapshot", () => {
+describe("query-set: sql-generation", () => {
+	test("snapshot", () => {
 	const unindented = "foo bar baz (bing)";
 	assert.strictEqual(
 		unindented,
@@ -44,7 +45,7 @@ test("snapshot", () => {
 // executeCount SQL Generation
 //
 
-test("SQL: executeCount with no joins - simple count query", async () => {
+	test("SQL: executeCount with no joins - simple count query", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 3);
@@ -63,7 +64,7 @@ test("SQL: executeCount with no joins - simple count query", async () => {
 	);
 });
 
-test("SQL: executeCount with innerJoinOne - join included in count", async () => {
+	test("SQL: executeCount with innerJoinOne - join included in count", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -103,7 +104,7 @@ test("SQL: executeCount with innerJoinOne - join included in count", async () =>
 	);
 });
 
-test("SQL: executeCount with leftJoinOne - join included in count", async () => {
+	test("SQL: executeCount with leftJoinOne - join included in count", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -145,7 +146,7 @@ test("SQL: executeCount with leftJoinOne - join included in count", async () => 
 	);
 });
 
-test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async () => {
+	test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -198,7 +199,7 @@ test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async ()
 	);
 });
 
-test("SQL: executeCount with leftJoinMany - join omitted from count", async () => {
+	test("SQL: executeCount with leftJoinMany - join omitted from count", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
@@ -227,7 +228,7 @@ test("SQL: executeCount with leftJoinMany - join omitted from count", async () =
 	);
 });
 
-test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern", async () => {
+	test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -301,7 +302,7 @@ test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern",
 	);
 });
 
-test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", async () => {
+	test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -357,7 +358,7 @@ test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", asyn
 // Pagination SQL Generation with Many-Joins
 //
 
-test("SQL: pagination without many-joins - no nested subquery", async () => {
+	test("SQL: pagination without many-joins - no nested subquery", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -402,7 +403,7 @@ test("SQL: pagination without many-joins - no nested subquery", async () => {
 	);
 });
 
-test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
+	test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -463,7 +464,7 @@ test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
 	);
 });
 
-test("SQL: pagination with mixed joins - nested subquery with correct structure", async () => {
+	test("SQL: pagination with mixed joins - nested subquery with correct structure", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -599,7 +600,7 @@ test("SQL: pagination with mixed joins - nested subquery with correct structure"
 // toQuery vs toJoinedQuery Differences
 //
 
-test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", async () => {
+	test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -651,7 +652,7 @@ test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", a
 	);
 });
 
-test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joins", async () => {
+	test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joins", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -686,7 +687,7 @@ test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joi
 	assert.ok(!toJoinedQuerySql.includes("where exists"), "toJoinedQuery() should not use EXISTS");
 });
 
-test("SQL: toQuery with pagination and cardinality-one only - applies limit directly", async () => {
+	test("SQL: toQuery with pagination and cardinality-one only - applies limit directly", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -718,7 +719,7 @@ test("SQL: toQuery with pagination and cardinality-one only - applies limit dire
 // executeExists SQL Generation
 //
 
-test("SQL: executeExists - wraps query in EXISTS check", async () => {
+	test("SQL: executeExists - wraps query in EXISTS check", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999);
@@ -732,7 +733,7 @@ test("SQL: executeExists - wraps query in EXISTS check", async () => {
 	assert.ok(sql.includes('where "users"."id" = ?'), "Should include WHERE condition");
 });
 
-test("SQL: executeExists with joins - includes joins in EXISTS check", async () => {
+	test("SQL: executeExists with joins - includes joins in EXISTS check", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -751,7 +752,7 @@ test("SQL: executeExists with joins - includes joins in EXISTS check", async () 
 	assert.ok(sql.includes("select 1"), "EXISTS should use SELECT 1");
 });
 
-test("SQL: executeExists ignores limit and offset", async () => {
+	test("SQL: executeExists ignores limit and offset", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 3)
@@ -770,7 +771,7 @@ test("SQL: executeExists ignores limit and offset", async () => {
 // toBaseQuery - Returns Base Query Without Joins
 //
 
-test("SQL: toBaseQuery strips all joins and returns base query", async () => {
+	test("SQL: toBaseQuery strips all joins and returns base query", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -801,7 +802,7 @@ test("SQL: toBaseQuery strips all joins and returns base query", async () => {
 // Write Operations SQL Generation (INSERT/UPDATE/DELETE)
 //
 
-test("SQL: insertAs - creates CTE with INSERT RETURNING", async () => {
+	test("SQL: insertAs - creates CTE with INSERT RETURNING", async () => {
 	const qs = querySet(db).insertAs("newUser", (db) =>
 		db
 			.insertInto("users")
@@ -829,7 +830,7 @@ test("SQL: insertAs - creates CTE with INSERT RETURNING", async () => {
 	);
 });
 
-test("SQL: updateAs - creates CTE with UPDATE RETURNING", async () => {
+	test("SQL: updateAs - creates CTE with UPDATE RETURNING", async () => {
 	const qs = querySet(db).updateAs("updatedUser", (db) =>
 		db
 			.updateTable("users")
@@ -856,7 +857,7 @@ test("SQL: updateAs - creates CTE with UPDATE RETURNING", async () => {
 	);
 });
 
-test("SQL: deleteAs - creates CTE with DELETE RETURNING", async () => {
+	test("SQL: deleteAs - creates CTE with DELETE RETURNING", async () => {
 	const qs = querySet(db).deleteAs("deletedUser", (db) =>
 		db.deleteFrom("users").where("id", "=", 1).returningAll(),
 	);
@@ -878,7 +879,7 @@ test("SQL: deleteAs - creates CTE with DELETE RETURNING", async () => {
 	);
 });
 
-test("SQL: QuerySet.insert() with innerJoinOne - replaces base, preserves join", async () => {
+	test("SQL: QuerySet.insert() with innerJoinOne - replaces base, preserves join", async () => {
 	const qs = querySet(db)
 		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
 		.innerJoinOne(
@@ -926,7 +927,7 @@ test("SQL: QuerySet.insert() with innerJoinOne - replaces base, preserves join",
 	);
 });
 
-test("SQL: QuerySet.update() with leftJoinMany - replaces base, preserves join", async () => {
+	test("SQL: QuerySet.update() with leftJoinMany - replaces base, preserves join", async () => {
 	const qs = querySet(db)
 		.selectAs("users", db.selectFrom("users").select(["id", "username", "email"]))
 		.leftJoinMany(
@@ -970,7 +971,7 @@ test("SQL: QuerySet.update() with leftJoinMany - replaces base, preserves join",
 	);
 });
 
-test("SQL: QuerySet.delete() with nested joins - preserves nested structure", async () => {
+	test("SQL: QuerySet.delete() with nested joins - preserves nested structure", async () => {
 	const qs = querySet(db)
 		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
 		.leftJoinOne(
@@ -1030,7 +1031,7 @@ test("SQL: QuerySet.delete() with nested joins - preserves nested structure", as
 	);
 });
 
-test("SQL: insertAs with orderBy - applies ordering to result", async () => {
+	test("SQL: insertAs with orderBy - applies ordering to result", async () => {
 	const qs = querySet(db)
 		.insertAs("newUsers", (db) =>
 			db
@@ -1060,7 +1061,7 @@ test("SQL: insertAs with orderBy - applies ordering to result", async () => {
 	);
 });
 
-test("SQL: write operations with pagination - applies limit/offset", async () => {
+	test("SQL: write operations with pagination - applies limit/offset", async () => {
 	const qs = querySet(db)
 		.insertAs("newUsers", (db) =>
 			db
@@ -1091,4 +1092,5 @@ test("SQL: write operations with pagination - applies limit/offset", async () =>
 			offset ?
 		`,
 	);
+});
 });

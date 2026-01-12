@@ -12,7 +12,7 @@ const shouldSkip = !process.env.RUN_POSTGRES_TESTS;
 // Tests
 //
 
-describe("Postgres: UPDATE operations", { skip: shouldSkip }, () => {
+describe("query-set: postgres-update", { skip: shouldSkip }, () => {
 	//
 	// Test 13: Simple update with returningAll()
 	//

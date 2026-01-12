@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -10,7 +10,8 @@ import { querySet } from "./query-set.ts";
 
 // Multiple cardinality-one joins
 
-test("mixed: multiple innerJoinOne on same QuerySet", async () => {
+describe("query-set: mixed-joins", () => {
+	test("mixed: multiple innerJoinOne on same QuerySet", async () => {
 	// Use specific post IDs to ensure exactly one post per user
 	// User 2 (bob) -> post 1, User 3 (carol) -> post 3, User 4 (dave) -> post 4
 	const users = await querySet(db)
@@ -56,7 +57,7 @@ test("mixed: multiple innerJoinOne on same QuerySet", async () => {
 	]);
 });
 
-test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns", async () => {
+	test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -114,7 +115,7 @@ test("mixed: toJoinedQuery with multiple innerJoinOne shows all prefixed columns
 	]);
 });
 
-test("mixed: leftJoinOne and innerJoinOne together", async () => {
+	test("mixed: leftJoinOne and innerJoinOne together", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -163,7 +164,7 @@ test("mixed: leftJoinOne and innerJoinOne together", async () => {
 
 // Multiple cardinality-many joins
 
-test("mixed: multiple innerJoinMany on same QuerySet with cartesian product", async () => {
+	test("mixed: multiple innerJoinMany on same QuerySet with cartesian product", async () => {
 	// When multiple innerJoinMany are used, cartesian products cause row multiplication in SQL
 	// Post 1: 2 comments × 1 user = 2 rows, but hydrator deduplicates sibling collections
 	// Post 2: 1 comment × 1 user = 1 row
@@ -219,7 +220,7 @@ test("mixed: multiple innerJoinMany on same QuerySet with cartesian product", as
 	]);
 });
 
-test("mixed: toJoinedQuery with multiple innerJoinMany shows row explosion", async () => {
+	test("mixed: toJoinedQuery with multiple innerJoinMany shows row explosion", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -277,7 +278,7 @@ test("mixed: toJoinedQuery with multiple innerJoinMany shows row explosion", asy
 
 // Mix of cardinality-one and cardinality-many joins
 
-test("mixed: innerJoinOne and innerJoinMany together", async () => {
+	test("mixed: innerJoinOne and innerJoinMany together", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -332,7 +333,7 @@ test("mixed: innerJoinOne and innerJoinMany together", async () => {
 	]);
 });
 
-test("mixed: leftJoinOne and leftJoinMany together", async () => {
+	test("mixed: leftJoinOne and leftJoinMany together", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -372,7 +373,7 @@ test("mixed: leftJoinOne and leftJoinMany together", async () => {
 	]);
 });
 
-test("mixed: executeCount with multiple joins counts unique base records", async () => {
+	test("mixed: executeCount with multiple joins counts unique base records", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -399,7 +400,7 @@ test("mixed: executeCount with multiple joins counts unique base records", async
 	assert.ok(joinedRows.length > users.length); // Row explosion from many-join
 });
 
-test("mixed: pagination with multiple joins uses nested subquery", async () => {
+	test("mixed: pagination with multiple joins uses nested subquery", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -428,7 +429,7 @@ test("mixed: pagination with multiple joins uses nested subquery", async () => {
 
 // toQuery() vs toJoinedQuery() - should be same without pagination
 
-test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one", async () => {
+	test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one", async () => {
 	const base = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -455,7 +456,7 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one
 	assert.deepStrictEqual(queryRows, joinedRows);
 });
 
-test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-many", async () => {
+	test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-many", async () => {
 	const base = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -480,7 +481,7 @@ test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-man
 	assert.deepStrictEqual(queryRows, joinedRows);
 });
 
-test("mixed: toQuery without pagination equals toJoinedQuery for mixed joins", async () => {
+	test("mixed: toQuery without pagination equals toJoinedQuery for mixed joins", async () => {
 	const base = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -502,4 +503,5 @@ test("mixed: toQuery without pagination equals toJoinedQuery for mixed joins", a
 
 	// Without pagination, toQuery() should equal toJoinedQuery()
 	assert.deepStrictEqual(queryRows, joinedRows);
+});
 });

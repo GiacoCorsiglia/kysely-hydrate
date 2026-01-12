@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 3: leftJoinOne Tests
 //
 
-test("leftJoinOne: toJoinedQuery shows nullable columns", async () => {
+describe("query-set: left-join-one", () => {
+	test("leftJoinOne: toJoinedQuery shows nullable columns", async () => {
 	// Need a user without a profile to test nullability
 	// All users 1-10 have profiles, so we'll need to add where clause that won't match
 	const rows = await querySet(db)
@@ -46,7 +47,7 @@ test("leftJoinOne: toJoinedQuery shows nullable columns", async () => {
 	]);
 });
 
-test("leftJoinOne: execute returns null when no match", async () => {
+	test("leftJoinOne: execute returns null when no match", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -68,7 +69,7 @@ test("leftJoinOne: execute returns null when no match", async () => {
 	]);
 });
 
-test("leftJoinOne: execute returns object when match exists", async () => {
+	test("leftJoinOne: execute returns object when match exists", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -100,7 +101,7 @@ test("leftJoinOne: execute returns object when match exists", async () => {
 	]);
 });
 
-test("leftJoinOne: executeCount counts all base records", async () => {
+	test("leftJoinOne: executeCount counts all base records", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -119,7 +120,7 @@ test("leftJoinOne: executeCount counts all base records", async () => {
 	assert.strictEqual(count, 5);
 });
 
-test("leftJoinOne: executeExists checks existence", async () => {
+	test("leftJoinOne: executeExists checks existence", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -138,7 +139,7 @@ test("leftJoinOne: executeExists checks existence", async () => {
 	assert.strictEqual(exists, true);
 });
 
-test("leftJoinOne: executeTakeFirst with join", async () => {
+	test("leftJoinOne: executeTakeFirst with join", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -157,7 +158,7 @@ test("leftJoinOne: executeTakeFirst with join", async () => {
 	});
 });
 
-test("leftJoinOne: toBaseQuery returns base query without joins", async () => {
+	test("leftJoinOne: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 3)
@@ -176,4 +177,5 @@ test("leftJoinOne: toBaseQuery returns base query without joins", async () => {
 		{ id: 2, username: "bob" },
 		{ id: 3, username: "carol" },
 	]);
+});
 });

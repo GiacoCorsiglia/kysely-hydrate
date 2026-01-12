@@ -22,7 +22,7 @@ import { querySet } from "./query-set.ts";
 // Skip all tests if not explicitly enabled
 const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
 
-describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
+describe("query-set: camel-case", { skip: !shouldRun }, () => {
 	const db = getDbForTest();
 
 	//

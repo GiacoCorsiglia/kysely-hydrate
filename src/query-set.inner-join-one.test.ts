@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 3: innerJoinOne Tests
 //
 
-test("innerJoinOne: toJoinedQuery returns flat rows with $$ prefixes", async () => {
+describe("query-set: inner-join-one", () => {
+	test("innerJoinOne: toJoinedQuery returns flat rows with $$ prefixes", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -47,7 +48,7 @@ test("innerJoinOne: toJoinedQuery returns flat rows with $$ prefixes", async () 
 	]);
 });
 
-test("innerJoinOne: execute returns hydrated nested objects", async () => {
+	test("innerJoinOne: execute returns hydrated nested objects", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -79,7 +80,7 @@ test("innerJoinOne: execute returns hydrated nested objects", async () => {
 	]);
 });
 
-test("innerJoinOne: executeTakeFirst with join", async () => {
+	test("innerJoinOne: executeTakeFirst with join", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -98,7 +99,7 @@ test("innerJoinOne: executeTakeFirst with join", async () => {
 	});
 });
 
-test("innerJoinOne: executeCount counts base records", async () => {
+	test("innerJoinOne: executeCount counts base records", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -113,7 +114,7 @@ test("innerJoinOne: executeCount counts base records", async () => {
 	assert.strictEqual(count, 5);
 });
 
-test("innerJoinOne: executeExists checks existence", async () => {
+	test("innerJoinOne: executeExists checks existence", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -128,7 +129,7 @@ test("innerJoinOne: executeExists checks existence", async () => {
 	assert.strictEqual(exists, true);
 });
 
-test("innerJoinOne: toBaseQuery returns base query without joins", async () => {
+	test("innerJoinOne: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 4)
@@ -150,7 +151,7 @@ test("innerJoinOne: toBaseQuery returns base query without joins", async () => {
 	]);
 });
 
-test("innerJoinOne: callback join condition with onRef", async () => {
+	test("innerJoinOne: callback join condition with onRef", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -176,7 +177,7 @@ test("innerJoinOne: callback join condition with onRef", async () => {
 	]);
 });
 
-test("innerJoinOne: pre-built QuerySet variant", async () => {
+	test("innerJoinOne: pre-built QuerySet variant", async () => {
 	const profileQuery = querySet(db).selectAs("profile", (eb) =>
 		eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
 	);
@@ -200,4 +201,5 @@ test("innerJoinOne: pre-built QuerySet variant", async () => {
 			profile: { id: 2, bio: "Bio for user 2", user_id: 2 },
 		},
 	]);
+});
 });

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 4: innerJoinMany Tests
 //
 
-test("innerJoinMany: toJoinedQuery shows row explosion with $$ prefixes", async () => {
+describe("query-set: inner-join-many", () => {
+	test("innerJoinMany: toJoinedQuery shows row explosion with $$ prefixes", async () => {
 	// User 2 (bob) has 4 posts (ids: 1, 2, 5, 12)
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -56,7 +57,7 @@ test("innerJoinMany: toJoinedQuery shows row explosion with $$ prefixes", async 
 	]);
 });
 
-test("innerJoinMany: execute returns hydrated arrays", async () => {
+	test("innerJoinMany: execute returns hydrated arrays", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -84,7 +85,7 @@ test("innerJoinMany: execute returns hydrated arrays", async () => {
 	]);
 });
 
-test("innerJoinMany: execute returns multiple users with their posts", async () => {
+	test("innerJoinMany: execute returns multiple users with their posts", async () => {
 	// User 2 (bob) has 4 posts, User 3 (carol) has 2 posts
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -121,7 +122,7 @@ test("innerJoinMany: execute returns multiple users with their posts", async () 
 	]);
 });
 
-test("innerJoinMany: filters out base records without matches", async () => {
+	test("innerJoinMany: filters out base records without matches", async () => {
 	// User 1 (alice) has no posts, so should be filtered out by inner join
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -150,7 +151,7 @@ test("innerJoinMany: filters out base records without matches", async () => {
 	]);
 });
 
-test("innerJoinMany: executeTakeFirst returns first base record with all children", async () => {
+	test("innerJoinMany: executeTakeFirst returns first base record with all children", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -174,7 +175,7 @@ test("innerJoinMany: executeTakeFirst returns first base record with all childre
 	});
 });
 
-test("innerJoinMany: executeCount counts unique base records (not exploded rows)", async () => {
+	test("innerJoinMany: executeCount counts unique base records (not exploded rows)", async () => {
 	// User 2 and 3 have posts
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -191,7 +192,7 @@ test("innerJoinMany: executeCount counts unique base records (not exploded rows)
 	assert.strictEqual(count, 2);
 });
 
-test("innerJoinMany: executeExists checks if any base records exist", async () => {
+	test("innerJoinMany: executeExists checks if any base records exist", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -206,7 +207,7 @@ test("innerJoinMany: executeExists checks if any base records exist", async () =
 	assert.strictEqual(exists, true);
 });
 
-test("innerJoinMany: toBaseQuery returns base query without joins", async () => {
+	test("innerJoinMany: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 2)
@@ -226,7 +227,7 @@ test("innerJoinMany: toBaseQuery returns base query without joins", async () => 
 	]);
 });
 
-test("innerJoinMany: callback join condition with onRef", async () => {
+	test("innerJoinMany: callback join condition with onRef", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -252,7 +253,7 @@ test("innerJoinMany: callback join condition with onRef", async () => {
 	]);
 });
 
-test("innerJoinMany: pre-built QuerySet variant", async () => {
+	test("innerJoinMany: pre-built QuerySet variant", async () => {
 	const postsQuery = querySet(db).selectAs("post", (eb) =>
 		eb.selectFrom("posts").select(["id", "title", "user_id"]),
 	);
@@ -276,4 +277,5 @@ test("innerJoinMany: pre-built QuerySet variant", async () => {
 			],
 		},
 	]);
+});
 });

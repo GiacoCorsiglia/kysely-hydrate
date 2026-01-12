@@ -1,14 +1,15 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
 
-//
-// Phase 6: Collection Modification - Modifying nested collections via .modify()
-//
+describe("query-set: collection-modify", () => {
+	//
+	// Phase 6: Collection Modification - Modifying nested collections via .modify()
+	//
 
-test("modify collection: add WHERE clause to joined collection", async () => {
+	test("modify collection: add WHERE clause to joined collection", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -35,7 +36,7 @@ test("modify collection: add WHERE clause to joined collection", async () => {
 	]);
 });
 
-test("modify collection: add extras to joined collection", async () => {
+	test("modify collection: add extras to joined collection", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -65,7 +66,7 @@ test("modify collection: add extras to joined collection", async () => {
 	]);
 });
 
-test("modify collection: add nested join within collection", async () => {
+	test("modify collection: add nested join within collection", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -114,7 +115,7 @@ test("modify collection: add nested join within collection", async () => {
 	]);
 });
 
-test("modify collection: multiple modifications on same collection", async () => {
+	test("modify collection: multiple modifications on same collection", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -147,7 +148,7 @@ test("modify collection: multiple modifications on same collection", async () =>
 	]);
 });
 
-test("modify collection: modify nested collection within collection", async () => {
+	test("modify collection: modify nested collection within collection", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -195,7 +196,7 @@ test("modify collection: modify nested collection within collection", async () =
 	]);
 });
 
-test("modify collection: omit fields from joined collection", async () => {
+	test("modify collection: omit fields from joined collection", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -221,7 +222,7 @@ test("modify collection: omit fields from joined collection", async () => {
 	]);
 });
 
-test("modify collection: map joined collection items", async () => {
+	test("modify collection: map joined collection items", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -250,4 +251,5 @@ test("modify collection: map joined collection items", async () => {
 			],
 		},
 	]);
+});
 });

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -10,7 +10,8 @@ import { querySet } from "./query-set.ts";
 
 // Basic pagination without joins
 
-test("pagination: limit without joins", async () => {
+describe("query-set: pagination", () => {
+	test("pagination: limit without joins", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3);
@@ -24,7 +25,7 @@ test("pagination: limit without joins", async () => {
 	assert.deepStrictEqual(users, allUsers.slice(0, 3));
 });
 
-test("pagination: offset without joins", async () => {
+	test("pagination: offset without joins", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(1000) // SQLite requires LIMIT when using OFFSET
@@ -39,7 +40,7 @@ test("pagination: offset without joins", async () => {
 	assert.deepStrictEqual(users, allUsers.slice(7));
 });
 
-test("pagination: limit and offset without joins", async () => {
+	test("pagination: limit and offset without joins", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
@@ -56,7 +57,7 @@ test("pagination: limit and offset without joins", async () => {
 
 // Pagination with cardinality-one joins
 
-test("pagination: limit with innerJoinOne", async () => {
+	test("pagination: limit with innerJoinOne", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
@@ -76,7 +77,7 @@ test("pagination: limit with innerJoinOne", async () => {
 	assert.deepStrictEqual(users, allUsers.slice(0, 2));
 });
 
-test("pagination: limit and offset with leftJoinOne", async () => {
+	test("pagination: limit and offset with leftJoinOne", async () => {
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
@@ -99,7 +100,7 @@ test("pagination: limit and offset with leftJoinOne", async () => {
 
 // Pagination with cardinality-many joins (should use nested subquery)
 
-test("pagination: limit with innerJoinMany returns limited users with ALL their posts", async () => {
+	test("pagination: limit with innerJoinMany returns limited users with ALL their posts", async () => {
 	// User 2 has 4 posts, User 3 has 2 posts
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -123,7 +124,7 @@ test("pagination: limit with innerJoinMany returns limited users with ALL their 
 	assert.deepStrictEqual(users[0], allUsers[0]);
 });
 
-test("pagination: limit with leftJoinMany returns limited users with ALL their posts", async () => {
+	test("pagination: limit with leftJoinMany returns limited users with ALL their posts", async () => {
 	// User 1 has no posts, User 2 has 4 posts, User 3 has 2 posts
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -145,7 +146,7 @@ test("pagination: limit with leftJoinMany returns limited users with ALL their p
 	assert.deepStrictEqual(users, allUsers.slice(0, 2));
 });
 
-test("pagination: offset with innerJoinMany skips base records correctly", async () => {
+	test("pagination: offset with innerJoinMany skips base records correctly", async () => {
 	// User 2 has 4 posts, User 3 has 2 posts
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -168,7 +169,7 @@ test("pagination: offset with innerJoinMany skips base records correctly", async
 	assert.deepStrictEqual(users, allUsers.slice(1));
 });
 
-test("pagination: limit and offset with innerJoinMany", async () => {
+	test("pagination: limit and offset with innerJoinMany", async () => {
 	// Get users with posts, starting from the 2nd user
 	const query = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -193,7 +194,7 @@ test("pagination: limit and offset with innerJoinMany", async () => {
 
 // executeCount and executeExists should ignore pagination
 
-test("pagination: executeCount ignores limit/offset", async () => {
+	test("pagination: executeCount ignores limit/offset", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
@@ -204,7 +205,7 @@ test("pagination: executeCount ignores limit/offset", async () => {
 	assert.strictEqual(count, 10);
 });
 
-test("pagination: executeExists ignores limit/offset", async () => {
+	test("pagination: executeExists ignores limit/offset", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", ">", 100) // No users match
@@ -215,7 +216,7 @@ test("pagination: executeExists ignores limit/offset", async () => {
 	assert.strictEqual(exists, false);
 });
 
-test("pagination: executeCount with joins ignores limit/offset", async () => {
+	test("pagination: executeCount with joins ignores limit/offset", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -234,7 +235,7 @@ test("pagination: executeCount with joins ignores limit/offset", async () => {
 
 // clearLimit and clearOffset
 
-test("pagination: clearLimit removes limit", async () => {
+	test("pagination: clearLimit removes limit", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.limit(3)
@@ -245,7 +246,7 @@ test("pagination: clearLimit removes limit", async () => {
 	assert.strictEqual(users.length, 10);
 });
 
-test("pagination: clearOffset removes offset", async () => {
+	test("pagination: clearOffset removes offset", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.offset(7)
@@ -255,4 +256,5 @@ test("pagination: clearOffset removes offset", async () => {
 	// Should return all 10 users starting from id 1
 	assert.strictEqual(users.length, 10);
 	assert.strictEqual(users[0]?.id, 1);
+});
 });

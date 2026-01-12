@@ -18,7 +18,7 @@ import { querySet } from "./query-set.ts";
 // Skip all tests if not explicitly enabled
 const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
 
-describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
+describe("query-set: postgres-kitchen-sink", { skip: !shouldRun }, () => {
 	const db = getDbForTest();
 
 	//

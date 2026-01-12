@@ -14,7 +14,7 @@ const shouldSkip = !process.env.RUN_POSTGRES_TESTS;
 // Tests
 //
 
-describe("Postgres: INSERT operations", { skip: shouldSkip }, () => {
+describe("query-set: postgres-insert", { skip: shouldSkip }, () => {
 	//
 	// Test 1: Simple insert with returningAll()
 	//

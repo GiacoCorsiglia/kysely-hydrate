@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -10,7 +10,8 @@ import { querySet } from "./query-set.ts";
 
 // extras: Add computed fields
 
-test("extras: add computed field at root level", async () => {
+describe("query-set: hydration", () => {
+	test("extras: add computed field at root level", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "<=", 3)
@@ -26,7 +27,7 @@ test("extras: add computed field at root level", async () => {
 	]);
 });
 
-test("extras: add computed field with full row access", async () => {
+	test("extras: add computed field with full row access", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "<=", 2)
@@ -54,7 +55,7 @@ test("extras: add computed field with full row access", async () => {
 	]);
 });
 
-test("extras: add computed field in nested join", async () => {
+	test("extras: add computed field in nested join", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -83,7 +84,7 @@ test("extras: add computed field in nested join", async () => {
 	]);
 });
 
-test("extras: multiple extras on same QuerySet", async () => {
+	test("extras: multiple extras on same QuerySet", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -100,7 +101,7 @@ test("extras: multiple extras on same QuerySet", async () => {
 
 // mapFields: Transform field values
 
-test("mapFields: transform single field value", async () => {
+	test("mapFields: transform single field value", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 2)
@@ -115,7 +116,7 @@ test("mapFields: transform single field value", async () => {
 	]);
 });
 
-test("mapFields: transform multiple fields", async () => {
+	test("mapFields: transform multiple fields", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -128,7 +129,7 @@ test("mapFields: transform multiple fields", async () => {
 	assert.deepStrictEqual(users, [{ id: "ID-1", username: "ALICE" }]);
 });
 
-test("mapFields: unmapped fields remain unchanged", async () => {
+	test("mapFields: unmapped fields remain unchanged", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
@@ -140,7 +141,7 @@ test("mapFields: unmapped fields remain unchanged", async () => {
 	assert.deepStrictEqual(users, [{ id: 1, email: "alice@example.com", username: "ALICE" }]);
 });
 
-test("mapFields: type transformation (number to string)", async () => {
+	test("mapFields: type transformation (number to string)", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -152,7 +153,7 @@ test("mapFields: type transformation (number to string)", async () => {
 	assert.deepStrictEqual(users, [{ id: "1", username: "alice" }]);
 });
 
-test("mapFields: in nested join", async () => {
+	test("mapFields: in nested join", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -181,7 +182,7 @@ test("mapFields: in nested join", async () => {
 	]);
 });
 
-test("mapFields: multiple mapFields merge configurations", async () => {
+	test("mapFields: multiple mapFields merge configurations", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -198,7 +199,7 @@ test("mapFields: multiple mapFields merge configurations", async () => {
 
 // omit: Remove fields from output
 
-test("omit: remove single field from root", async () => {
+	test("omit: remove single field from root", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
@@ -210,7 +211,7 @@ test("omit: remove single field from root", async () => {
 	assert.strictEqual("email" in users[0]!, false);
 });
 
-test("omit: remove multiple fields", async () => {
+	test("omit: remove multiple fields", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
@@ -222,7 +223,7 @@ test("omit: remove multiple fields", async () => {
 	assert.strictEqual("email" in users[0]!, false);
 });
 
-test("omit: used with extras to hide intermediate fields", async () => {
+	test("omit: used with extras to hide intermediate fields", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.where("users.id", "=", 1)
@@ -238,7 +239,7 @@ test("omit: used with extras to hide intermediate fields", async () => {
 	assert.strictEqual("email" in users[0]!, false);
 });
 
-test("omit: in nested join", async () => {
+	test("omit: in nested join", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -267,7 +268,7 @@ test("omit: in nested join", async () => {
 
 // with: Merge hydrator configuration using createHydrator
 
-test("with: merges extras from hydrator", async () => {
+	test("with: merges extras from hydrator", async () => {
 	const { createHydrator } = await import("./hydrator.ts");
 
 	interface User {
@@ -296,7 +297,7 @@ test("with: merges extras from hydrator", async () => {
 	]);
 });
 
-test("with: merges mapFields from hydrator", async () => {
+	test("with: merges mapFields from hydrator", async () => {
 	const { createHydrator } = await import("./hydrator.ts");
 
 	interface User {
@@ -317,7 +318,7 @@ test("with: merges mapFields from hydrator", async () => {
 	assert.deepStrictEqual(users, [{ id: 1, username: "ALICE" }]);
 });
 
-test("with: hydrator configuration takes precedence over existing", async () => {
+	test("with: hydrator configuration takes precedence over existing", async () => {
 	const { createHydrator } = await import("./hydrator.ts");
 
 	interface User {
@@ -342,7 +343,7 @@ test("with: hydrator configuration takes precedence over existing", async () => 
 	assert.deepStrictEqual(users, [{ id: 1, username: "ALICE" }]);
 });
 
-test("with: merges omit from hydrator", async () => {
+	test("with: merges omit from hydrator", async () => {
 	const { createHydrator } = await import("./hydrator.ts");
 
 	interface User {
@@ -370,7 +371,7 @@ test("with: merges omit from hydrator", async () => {
 	assert.strictEqual("email" in users[0]!, false);
 });
 
-test("with: works in nested QuerySet", async () => {
+	test("with: works in nested QuerySet", async () => {
 	const { createHydrator } = await import("./hydrator.ts");
 
 	interface Post {
@@ -413,7 +414,7 @@ test("with: works in nested QuerySet", async () => {
 
 // Miscellaneous hydration configuration tests
 
-test("nested QuerySet with extras and omit", async () => {
+	test("nested QuerySet with extras and omit", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -439,7 +440,7 @@ test("nested QuerySet with extras and omit", async () => {
 	]);
 });
 
-test("multiple mapFields calls: later takes precedence for same field", async () => {
+	test("multiple mapFields calls: later takes precedence for same field", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -456,7 +457,7 @@ test("multiple mapFields calls: later takes precedence for same field", async ()
 
 // map: Transform entire output
 
-test("map: transform entire output object", async () => {
+	test("map: transform entire output object", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 2)
@@ -472,7 +473,7 @@ test("map: transform entire output object", async () => {
 	]);
 });
 
-test("map: transform into different shape", async () => {
+	test("map: transform into different shape", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -482,7 +483,7 @@ test("map: transform into different shape", async () => {
 	assert.deepStrictEqual(users, ["User #1: alice"]);
 });
 
-test("map: chain multiple maps", async () => {
+	test("map: chain multiple maps", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -493,7 +494,7 @@ test("map: chain multiple maps", async () => {
 	assert.deepStrictEqual(users, [{ id: 1, username: "alice", step1: true, step2: true }]);
 });
 
-test("map: transform into class instances", async () => {
+	test("map: transform into class instances", async () => {
 	class UserModel {
 		id: number;
 		username: string;
@@ -521,7 +522,7 @@ test("map: transform into class instances", async () => {
 	assert.strictEqual(users[0]?.greet(), "Hello, I'm alice");
 });
 
-test("map: with nested joins", async () => {
+	test("map: with nested joins", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -539,4 +540,5 @@ test("map: with nested joins", async () => {
 		.execute();
 
 	assert.deepStrictEqual(users, [{ userId: 2, name: "bob", postCount: 4 }]);
+});
 });

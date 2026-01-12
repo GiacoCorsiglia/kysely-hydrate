@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { ExpectedOneItemError } from "./helpers/errors.ts";
@@ -9,7 +9,8 @@ import { querySet } from "./query-set.ts";
 // Phase 7: Edge Cases & Error Handling
 //
 
-test("edge case: empty result set - execute returns empty array", async () => {
+describe("query-set: edge-cases", () => {
+	test("edge case: empty result set - execute returns empty array", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
@@ -18,7 +19,7 @@ test("edge case: empty result set - execute returns empty array", async () => {
 	assert.deepStrictEqual(users, []);
 });
 
-test("edge case: empty result set - executeTakeFirst returns undefined", async () => {
+	test("edge case: empty result set - executeTakeFirst returns undefined", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
@@ -27,7 +28,7 @@ test("edge case: empty result set - executeTakeFirst returns undefined", async (
 	assert.strictEqual(user, undefined);
 });
 
-test("edge case: empty result set - executeTakeFirstOrThrow throws", async () => {
+	test("edge case: empty result set - executeTakeFirstOrThrow throws", async () => {
 	await assert.rejects(async () => {
 		await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -36,7 +37,7 @@ test("edge case: empty result set - executeTakeFirstOrThrow throws", async () =>
 	});
 });
 
-test("edge case: empty result set - executeCount returns 0", async () => {
+	test("edge case: empty result set - executeCount returns 0", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
@@ -45,7 +46,7 @@ test("edge case: empty result set - executeCount returns 0", async () => {
 	assert.strictEqual(count, 0);
 });
 
-test("edge case: empty result set - executeExists returns false", async () => {
+	test("edge case: empty result set - executeExists returns false", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
@@ -54,7 +55,7 @@ test("edge case: empty result set - executeExists returns false", async () => {
 	assert.strictEqual(exists, false);
 });
 
-test("edge case: empty result set with joins - execute returns empty array", async () => {
+	test("edge case: empty result set with joins - execute returns empty array", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
@@ -69,7 +70,7 @@ test("edge case: empty result set with joins - execute returns empty array", asy
 	assert.deepStrictEqual(users, []);
 });
 
-test("edge case: empty result set with many joins - execute returns empty array", async () => {
+	test("edge case: empty result set with many joins - execute returns empty array", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 999)
@@ -84,7 +85,7 @@ test("edge case: empty result set with many joins - execute returns empty array"
 	assert.deepStrictEqual(users, []);
 });
 
-test("edge case: leftJoinOne with no match returns null", async () => {
+	test("edge case: leftJoinOne with no match returns null", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -106,7 +107,7 @@ test("edge case: leftJoinOne with no match returns null", async () => {
 	]);
 });
 
-test("edge case: leftJoinOneOrThrow with no match throws", async () => {
+	test("edge case: leftJoinOneOrThrow with no match throws", async () => {
 	await assert.rejects(async () => {
 		await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -122,7 +123,7 @@ test("edge case: leftJoinOneOrThrow with no match throws", async () => {
 	}, ExpectedOneItemError);
 });
 
-test("edge case: leftJoinMany with no matches returns empty array", async () => {
+	test("edge case: leftJoinMany with no matches returns empty array", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -143,7 +144,7 @@ test("edge case: leftJoinMany with no matches returns empty array", async () => 
 	]);
 });
 
-test("edge case: toBaseQuery ignores all joins and hydration", async () => {
+	test("edge case: toBaseQuery ignores all joins and hydration", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 2)
@@ -171,7 +172,7 @@ test("edge case: toBaseQuery ignores all joins and hydration", async () => {
 	]);
 });
 
-test("edge case: toJoinedQuery vs toQuery without pagination are equivalent", async () => {
+	test("edge case: toJoinedQuery vs toQuery without pagination are equivalent", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -191,7 +192,7 @@ test("edge case: toJoinedQuery vs toQuery without pagination are equivalent", as
 	assert.strictEqual(joinedRows.length, 2); // 2 posts
 });
 
-test("edge case: toJoinedQuery vs toQuery with pagination differ for many-joins", async () => {
+	test("edge case: toJoinedQuery vs toQuery with pagination differ for many-joins", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "in", [2, 3])
@@ -215,7 +216,7 @@ test("edge case: toJoinedQuery vs toQuery with pagination differ for many-joins"
 	assert.ok(Array.isArray(queryRows));
 });
 
-test("edge case: executeCount ignores limit and offset", async () => {
+	test("edge case: executeCount ignores limit and offset", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "<=", 5)
@@ -227,7 +228,7 @@ test("edge case: executeCount ignores limit and offset", async () => {
 	assert.strictEqual(count, 5);
 });
 
-test("edge case: executeExists ignores limit and offset", async () => {
+	test("edge case: executeExists ignores limit and offset", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 5)
@@ -238,7 +239,7 @@ test("edge case: executeExists ignores limit and offset", async () => {
 	assert.strictEqual(exists, true);
 });
 
-test("edge case: collection override - second join with same key wins", async () => {
+	test("edge case: collection override - second join with same key wins", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -268,7 +269,7 @@ test("edge case: collection override - second join with same key wins", async ()
 	]);
 });
 
-test("edge case: composite keyBy with array of keys", async () => {
+	test("edge case: composite keyBy with array of keys", async () => {
 	// Create a scenario where we need composite key (using posts table)
 	const posts = await querySet(db)
 		.selectAs(
@@ -290,7 +291,7 @@ test("edge case: composite keyBy with array of keys", async () => {
 	]);
 });
 
-test("edge case: toJoinedQuery shows raw prefixed columns", async () => {
+	test("edge case: toJoinedQuery shows raw prefixed columns", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -313,7 +314,7 @@ test("edge case: toJoinedQuery shows raw prefixed columns", async () => {
 	assert.strictEqual(rows[0]!["profile$$bio"], "Bio for user 2");
 });
 
-test("edge case: deeply nested toJoinedQuery shows double prefixes", async () => {
+	test("edge case: deeply nested toJoinedQuery shows double prefixes", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -342,7 +343,7 @@ test("edge case: deeply nested toJoinedQuery shows double prefixes", async () =>
 	assert.ok("posts$$comments$$content" in rows[0]!);
 });
 
-test("edge case: executeCount with many-joins counts unique base records", async () => {
+	test("edge case: executeCount with many-joins counts unique base records", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "in", [2, 3])
@@ -363,7 +364,7 @@ test("edge case: executeCount with many-joins counts unique base records", async
 	assert.ok(joinedRows.length > users.length); // Row explosion in joined query
 });
 
-test("edge case: map prevents further joins", async () => {
+	test("edge case: map prevents further joins", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -381,7 +382,7 @@ test("edge case: map prevents further joins", async () => {
 	]);
 });
 
-test("edge case: extras do not cascade - each receives original row", async () => {
+	test("edge case: extras do not cascade - each receives original row", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -403,7 +404,7 @@ test("edge case: extras do not cascade - each receives original row", async () =
 	]);
 });
 
-test("edge case: omit removes original fields not extras", async () => {
+	test("edge case: omit removes original fields not extras", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
@@ -421,7 +422,7 @@ test("edge case: omit removes original fields not extras", async () => {
 	]);
 });
 
-test("edge case: crossJoinMany creates cartesian product", async () => {
+	test("edge case: crossJoinMany creates cartesian product", async () => {
 	// Create a small dataset to verify cartesian product
 	const result = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "<=", 2))
@@ -454,4 +455,5 @@ test("edge case: crossJoinMany creates cartesian product", async () => {
 			],
 		},
 	]);
+});
 });

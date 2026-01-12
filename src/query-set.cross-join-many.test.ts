@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 4: crossJoinMany Tests
 //
 
-test("crossJoinMany: toJoinedQuery shows cartesian product with $$ prefixes", async () => {
+describe("query-set: cross-join-many", () => {
+	test("crossJoinMany: toJoinedQuery shows cartesian product with $$ prefixes", async () => {
 	// Cross join user 1 with all posts (15 posts total)
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -27,7 +28,7 @@ test("crossJoinMany: toJoinedQuery shows cartesian product with $$ prefixes", as
 	assert.ok(rows.some((row) => row.posts$$id === 15));
 });
 
-test("crossJoinMany: execute returns all posts for each user (cartesian product)", async () => {
+	test("crossJoinMany: execute returns all posts for each user (cartesian product)", async () => {
 	// User 1 crossed with a subset of posts
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -53,7 +54,7 @@ test("crossJoinMany: execute returns all posts for each user (cartesian product)
 	]);
 });
 
-test("crossJoinMany: multiple users get same posts (full cartesian product)", async () => {
+	test("crossJoinMany: multiple users get same posts (full cartesian product)", async () => {
 	// Two users crossed with same posts
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -85,7 +86,7 @@ test("crossJoinMany: multiple users get same posts (full cartesian product)", as
 	]);
 });
 
-test("crossJoinMany: executeTakeFirst returns first user with all crossed posts", async () => {
+	test("crossJoinMany: executeTakeFirst returns first user with all crossed posts", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.crossJoinMany("posts", ({ eb, qs }) =>
@@ -104,7 +105,7 @@ test("crossJoinMany: executeTakeFirst returns first user with all crossed posts"
 	});
 });
 
-test("crossJoinMany: executeCount counts unique base records", async () => {
+	test("crossJoinMany: executeCount counts unique base records", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.crossJoinMany("posts", ({ eb, qs }) =>
@@ -117,7 +118,7 @@ test("crossJoinMany: executeCount counts unique base records", async () => {
 	assert.strictEqual(count, 3);
 });
 
-test("crossJoinMany: executeExists checks existence of base records", async () => {
+	test("crossJoinMany: executeExists checks existence of base records", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.crossJoinMany("posts", ({ eb, qs }) =>
@@ -129,7 +130,7 @@ test("crossJoinMany: executeExists checks existence of base records", async () =
 	assert.strictEqual(exists, true);
 });
 
-test("crossJoinMany: toBaseQuery returns base query without joins", async () => {
+	test("crossJoinMany: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 2)
@@ -146,7 +147,7 @@ test("crossJoinMany: toBaseQuery returns base query without joins", async () => 
 	]);
 });
 
-test("crossJoinMany: empty posts collection filters out base records", async () => {
+	test("crossJoinMany: empty posts collection filters out base records", async () => {
 	// Cross join with no posts (WHERE clause filters all)
 	// CROSS JOIN with empty set returns no rows (this is correct SQL behavior)
 	const users = await querySet(db)
@@ -162,4 +163,5 @@ test("crossJoinMany: empty posts collection filters out base records", async () 
 	// CROSS JOIN with empty set = no results
 	assert.strictEqual(users.length, 0);
 	assert.deepStrictEqual(users, []);
+});
 });

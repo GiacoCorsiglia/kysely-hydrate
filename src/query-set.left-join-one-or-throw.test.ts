@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 3: leftJoinOneOrThrow Tests
 //
 
-test("leftJoinOneOrThrow: toJoinedQuery shows non-nullable columns", async () => {
+describe("query-set: left-join-one-or-throw", () => {
+	test("leftJoinOneOrThrow: toJoinedQuery shows non-nullable columns", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
@@ -40,7 +41,7 @@ test("leftJoinOneOrThrow: toJoinedQuery shows non-nullable columns", async () =>
 	]);
 });
 
-test("leftJoinOneOrThrow: execute returns object when match exists", async () => {
+	test("leftJoinOneOrThrow: execute returns object when match exists", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
@@ -67,7 +68,7 @@ test("leftJoinOneOrThrow: execute returns object when match exists", async () =>
 	]);
 });
 
-test("leftJoinOneOrThrow: execute throws when no match", async () => {
+	test("leftJoinOneOrThrow: execute throws when no match", async () => {
 	await assert.rejects(async () => {
 		await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
@@ -85,7 +86,7 @@ test("leftJoinOneOrThrow: execute throws when no match", async () => {
 	});
 });
 
-test("leftJoinOneOrThrow: executeCount counts all base records", async () => {
+	test("leftJoinOneOrThrow: executeCount counts all base records", async () => {
 	const count = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
@@ -100,7 +101,7 @@ test("leftJoinOneOrThrow: executeCount counts all base records", async () => {
 	assert.strictEqual(count, 5);
 });
 
-test("leftJoinOneOrThrow: executeExists checks existence", async () => {
+	test("leftJoinOneOrThrow: executeExists checks existence", async () => {
 	const exists = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
@@ -115,7 +116,7 @@ test("leftJoinOneOrThrow: executeExists checks existence", async () => {
 	assert.strictEqual(exists, true);
 });
 
-test("leftJoinOneOrThrow: executeTakeFirst with join", async () => {
+	test("leftJoinOneOrThrow: executeTakeFirst with join", async () => {
 	const user = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOneOrThrow(
@@ -134,7 +135,7 @@ test("leftJoinOneOrThrow: executeTakeFirst with join", async () => {
 	});
 });
 
-test("leftJoinOneOrThrow: toBaseQuery returns base query without joins", async () => {
+	test("leftJoinOneOrThrow: toBaseQuery returns base query without joins", async () => {
 	const baseQuery = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("id", "<=", 3)
@@ -153,4 +154,5 @@ test("leftJoinOneOrThrow: toBaseQuery returns base query without joins", async (
 		{ id: 2, username: "bob" },
 		{ id: 3, username: "carol" },
 	]);
+});
 });

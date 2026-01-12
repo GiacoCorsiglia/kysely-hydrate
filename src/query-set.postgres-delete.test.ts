@@ -12,7 +12,7 @@ const shouldSkip = !process.env.RUN_POSTGRES_TESTS;
 // Tests
 //
 
-describe("Postgres: DELETE operations", { skip: shouldSkip }, () => {
+describe("query-set: postgres-delete", { skip: shouldSkip }, () => {
 	//
 	// Test 26: Simple delete with returningAll()
 	//

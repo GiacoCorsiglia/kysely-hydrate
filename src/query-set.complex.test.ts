@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 
 import { db } from "./__tests__/sqlite.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +8,8 @@ import { querySet } from "./query-set.ts";
 // Phase 7: Complex Scenarios - Multi-level nesting and real-world patterns
 //
 
-test("complex: 3-level nesting users → posts → comments", async () => {
+describe("query-set: complex", () => {
+	test("complex: 3-level nesting users → posts → comments", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -53,7 +54,7 @@ test("complex: 3-level nesting users → posts → comments", async () => {
 	]);
 });
 
-test("complex: 4-level nesting with mixed cardinality", async () => {
+	test("complex: 4-level nesting with mixed cardinality", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -105,7 +106,7 @@ test("complex: 4-level nesting with mixed cardinality", async () => {
 	]);
 });
 
-test("complex: nested joins with attach at multiple levels", async () => {
+	test("complex: nested joins with attach at multiple levels", async () => {
 	const fetchTags = async () => {
 		return [
 			{ id: 1, name: "typescript", post_id: 1 },
@@ -159,7 +160,7 @@ test("complex: nested joins with attach at multiple levels", async () => {
 	]);
 });
 
-test("complex: multiple modifications chained with hydration", async () => {
+	test("complex: multiple modifications chained with hydration", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -190,7 +191,7 @@ test("complex: multiple modifications chained with hydration", async () => {
 	]);
 });
 
-test("complex: mixed nullability with deep nesting", async () => {
+	test("complex: mixed nullability with deep nesting", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "in", [1, 2])
@@ -248,7 +249,7 @@ test("complex: mixed nullability with deep nesting", async () => {
 	]);
 });
 
-test("complex: pagination with deep nesting", async () => {
+	test("complex: pagination with deep nesting", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -304,7 +305,7 @@ test("complex: pagination with deep nesting", async () => {
 	]);
 });
 
-test("complex: sibling collections with transformation", async () => {
+	test("complex: sibling collections with transformation", async () => {
 	const users = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -348,7 +349,7 @@ test("complex: sibling collections with transformation", async () => {
 	]);
 });
 
-test("complex: executeCount with deep nesting", async () => {
+	test("complex: executeCount with deep nesting", async () => {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
@@ -375,7 +376,7 @@ test("complex: executeCount with deep nesting", async () => {
 	assert.ok(joinedRows.length > users.length); // Row explosion in joined query
 });
 
-test("complex: toJoinedQuery with deep nesting shows full row explosion", async () => {
+	test("complex: toJoinedQuery with deep nesting shows full row explosion", async () => {
 	const rows = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 2)
@@ -432,4 +433,5 @@ test("complex: toJoinedQuery with deep nesting shows full row explosion", async 
 			posts$$comments$$post_id: 2,
 		},
 	]);
+});
 });
