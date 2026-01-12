@@ -1,8 +1,10 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { db } from "./__tests__/sqlite.ts";
+import { dialect, getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
+
+const db = getDbForTest();
 
 //
 // SQL Generation Verification Tests
@@ -16,13 +18,21 @@ import { querySet } from "./query-set.ts";
 //
 
 function snapshot(template: TemplateStringsArray) {
-	return template
+	let str = template
 		.join(" ")
 		.replace(/--.*/g, "")
 		.replace(/\s+/g, " ")
 		.replaceAll("( ", "(")
 		.replaceAll(" )", ")")
+
 		.trim();
+
+	if (dialect === "postgres") {
+		let i = 0;
+		str = str.replace(/\?/g, () => `\$${++i}`);
+	}
+
+	return str;
 }
 
 describe("query-set: sql-generation", () => {
@@ -703,7 +713,7 @@ describe("query-set: sql-generation", () => {
 		const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
 
 		// toQuery() applies limit when only cardinality-one joins (safe, no row explosion)
-		assert.ok(toQuerySql.includes("limit ?"), "toQuery() should have limit");
+		assert.ok(toQuerySql.includes("limit "), "toQuery() should have limit");
 
 		// toJoinedQuery() never applies limit (raw view)
 		assert.ok(!toJoinedQuerySql.includes("limit"), "toJoinedQuery() should not apply limit");
@@ -730,7 +740,7 @@ describe("query-set: sql-generation", () => {
 		assert.ok(sql.startsWith("select exists"), "Should start with SELECT EXISTS");
 		assert.ok(sql.includes("select 1"), "EXISTS should use SELECT 1");
 		assert.ok(sql.includes('from "users"'), "Should query from users table");
-		assert.ok(sql.includes('where "users"."id" = ?'), "Should include WHERE condition");
+		assert.ok(sql.includes('where "users"."id" = '), "Should include WHERE condition");
 	});
 
 	test("SQL: executeExists with joins - includes joins in EXISTS check", async () => {

@@ -1,7 +1,9 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { db } from "./__tests__/sqlite.ts";
+import { getDbForTest } from "./__tests__/db.ts";
+
+const db = getDbForTest();
 import { ExpectedOneItemError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 

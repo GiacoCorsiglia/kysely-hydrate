@@ -1,12 +1,12 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
+import { dialect, getDbForTest } from "./__tests__/db.ts";
 import { testInTransaction } from "./__tests__/helpers.ts";
-import { getDbForTest } from "./__tests__/postgres.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
-const shouldSkip = !process.env.RUN_POSTGRES_TESTS;
+const shouldSkip = dialect !== "postgres";
 
 //
 // Tests

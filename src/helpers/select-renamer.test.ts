@@ -3,8 +3,10 @@ import { test } from "node:test";
 
 import * as k from "kysely";
 
-import { db } from "../__tests__/sqlite.ts";
+import { getDbForTest } from "../__tests__/db.ts";
 import { type AnySelectArg, hoistAndPrefixSelections, prefixSelectArg } from "./select-renamer.ts";
+
+const db = getDbForTest();
 
 /**
  * Validates that prefixSelectArg correctly prefixes aliases while preserving

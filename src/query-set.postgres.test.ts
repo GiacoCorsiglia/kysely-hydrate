@@ -6,19 +6,19 @@
  * than hydration correctness (which is tested elsewhere).
  *
  * To run these tests:
- *   RUN_POSTGRES_TESTS=true npm test -- src/query-set.postgres.test.ts
+ *   HYDRATE_TEST_DB=postgres npm test -- src/query-set.postgres.test.ts
  */
 
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { getDbForTest } from "./__tests__/postgres.ts";
+import { dialect, getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
 
-// Skip all tests if not explicitly enabled
-const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
+// Skip all tests if not running against postgres
+const shouldSkip = dialect !== "postgres";
 
-describe("query-set: postgres-kitchen-sink", { skip: !shouldRun }, () => {
+describe("query-set: postgres-kitchen-sink", { skip: shouldSkip }, () => {
 	const db = getDbForTest();
 
 	//

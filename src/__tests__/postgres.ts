@@ -23,7 +23,17 @@ function transformSqlForPostgres(sql: string): string {
 	return sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/gi, "SERIAL PRIMARY KEY");
 }
 
-export function getDbForTest() {
+export interface DbTestOptions {
+	/**
+	 * Name of the fixture file to use (without .sql extension).
+	 * Defaults to "fixture".
+	 * Example: "order-by-fixture"
+	 */
+	fixture?: string;
+}
+
+export function getDbForTest(options: DbTestOptions = {}) {
+	const { fixture = "fixture" } = options;
 	const testSchema = `test_${Math.random().toString(36).substring(2, 15)}`;
 
 	const pool = new pg.Pool({
@@ -54,7 +64,7 @@ export function getDbForTest() {
 		await db.schema.dropTable("users").ifExists().execute();
 
 		// Read and transform the fixture SQL
-		const sqlPath = join(__dirname, "fixture.sql");
+		const sqlPath = join(__dirname, `${fixture}.sql`);
 		const sqliteSql = readFileSync(sqlPath, "utf-8");
 		const postgresSql = transformSqlForPostgres(sqliteSql);
 

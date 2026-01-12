@@ -1,8 +1,10 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { orderByDb as db } from "./__tests__/order-by-fixture.ts";
+import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
+
+const db = getDbForTest({ fixture: "order-by-fixture" });
 
 //
 // ORDER BY Tests

@@ -35,7 +35,6 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run typecheck:tsc
-      - run: npm run test
+      - run: npm run test:all
         env:
-          RUN_POSTGRES_TESTS: 1
           POSTGRES_URL: postgres://postgres:postgres@localhost:5432/kysely_hydrate_test

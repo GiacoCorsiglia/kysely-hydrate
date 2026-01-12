@@ -8,7 +8,7 @@
  * column names (user_id, post_id, etc.) which the plugin transforms.
  *
  * To run these tests:
- *   RUN_POSTGRES_TESTS=true npm test -- src/query-set.camel-case.test.ts
+ *   HYDRATE_TEST_DB=postgres npm test -- src/query-set.camel-case.test.ts
  */
 
 import assert from "node:assert";
@@ -16,13 +16,10 @@ import { describe, test } from "node:test";
 
 import { CamelCasePlugin } from "kysely";
 
-import { getDbForTest } from "./__tests__/postgres.ts";
+import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
 
-// Skip all tests if not explicitly enabled
-const shouldRun = process.env.POSTGRES_URL || process.env.RUN_POSTGRES_TESTS;
-
-describe("query-set: camel-case", { skip: !shouldRun }, () => {
+describe("query-set: camel-case", () => {
 	const db = getDbForTest();
 
 	//

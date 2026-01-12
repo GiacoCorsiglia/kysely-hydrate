@@ -1,8 +1,10 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { db } from "./__tests__/sqlite.ts";
+import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
+
+const db = getDbForTest();
 
 //
 // Phase 7: Complex Scenarios - Multi-level nesting and real-world patterns

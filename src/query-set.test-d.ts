@@ -1,14 +1,16 @@
 import { expectTypeOf } from "expect-type";
 import * as k from "kysely";
 
+import { getDbForTest } from "./__tests__/db.ts";
 import {
 	type SeedDB,
 	type User as DBUser,
 	type Profile as DBProfile,
 } from "./__tests__/fixture.ts";
-import { db } from "./__tests__/sqlite.ts";
 import { createHydrator } from "./hydrator.ts";
 import { querySet } from "./query-set.ts";
+
+const db = getDbForTest();
 
 type InferDB<T> = T extends k.SelectQueryBuilder<infer DB, any, any> ? DB : never;
 type InferO<T> = T extends k.SelectQueryBuilder<any, any, infer O> ? O : never;

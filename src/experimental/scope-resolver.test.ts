@@ -3,11 +3,13 @@ import { test } from "node:test";
 
 import * as k from "kysely";
 
-import { db, seedDb } from "../__tests__/sqlite.ts";
+import { getDbForTest, seedDb } from "../__tests__/sqlite.ts";
 import { AmbiguousColumnReferenceError } from "../helpers/errors.ts";
 import { getMappedNodes, map } from "./mapped-expression.ts";
 import { type SomeColumnType } from "./schema/column-type.ts";
 import { type Provenance, traceLineage } from "./scope-resolver.ts";
+
+const db = getDbForTest();
 
 function getQueryNode(query: k.SelectQueryBuilder<any, any, any>): k.SelectQueryNode {
 	return query.toOperationNode() as k.SelectQueryNode;
