@@ -112,9 +112,9 @@ test("prefixSelectArg: schema-qualified column with alias", () => {
 });
 
 test("hoistAndPrefixSelections: basic subquery with simple selections", () => {
-	const subquery = db.selectFrom("users").select(["id", "username", "email"]).as("u");
+	const subquery = db.selectFrom("users").select(["id", "username", "email"]);
 
-	const hoisted = hoistAndPrefixSelections("user$$", subquery);
+	const hoisted = hoistAndPrefixSelections("user$$", subquery, "u");
 
 	assert.strictEqual(hoisted.length, 3);
 	assert.strictEqual(hoisted[0]!.alias, "user$$id");
@@ -135,9 +135,9 @@ test("hoistAndPrefixSelections: basic subquery with simple selections", () => {
 });
 
 test("hoistAndPrefixSelections: subquery with aliased selections", () => {
-	const subquery = db.selectFrom("users").select(["id", "username as name"]).as("u");
+	const subquery = db.selectFrom("users").select(["id", "username as name"]);
 
-	const hoisted = hoistAndPrefixSelections("user$$", subquery);
+	const hoisted = hoistAndPrefixSelections("user$$", subquery, "u");
 
 	assert.strictEqual(hoisted.length, 2);
 	assert.strictEqual(hoisted[0]!.alias, "user$$id");
@@ -149,10 +149,9 @@ test("hoistAndPrefixSelections: subquery with aliased selections", () => {
 test("hoistAndPrefixSelections: subquery with expression builder", () => {
 	const subquery = db
 		.selectFrom("users")
-		.select((eb) => [eb.ref("id").as("user_id"), eb.ref("username").as("username")])
-		.as("u");
+		.select((eb) => [eb.ref("id").as("user_id"), eb.ref("username").as("username")]);
 
-	const hoisted = hoistAndPrefixSelections("u$$", subquery);
+	const hoisted = hoistAndPrefixSelections("u$$", subquery, "u");
 
 	assert.strictEqual(hoisted.length, 2);
 	assert.strictEqual(hoisted[0]!.alias, "u$$user_id");
@@ -162,9 +161,9 @@ test("hoistAndPrefixSelections: subquery with expression builder", () => {
 });
 
 test("hoistAndPrefixSelections: empty prefix", () => {
-	const subquery = db.selectFrom("users").select(["id", "username"]).as("u");
+	const subquery = db.selectFrom("users").select(["id", "username"]);
 
-	const hoisted = hoistAndPrefixSelections("", subquery);
+	const hoisted = hoistAndPrefixSelections("", subquery, "u");
 
 	assert.strictEqual(hoisted.length, 2);
 	assert.strictEqual(hoisted[0]!.alias, "id");
@@ -175,27 +174,24 @@ test("hoistAndPrefixSelections: empty prefix", () => {
 
 test("hoistAndPrefixSelections: returns empty array for subquery with no selections", () => {
 	// Create a subquery node with no selections
-	const subquery = db.selectFrom("users").as("u");
+	const subquery = db.selectFrom("users");
 
-	const hoisted = hoistAndPrefixSelections("u$$", subquery);
+	const hoisted = hoistAndPrefixSelections("u$$", subquery, "u");
 
 	assert.strictEqual(hoisted.length, 0);
 });
 
 test("hoistAndPrefixSelections: subquery with schema-qualified selections", () => {
-	const subquery = db
-		.selectFrom("users")
-		.select([
-			"public.users.id as id",
-			"public.users.username as username",
-			"public.users.email as email",
-			// I'm not actually sure how to configure Kysely to understand
-			// schema-qualified columns at the type-level, but this works well enough
-			// for the test.
-		] as any)
-		.as("u");
+	const subquery = db.selectFrom("users").select([
+		"public.users.id as id",
+		"public.users.username as username",
+		"public.users.email as email",
+		// I'm not actually sure how to configure Kysely to understand
+		// schema-qualified columns at the type-level, but this works well enough
+		// for the test.
+	] as any);
 
-	const hoisted = hoistAndPrefixSelections("user$$", subquery);
+	const hoisted = hoistAndPrefixSelections("user$$", subquery, "u");
 
 	assert.strictEqual(hoisted.length, 3);
 	assert.strictEqual(hoisted[0]!.alias, "user$$id");

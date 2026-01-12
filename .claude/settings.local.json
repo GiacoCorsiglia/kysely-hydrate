@@ -12,7 +12,8 @@
 			"Bash(npx tsgo:*)",
 			"mcp__ide__getDiagnostics",
 			"Bash(npx tsc:*)",
-			"Bash(RUN_POSTGRES_TESTS=true npm test:*)"
+			"Bash(RUN_POSTGRES_TESTS=true npm test:*)",
+			"Bash(RUN_POSTGRES_TESTS=1 npm test:*)"
 		],
 		"deny": ["Read(./src/experimental/**)"],
 		"ask": []

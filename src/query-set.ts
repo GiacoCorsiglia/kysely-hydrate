@@ -22,12 +22,20 @@ import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
 	type ApplyPrefixWithSep,
-	type MakePrefix,
+	type MakeInitialPrefix,
 	makePrefix,
 	SEP,
 } from "./helpers/prefixes.ts";
-import { hoistAndPrefixSelections, hoistSelections } from "./helpers/select-renamer.ts";
 import {
+	applyHoistedPrefixedSelections,
+	applyHoistedSelections,
+} from "./helpers/select-renamer.ts";
+import {
+	type AnySelectQueryBuilder,
+	type AnyDeleteQueryBuilder,
+	type AnyQueryBuilder,
+	type AnyUpdateQueryBuilder,
+	type AnyInsertQueryBuilder,
 	type DrainOuterGeneric,
 	type Extend,
 	type ExtendWith,
@@ -36,6 +44,7 @@ import {
 	type StrictEqual,
 	type StrictSubset,
 	assertNever,
+	isSelectQueryBuilder,
 	mapWithDeleted,
 } from "./helpers/utils.ts";
 import {
@@ -57,21 +66,92 @@ import {
 	DEFAULT_KEY_BY,
 	EnableAutoInclusion,
 } from "./hydrator.ts";
+import { InvalidJoinedQuerySetError } from "./index.ts";
 
 ////////////////////////////////////////////////////////////
 // Generics.
 ////////////////////////////////////////////////////////////
 
-interface TQuery<in out DB = any, in out TB extends keyof DB = any> {
+type TQueryType = "Select" | "Update" | "Insert" | "Delete";
+
+interface TQuery<in out DB = any, in out TB extends keyof DB = any, UT extends keyof DB = never> {
+	Type: TQueryType;
+
 	DB: DB;
 	TB: TB;
 	O: any;
+	/**
+	 * Updates have an additional table in scope---the one being updated.
+	 */
+	UT: UT;
 }
 
-type InferTQuery<Q extends AnySelectQueryBuilder> =
-	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O> ? { DB: DB; TB: TB; O: O } : never;
+interface TSelectQuery extends TQuery {
+	Type: "Select";
+}
+
+type InferTSelectQuery<Q extends AnySelectQueryBuilder> =
+	Q extends k.SelectQueryBuilder<infer DB, infer TB, infer O>
+		? { Type: "Select"; DB: DB; TB: TB; O: O; UT: never }
+		: never;
+
+type InferTInsertQuery<Q extends AnyInsertQueryBuilder> =
+	Q extends k.InsertQueryBuilder<infer DB, infer TB, infer O>
+		? { Type: "Insert"; DB: DB; TB: TB; O: O; UT: never }
+		: never;
+
+type InferTUpdateQuery<Q extends AnyUpdateQueryBuilder> =
+	Q extends k.UpdateQueryBuilder<infer DB, infer TB, infer UT, infer O>
+		? { Type: "Update"; DB: DB; TB: TB; O: O; UT: UT }
+		: never;
+
+type InferTDeleteQuery<Q extends AnyDeleteQueryBuilder> =
+	Q extends k.DeleteQueryBuilder<infer DB, infer TB, infer O>
+		? { Type: "Delete"; DB: DB; TB: TB; O: O; UT: never }
+		: never;
 
 type SelectQueryBuilderFor<Q extends TQuery> = k.SelectQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+type UpdateQueryBuilderFor<Q extends TQuery> = k.UpdateQueryBuilder<
+	Q["DB"],
+	Q["TB"],
+	Q["UT"],
+	Q["O"]
+>;
+type InsertQueryBuilderFor<Q extends TQuery> = k.InsertQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+type DeleteQueryBuilderFor<Q extends TQuery> = k.DeleteQueryBuilder<Q["DB"], Q["TB"], Q["O"]>;
+
+interface QueryBuilderForMap<Q extends TQuery> {
+	Select: SelectQueryBuilderFor<Q>;
+	Update: UpdateQueryBuilderFor<Q>;
+	Insert: InsertQueryBuilderFor<Q>;
+	Delete: DeleteQueryBuilderFor<Q>;
+}
+
+type QueryBuilderFor<Q extends TQuery> = QueryBuilderForMap<Q>[Q["Type"]];
+
+interface NewQueryBuilderForMap<NewDB, NewTB extends keyof NewDB, NewUT extends keyof NewDB, NewO> {
+	Select: k.SelectQueryBuilder<NewDB, NewTB, NewO>;
+	Update: k.UpdateQueryBuilder<NewDB, NewTB, NewUT, NewO>;
+	Insert: k.InsertQueryBuilder<NewDB, NewTB, NewO>;
+	Delete: k.DeleteQueryBuilder<NewDB, NewTB, NewO>;
+}
+
+type NewQueryBuilderFor<
+	Q extends TQuery,
+	NewDB,
+	NewTB extends keyof NewDB,
+	NewUT extends keyof NewDB,
+	NewO,
+> = NewQueryBuilderForMap<NewDB, NewTB, NewUT, NewO>[Q["Type"]];
+
+interface QueryBuilderWithOutputForMap<Q extends TQuery, O> {
+	Select: k.SelectQueryBuilder<Q["DB"], Q["TB"], O>;
+	Update: k.UpdateQueryBuilder<Q["DB"], Q["TB"], Q["UT"], O>;
+	Insert: k.InsertQueryBuilder<Q["DB"], Q["TB"], O>;
+	Delete: k.DeleteQueryBuilder<Q["DB"], Q["TB"], O>;
+}
+
+type QueryBuilderWithOutputFor<Q extends TQuery, O> = QueryBuilderWithOutputForMap<Q, O>[Q["Type"]];
 
 interface TJoinCollection {
 	Prototype: "Join";
@@ -142,6 +222,10 @@ interface TQuerySet {
 	HydratedOutput: any;
 }
 
+interface TSelectQuerySet extends TQuerySet {
+	BaseQuery: TSelectQuery;
+}
+
 type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
 	? MappedQuerySet<T>
 	: QuerySet<T>;
@@ -161,13 +245,15 @@ interface TMapped<in out T extends TQuerySet, in out Output> {
 }
 
 interface TJoinedQueryWithBaseQuery<
-	BaseAlias extends string,
+	in out BaseAlias extends string,
 	in out JoinedQuery extends TQuery,
 	in out BaseQuery extends TQuery,
 > {
+	Type: "Select";
 	DB: JoinedQuery["DB"] & { [_ in BaseAlias]: BaseQuery["O"] };
 	TB: JoinedQuery["TB"];
 	O: JoinedQuery["O"];
+	UT: never;
 }
 
 interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQuery> {
@@ -206,6 +292,7 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 }
 
 interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out BaseO> {
+	Type: "Select";
 	// The base query is wrapped in an alias in `SELECT $alias.* FROM (...) as
 	// $alias`, so it's treated as another table.
 	DB: DB & { [K in BaseAlias]: BaseO };
@@ -213,6 +300,8 @@ interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out 
 	TB: BaseAlias;
 	// The output is the same as the base query output.
 	O: BaseO;
+	// It's never an update.
+	UT: never;
 }
 
 type ToInitialJoinedDB<T extends TQuerySet> = DrainOuterGeneric<
@@ -284,7 +373,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * // SELECT id, username FROM users WHERE isActive = true
 	 * ```
 	 */
-	toBaseQuery(): SelectQueryBuilderFor<T["BaseQuery"]>;
+	toBaseQuery(): QueryBuilderFor<T["BaseQuery"]>;
 
 	/**
 	 * Returns the base query with all joins applied as nested subqueries.
@@ -606,11 +695,9 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 *   .execute();
 	 * ```
 	 */
-	// Simple overload for simple case.
+	// You can't change the selection here.
 	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
-		modifier: (
-			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
-		) => k.SelectQueryBuilder<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], O>,
+		modifier: (qb: QueryBuilderFor<T["BaseQuery"]>) => QueryBuilderWithOutputFor<T["BaseQuery"], O>,
 	): this;
 
 	/**
@@ -817,6 +904,61 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * Calls a callback with the query set and returns the result.  Like {@link k.SelectQueryBuilder.$call}.
 	 */
 	$call<R>(callback: (qs: this) => R): R;
+
+	//
+	// Writes
+	//
+
+	/**
+	 * Switches the base query to an `INSERT` statement.
+	 *
+	 * The provided `INSERT` statement is wrapped in a CTE (Common Table Expression).
+	 * It MUST include a `RETURNING` clause that returns columns compatible with
+	 * the QuerySet's existing base selection to ensure correct hydration.
+	 *
+	 * **Note:** Data-modifying CTEs and `RETURNING` clauses are only supported by
+	 * some dialects (e.g. PostgreSQL).
+	 *
+	 * **Example:**
+	 * ```ts
+	 * // Define a reusable query set for fetching users
+	 * const usersQuerySet = querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username", "firstName", "lastName"]))
+	 *   .extras({
+	 *     fullName: (row) => `${row.firstName} ${row.lastName}`
+	 *   });
+	 *
+	 * // Use it to insert a new user and get back the hydrated result
+	 * const newUser = await usersQuerySet
+	 *   .insert((db) =>
+	 *     db.insertInto("users")
+	 *       .values(userData)
+	 *       // Must return columns matching the base query selection
+	 *       .returning(["id", "username", "firstName", "lastName"])
+	 *   )
+	 *   .executeTakeFirst();
+	 * ```
+	 *
+	 * @param iqb - An insert query builder or factory function.
+	 * @returns A new QuerySet with the insert query as the base.
+	 */
+	insert<IQB extends k.InsertQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
+		iqb: InsertQueryBuilderOrFactory<T["DB"], IQB>,
+	): QuerySet<TWithBaseQuery<T, InferTInsertQuery<IQB>>>;
+
+	/**
+	 * Like {@link insert}, but switches to an `UPDATE` statement.
+	 */
+	update<IQB extends k.UpdateQueryBuilder<any, any, any, T["BaseQuery"]["O"]>>(
+		iqb: UpdateQueryBuilderOrFactory<T["DB"], IQB>,
+	): QuerySet<TWithBaseQuery<T, InferTUpdateQuery<IQB>>>;
+
+	/**
+	 * Like {@link insert}, but switches to a `DELETE` statement.
+	 */
+	delete<IQB extends k.DeleteQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
+		iqb: DeleteQueryBuilderOrFactory<T["DB"], IQB>,
+	): QuerySet<TWithBaseQuery<T, InferTDeleteQuery<IQB>>>;
 }
 
 /**
@@ -1037,9 +1179,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 */
 	attachMany<K extends string, FetchFnReturn extends SomeFetchFnReturn>(
 		key: K,
-		fetchFn: SomeFetchFn<TInput<T>, FetchFnReturn>,
-		keys: AttachedKeysArg<TInput<T>, AttachedOutputFromFetchFnReturn<FetchFnReturn>>,
-	): QuerySetWithAttachMany<T, K, FetchFnReturn>;
+		fetchFn: ToFetchFn<T, FetchFnReturn>,
+		keys: ToAttachedKeysArg<T, NoInfer<FetchFnReturn>>,
+	): QuerySetWithAttach<T, K, "AttachMany", FetchFnReturn>;
 
 	/**
 	 * Attaches data from an external source (not via SQL joins) as a single
@@ -1100,9 +1242,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 */
 	attachOne<K extends string, FetchFnReturn extends SomeFetchFnReturn>(
 		key: K,
-		fetchFn: SomeFetchFn<TInput<T>, FetchFnReturn>,
-		keys: AttachedKeysArg<TInput<T>, AttachedOutputFromFetchFnReturn<NoInfer<FetchFnReturn>>>,
-	): QuerySetWithAttachOne<T, K, FetchFnReturn>;
+		fetchFn: ToFetchFn<T, FetchFnReturn>,
+		keys: ToAttachedKeysArg<T, NoInfer<FetchFnReturn>>,
+	): QuerySetWithAttach<T, K, "AttachOne", FetchFnReturn>;
 
 	/**
 	 * Exactly like {@link attachOne}, but throws an error if the attached object
@@ -1116,9 +1258,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 */
 	attachOneOrThrow<K extends string, FetchFnReturn extends SomeFetchFnReturn>(
 		key: K,
-		fetchFn: SomeFetchFn<TInput<T>, FetchFnReturn>,
-		keys: AttachedKeysArg<TInput<T>, AttachedOutputFromFetchFnReturn<NoInfer<FetchFnReturn>>>,
-	): QuerySetWithAttachOneOrThrow<T, K, FetchFnReturn>;
+		fetchFn: ToFetchFn<T, FetchFnReturn>,
+		keys: ToAttachedKeysArg<T, NoInfer<FetchFnReturn>>,
+	): QuerySetWithAttach<T, K, "AttachOneOrThrow", FetchFnReturn>;
 
 	////////////////////////////////////////////////////////////
 	// Joins
@@ -1192,17 +1334,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner join added.
 	 */
-	innerJoinOne<Key extends string, TNested extends TQuerySet>(
+	innerJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinOne<T, Key, TNested>;
-	innerJoinOne<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "InnerJoinOne", TNested>;
+	innerJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinOne<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "InnerJoinOne", TNested>;
 
 	/**
 	 * Adds an inner join that hydrates into a nested array.
@@ -1265,17 +1407,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner join added.
 	 */
-	innerJoinMany<Key extends string, TNested extends TQuerySet>(
+	innerJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinMany<T, Key, TNested>;
-	innerJoinMany<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
+	innerJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinMany<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
 
 	//
 	// LEFT JOIN
@@ -1321,17 +1463,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left join added.
 	 */
-	leftJoinOne<Key extends string, TNested extends TQuerySet>(
+	leftJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOne<T, Key, TNested>;
-	leftJoinOne<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "LeftJoinOne", TNested>;
+	leftJoinOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOne<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "LeftJoinOne", TNested>;
 
 	/**
 	 * Adds a left join that hydrates into a single nested object, throwing if not found.
@@ -1376,17 +1518,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left join added.
 	 */
-	leftJoinOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	leftJoinOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOneOrThrow<T, Key, TNested>;
-	leftJoinOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNested>;
+	leftJoinOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOneOrThrow<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNested>;
 
 	/**
 	 * Adds a left join that hydrates into a nested array.
@@ -1462,17 +1604,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left join added.
 	 */
-	leftJoinMany<Key extends string, TNested extends TQuerySet>(
+	leftJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinMany<T, Key, TNested>;
-	leftJoinMany<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "LeftJoinMany", TNested>;
+	leftJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinMany<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "LeftJoinMany", TNested>;
 
 	//
 	// CROSS JOIN
@@ -1492,10 +1634,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param querySet - A nested query set or factory function.
 	 * @returns A new QuerySet with the cross join added.
 	 */
-	crossJoinMany<Key extends string, TNested extends TQuerySet>(
+	crossJoinMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
-	): QuerySetWithInnerJoinMany<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
 
 	//
 	// INNER JOIN LATERAL
@@ -1518,17 +1660,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner lateral join added.
 	 */
-	innerJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	innerJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinOne<T, Key, TNested>;
-	innerJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "InnerJoinOne", TNested>;
+	innerJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinOne<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "InnerJoinOne", TNested>;
 
 	/**
 	 * Adds an inner lateral join that hydrates into a nested array.
@@ -1547,17 +1689,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the inner lateral join added.
 	 */
-	innerJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	innerJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinMany<T, Key, TNested>;
-	innerJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
+	innerJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithInnerJoinMany<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
 
 	//
 	// LEFT JOIN LATERAL
@@ -1580,17 +1722,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left lateral join added.
 	 */
-	leftJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOne<T, Key, TNested>;
-	leftJoinLateralOne<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "LeftJoinOne", TNested>;
+	leftJoinLateralOne<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOne<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "LeftJoinOne", TNested>;
 
 	/**
 	 * Adds a left lateral join that hydrates into a single nested object, throwing if not found.
@@ -1609,17 +1751,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left lateral join added.
 	 */
-	leftJoinLateralOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOneOrThrow<T, Key, TNested>;
-	leftJoinLateralOneOrThrow<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNested>;
+	leftJoinLateralOneOrThrow<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinOneOrThrow<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNested>;
 
 	/**
 	 * Adds a left lateral join that hydrates into a nested array.
@@ -1638,17 +1780,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param callback - Join callback (when using callback syntax).
 	 * @returns A new QuerySet with the left lateral join added.
 	 */
-	leftJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	leftJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		k1: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
 		k2: JoinReferenceExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinMany<T, Key, TNested>;
-	leftJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	): QuerySetWithJoin<T, Key, "LeftJoinMany", TNested>;
+	leftJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
 		callback: JoinCallbackExpression<T, NoInfer<Key>, NoInfer<TNested>>,
-	): QuerySetWithLeftJoinMany<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "LeftJoinMany", TNested>;
 
 	//
 	// CROSS JOIN LATERAL
@@ -1668,10 +1810,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param querySet - A nested query set or factory function.
 	 * @returns A new QuerySet with the cross lateral join added.
 	 */
-	crossJoinLateralMany<Key extends string, TNested extends TQuerySet>(
+	crossJoinLateralMany<Key extends string, TNested extends TSelectQuerySet>(
 		key: Key,
 		querySet: NestedQuerySetOrFactory<T, NoInfer<Key>, TNested>,
-	): QuerySetWithInnerJoinMany<T, Key, TNested>;
+	): QuerySetWithJoin<T, Key, "InnerJoinMany", TNested>;
 
 	////////////////////////////////////////////////////////////
 	// Modification
@@ -1844,19 +1986,22 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 */
 	// Modify base query.
 	modify<O extends StrictEqual<T["BaseQuery"]["O"], O>>(
-		modifier: (
-			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
-		) => k.SelectQueryBuilder<T["BaseQuery"]["DB"], T["BaseQuery"]["TB"], O>,
+		modifier: (qb: QueryBuilderFor<T["BaseQuery"]>) => QueryBuilderWithOutputFor<T["BaseQuery"], O>,
 	): this;
-	modify<NewDB, NewTB extends keyof NewDB, NewO extends T["BaseQuery"]["O"]>(
+	modify<
+		NewDB,
+		NewTB extends keyof NewDB,
+		NewUT extends keyof NewDB,
+		NewO extends T["BaseQuery"]["O"],
+	>(
 		modifier: (
-			qb: SelectQueryBuilderFor<T["BaseQuery"]>,
-		) => k.SelectQueryBuilder<NewDB, NewTB, NewO>,
-	): QuerySet<TWithBaseQuery<T, { DB: NewDB; TB: NewTB; O: NewO }>>;
+			qb: QueryBuilderFor<T["BaseQuery"]>,
+		) => NewQueryBuilderFor<T["BaseQuery"], NewDB, NewTB, NewUT, NewO>,
+	): QuerySet<TWithBaseQuery<T, { Type: "Select"; DB: NewDB; TB: NewTB; O: NewO; UT: never }>>;
 	// Modify collection.
 	modify<
 		Key extends keyof T["Collections"] & string,
-		TNestedNew extends TQuerySet = never,
+		TNestedNew extends TSelectQuerySet = never,
 		NewValue extends SomeFetchFnReturn = never,
 	>(
 		key: Key,
@@ -1885,30 +2030,45 @@ type CollectionModifier<
 interface ModifyCollectionReturnMap<
 	T extends TQuerySet,
 	Key extends string,
-	TNestedNew extends TQuerySet,
+	TNestedNew extends TSelectQuerySet,
 	NewValue extends SomeFetchFnReturn,
 > {
-	InnerJoinOne: QuerySetWithInnerJoinOne<T, Key, TNestedNew>;
-	InnerJoinMany: QuerySetWithInnerJoinMany<T, Key, TNestedNew>;
-	LeftJoinOne: QuerySetWithLeftJoinOne<T, Key, TNestedNew>;
-	LeftJoinOneOrThrow: QuerySetWithLeftJoinOneOrThrow<T, Key, TNestedNew>;
-	LeftJoinMany: QuerySetWithLeftJoinMany<T, Key, TNestedNew>;
+	InnerJoinOne: QuerySetWithJoin<T, Key, "InnerJoinOne", TNestedNew>;
+	InnerJoinMany: QuerySetWithJoin<T, Key, "InnerJoinMany", TNestedNew>;
+	LeftJoinOne: QuerySetWithJoin<T, Key, "LeftJoinOne", TNestedNew>;
+	LeftJoinOneOrThrow: QuerySetWithJoin<T, Key, "LeftJoinOneOrThrow", TNestedNew>;
+	LeftJoinMany: QuerySetWithJoin<T, Key, "LeftJoinMany", TNestedNew>;
 
-	AttachOne: QuerySetWithAttachOne<T, Key, NewValue>;
-	AttachOneOrThrow: QuerySetWithAttachOneOrThrow<T, Key, NewValue>;
-	AttachMany: QuerySetWithAttachMany<T, Key, NewValue>;
+	AttachOne: QuerySetWithAttach<T, Key, "AttachOne", NewValue>;
+	AttachOneOrThrow: QuerySetWithAttach<T, Key, "AttachOneOrThrow", NewValue>;
+	AttachMany: QuerySetWithAttach<T, Key, "AttachMany", NewValue>;
 }
 
 ////////////////////////////////////////////////////////////
 // Attach Helpers.
 ////////////////////////////////////////////////////////////
 
+type ToFetchFn<T extends TQuerySet, FetchFnReturn extends SomeFetchFnReturn> = SomeFetchFn<
+	TInput<T>,
+	FetchFnReturn
+>;
+
+type ToAttachedKeysArg<
+	T extends TQuerySet,
+	FetchFnReturn extends SomeFetchFnReturn,
+> = AttachedKeysArg<TInput<T>, AttachedOutputFromFetchFnReturn<NoInfer<FetchFnReturn>>>;
+
+interface AttachedOutputMap<in out FetchFnReturn extends SomeFetchFnReturn> {
+	AttachOne: AttachedOutputFromFetchFnReturn<FetchFnReturn> | null;
+	AttachOneOrThrow: AttachedOutputFromFetchFnReturn<FetchFnReturn>;
+	AttachMany: AttachedOutputFromFetchFnReturn<FetchFnReturn>[];
+}
+
 interface TQuerySetWithAttach<
 	in out T extends TQuerySet,
+	in out Key extends string,
 	in out Type extends TAttachType,
 	in out FetchFnReturn extends SomeFetchFnReturn,
-	in out Key extends string,
-	in out AttachedOutput,
 > {
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
@@ -1921,50 +2081,15 @@ interface TQuerySetWithAttach<
 		{ Prototype: "Attach"; Type: Type; Value: FetchFnReturn }
 	>;
 	OrderableColumns: T["OrderableColumns"];
-	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, AttachedOutput>;
+	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, AttachedOutputMap<FetchFnReturn>[Type]>;
 }
 
-interface QuerySetWithAttachMany<
+interface QuerySetWithAttach<
 	in out T extends TQuerySet,
 	in out Key extends string,
+	in out Type extends TAttachType,
 	in out FetchFnReturn extends SomeFetchFnReturn,
-> extends QuerySet<
-	TQuerySetWithAttach<
-		T,
-		"AttachMany",
-		FetchFnReturn,
-		Key,
-		AttachedOutputFromFetchFnReturn<FetchFnReturn>[]
-	>
-> {}
-
-interface QuerySetWithAttachOne<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out FetchFnReturn extends SomeFetchFnReturn,
-> extends QuerySet<
-	TQuerySetWithAttach<
-		T,
-		"AttachOne",
-		FetchFnReturn,
-		Key,
-		AttachedOutputFromFetchFnReturn<FetchFnReturn> | null
-	>
-> {}
-
-interface QuerySetWithAttachOneOrThrow<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out FetchFnReturn extends SomeFetchFnReturn,
-> extends QuerySet<
-	TQuerySetWithAttach<
-		T,
-		"AttachOneOrThrow",
-		FetchFnReturn,
-		Key,
-		AttachedOutputFromFetchFnReturn<FetchFnReturn>
-	>
-> {}
+> extends QuerySet<TQuerySetWithAttach<T, Key, Type, FetchFnReturn>> {}
 
 ////////////////////////////////////////////////////////////
 // Join Helpers.
@@ -1975,11 +2100,23 @@ interface QuerySetWithAttachOneOrThrow<
 // that adjacent joins do not depend on each other.  (We furthermore cannot use
 // T["BaseQuery"] because that's not what the JoinedQuery ever looks like.)
 
-type NestedQuerySetOrFactory<T extends TQuerySet, Alias extends string, TNested extends TQuerySet> =
-	| MappedQuerySet<TNested>
-	| ((nest: NestFn<ToInitialJoinedDB<T>, ToInitialJoinedTB<T>, Alias>) => MappedQuerySet<TNested>);
+type NestedQuerySetOrFactory<
+	T extends TQuerySet,
+	Alias extends string,
+	TNested extends TSelectQuerySet,
+> = MappedQuerySet<TNested> | NestCallback<T, Alias, TNested>;
 
-type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.AliasedExpression<
+type NestCallback<T extends TQuerySet, Alias extends string, TNested extends TSelectQuerySet> = (
+	nest: NestFnFor<T, Alias>,
+) => MappedQuerySet<TNested>;
+
+type NestFnFor<T extends TQuerySet, Alias extends string> = NestFn<
+	ToInitialJoinedDB<T>,
+	ToInitialJoinedTB<T>,
+	Alias
+>;
+
+type ToTableExpression<Key extends string, TNested extends TSelectQuerySet> = k.AliasedExpression<
 	TNested["BaseQuery"]["O"],
 	Key
 >;
@@ -1987,7 +2124,7 @@ type ToTableExpression<Key extends string, TNested extends TQuerySet> = k.Aliase
 type JoinReferenceExpression<
 	T extends TQuerySet,
 	Key extends string,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = k.JoinReferenceExpression<
 	ToInitialJoinedDB<T>,
 	ToInitialJoinedTB<T>,
@@ -1997,7 +2134,7 @@ type JoinReferenceExpression<
 type JoinCallbackExpression<
 	T extends TQuerySet,
 	Key extends string,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = k.JoinCallbackExpression<
 	ToInitialJoinedDB<T>,
 	ToInitialJoinedTB<T>,
@@ -2010,18 +2147,83 @@ type TOrderableColumnsWithJoin<
 	T extends TQuerySet,
 	Key extends string,
 	Type extends TJoinType,
-	TNested extends TQuerySet,
+	TNested extends TSelectQuerySet,
 > = Type extends CardinalityOneJoinType
 	? T["OrderableColumns"] | ApplyPrefixWithSep<Key, TNested["OrderableColumns"]>
 	: T["OrderableColumns"];
+
+type InnerJoinOutput<
+	T extends TQuerySet,
+	TNested extends TSelectQuerySet,
+	Key extends string,
+> = Flatten<
+	// Extend the *JoinedQuery* output, which includes both the base output and also
+	// output from other joins.
+	T["JoinedQuery"]["O"] & ApplyPrefixes<MakeInitialPrefix<Key>, TNested["JoinedQuery"]["O"]>
+>;
+
+type TQueryWithInnerJoin<
+	T extends TQuerySet,
+	Key extends string,
+	TNested extends TSelectQuerySet,
+> = InferTSelectQuery<
+	k.SelectQueryBuilderWithInnerJoin<
+		ToInitialJoinedDB<T>,
+		ToInitialJoinedTB<T>,
+		InnerJoinOutput<T, TNested, Key>,
+		ToTableExpression<Key, TNested>
+	>
+>;
+
+// Compared to the inner join, the left joined output is nullable.
+type LeftJoinOutput<
+	T extends TQuerySet,
+	TNested extends TSelectQuerySet,
+	Key extends string,
+> = Flatten<
+	T["JoinedQuery"]["O"] &
+		ApplyPrefixes<MakeInitialPrefix<Key>, k.Nullable<TNested["JoinedQuery"]["O"]>>
+>;
+
+type TQueryWithLeftJoin<
+	T extends TQuerySet,
+	Key extends string,
+	TNested extends TSelectQuerySet,
+> = InferTSelectQuery<
+	k.SelectQueryBuilderWithLeftJoin<
+		ToInitialJoinedDB<T>,
+		ToInitialJoinedTB<T>,
+		LeftJoinOutput<T, TNested, Key>,
+		ToTableExpression<Key, TNested>
+	>
+>;
+
+interface JoinedQueryMap<
+	in out T extends TQuerySet,
+	in out Key extends string,
+	in out TNested extends TSelectQuerySet,
+> {
+	InnerJoinOne: TQueryWithInnerJoin<T, Key, TNested>;
+	InnerJoinMany: TQueryWithInnerJoin<T, Key, TNested>;
+
+	LeftJoinOne: TQueryWithLeftJoin<T, Key, TNested>;
+	LeftJoinOneOrThrow: TQueryWithLeftJoin<T, Key, TNested>;
+	LeftJoinMany: TQueryWithLeftJoin<T, Key, TNested>;
+}
+
+interface JoinHydratedRowMap<in out TNested extends TSelectQuerySet> {
+	InnerJoinOne: TOutput<TNested>;
+	InnerJoinMany: TOutput<TNested>[];
+	LeftJoinOne: TOutput<TNested> | null;
+	LeftJoinOneOrThrow: TOutput<TNested>;
+	LeftJoinMany: TOutput<TNested>[];
+}
 
 type TQuerySetWithJoin<
 	T extends TQuerySet,
 	Key extends string,
 	Type extends TJoinType,
-	TNested extends TQuerySet,
-	NestedHydratedRow,
-	JoinedQuery extends AnySelectQueryBuilder,
+	TNested extends TSelectQuerySet,
 > = Flatten<{
 	DB: T["DB"];
 	IsMapped: T["IsMapped"];
@@ -2032,106 +2234,21 @@ type TQuerySetWithJoin<
 		Key,
 		{ Prototype: "Join"; Type: Type; Value: TNested }
 	>;
-	JoinedQuery: InferTQuery<JoinedQuery>;
+	JoinedQuery: JoinedQueryMap<T, Key, TNested>[Type];
 	OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
-	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, NestedHydratedRow>;
+	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, JoinHydratedRowMap<TNested>[Type]>;
 }>;
 
-type ToJoinOutputInner<
-	T extends TQuerySet,
-	TNested extends TQuerySet,
-	Key extends string,
-> = Flatten<
-	// Extend the *JoinedQuery* output, which includes both the base output and also
-	// output from other joins.
-	T["JoinedQuery"]["O"] & ApplyPrefixes<MakePrefix<"", Key>, TNested["JoinedQuery"]["O"]>
->;
-
-// Compared to the inner join, the left joined output is nullable.
-type ToJoinOutputLeft<T extends TQuerySet, TNested extends TQuerySet, Key extends string> = Flatten<
-	T["JoinedQuery"]["O"] &
-		ApplyPrefixes<MakePrefix<"", Key>, k.Nullable<TNested["JoinedQuery"]["O"]>>
->;
-
-interface TQuerySetWithInnerJoin<
+interface QuerySetWithJoin<
 	in out T extends TQuerySet,
 	in out Key extends string,
 	in out Type extends TJoinType,
-	in out TNested extends TQuerySet,
-	in out NestedHydratedRow,
-> extends TQuerySetWithJoin<
-	T,
-	Key,
-	Type,
-	TNested,
-	NestedHydratedRow,
-	k.SelectQueryBuilderWithInnerJoin<
-		ToInitialJoinedDB<T>,
-		ToInitialJoinedTB<T>,
-		ToJoinOutputInner<T, TNested, Key>,
-		ToTableExpression<Key, TNested>
-	>
-> {}
-
-interface TQuerySetWithLeftJoin<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out Type extends TJoinType,
-	in out TNested extends TQuerySet,
-	in out NestedHydratedRow,
-> extends TQuerySetWithJoin<
-	T,
-	Key,
-	Type,
-	TNested,
-	NestedHydratedRow,
-	k.SelectQueryBuilderWithLeftJoin<
-		ToInitialJoinedDB<T>,
-		ToInitialJoinedTB<T>,
-		ToJoinOutputLeft<T, TNested, Key>,
-		ToTableExpression<Key, TNested>
-	>
-> {}
-
-interface QuerySetWithInnerJoinOne<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out TNested extends TQuerySet,
-> extends QuerySet<TQuerySetWithInnerJoin<T, Key, "InnerJoinOne", TNested, TOutput<TNested>>> {}
-
-interface QuerySetWithInnerJoinMany<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out TNested extends TQuerySet,
-> extends QuerySet<TQuerySetWithInnerJoin<T, Key, "InnerJoinMany", TNested, TOutput<TNested>[]>> {}
-
-interface QuerySetWithLeftJoinOne<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out TNested extends TQuerySet,
-> extends QuerySet<
-	TQuerySetWithLeftJoin<T, Key, "LeftJoinOne", TNested, TOutput<TNested> | null>
-> {}
-
-interface QuerySetWithLeftJoinOneOrThrow<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out TNested extends TQuerySet,
-> extends QuerySet<
-	TQuerySetWithLeftJoin<T, Key, "LeftJoinOneOrThrow", TNested, TOutput<TNested>>
-> {}
-
-interface QuerySetWithLeftJoinMany<
-	in out T extends TQuerySet,
-	in out Key extends string,
-	in out TNested extends TQuerySet,
-> extends QuerySet<TQuerySetWithLeftJoin<T, Key, "LeftJoinMany", TNested, TOutput<TNested>[]>> {}
+	in out TNested extends TSelectQuerySet,
+> extends QuerySet<TQuerySetWithJoin<T, Key, Type, TNested>> {}
 
 ////////////////////////////////////////////////////////////
 // Implementation
 ////////////////////////////////////////////////////////////
-
-type AnySelectQueryBuilder = k.SelectQueryBuilder<any, any, any>;
 
 type JoinMethod =
 	| "innerJoin"
@@ -2179,7 +2296,7 @@ interface QuerySetOrderBy {
 interface QuerySetProps {
 	db: k.Kysely<any>;
 	baseAlias: string;
-	baseQuery: AnySelectQueryBuilder;
+	baseQuery: AnyQueryBuilder;
 	keyBy: KeyBy<any>;
 	hydrator: Hydrator<any, any>;
 	joinCollections: Map<string, JoinCollection>;
@@ -2257,12 +2374,39 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Query generation.
 	////////////////////////////////////////////////////////////
 
-	get #aliasedBaseQuery() {
-		return this.#props.baseQuery.as(this.#props.baseAlias);
+	toBaseQuery(): AnyQueryBuilder {
+		return this.#props.baseQuery;
 	}
 
-	toBaseQuery(): AnySelectQueryBuilder {
-		return this.#props.baseQuery;
+	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+		const { db, baseQuery, baseAlias } = this.#props;
+
+		// We always inline SELECT queries.
+		if (isSelectQueryBuilder(baseQuery)) {
+			const qb = db.selectFrom(baseQuery.as(baseAlias));
+			return applyHoistedSelections(qb, baseQuery, baseAlias);
+		}
+
+		// Non-select queries must be converted to a CTE.  Also, they cannot be nested.
+
+		if (isNested) {
+			throw new InvalidJoinedQuerySetError(baseAlias);
+		}
+
+		const queryCreator = isLocalSubquery ? db : db.with("__base", () => baseQuery);
+
+		let qb = queryCreator.selectFrom(`__base as ${baseAlias}`);
+
+		// If it's truly at the top level, we can safely use a `.selectAll()` here because these can't
+		// be nested anyway, so no further hoisting can happen.  These seems like a nice convenience so
+		// you can just do updateFrom().returningAll() and not have to redeclare your columns.  This
+		// should be 99% of use cases for writes unless you're actually applying a LIMIT or OFFSET to
+		// the response.
+		if (!isLocalSubquery) {
+			return qb.selectAll(baseAlias);
+		}
+
+		return applyHoistedSelections(qb, baseQuery, baseAlias);
 	}
 
 	/**
@@ -2306,14 +2450,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		collection: JoinCollection,
 	): AnySelectQueryBuilder {
 		// Add the join to the parent query.
+		const nestedQuery = collection.querySet.#toQuery(true, true);
+		const from = nestedQuery.as(key);
 		// This cast to a single method helps TypeScript follow the overloads.
-		const from = collection.querySet.#toQuery(true).as(key);
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
 		// Add the (prefixed) selections from the subquery to the parent query.
 		const prefix = makePrefix("", key);
-		const hoistedSelections = hoistAndPrefixSelections(prefix, from);
-		qb = qb.select(hoistedSelections);
+		qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
 
 		return qb;
 	}
@@ -2368,13 +2512,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 *   to WHERE EXISTS to avoid row explosion
 	 * - Cardinality-many non-filtering joins (leftJoinMany) - excluded entirely
 	 */
-	#toCardinalityOneQuery(): AnySelectQueryBuilder {
-		const { db, joinCollections } = this.#props;
+	#toCardinalityOneQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+		const { joinCollections } = this.#props;
 
-		let qb = db.selectFrom(this.#aliasedBaseQuery);
-
-		const hoistedSelects = hoistSelections(this.#aliasedBaseQuery);
-		qb = qb.select(hoistedSelects);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
 
 		for (const [key, collection] of joinCollections) {
 			// For count/exists queries:
@@ -2412,13 +2553,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#toJoinedQuery(isSubquery: boolean): AnySelectQueryBuilder {
-		const { db, joinCollections } = this.#props;
+	#toJoinedQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+		const { joinCollections } = this.#props;
 
-		let qb = db.selectFrom(this.#aliasedBaseQuery);
-
-		const hoistedSelects = hoistSelections(this.#aliasedBaseQuery);
-		qb = qb.select(hoistedSelects);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
 
 		for (const [key, collection] of joinCollections) {
 			qb = this.#addCollectionAsJoin(qb, key, collection);
@@ -2429,6 +2567,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Apply ordering---but only if we're not prefixed, because ordering in
 		// subqueries is ignored (well, "not guaranteed") unless you also have a
 		// LIMIT or OFFSET.
+		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
 		}
@@ -2437,30 +2576,54 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return this.#toJoinedQuery(false);
+		return this.#toJoinedQuery(false, false);
 	}
 
-	#toQuery(isSubquery: boolean): AnySelectQueryBuilder {
-		const { baseAlias, db, limit, offset, orderBy, joinCollections } = this.#props;
+	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
+	#toQuery<IsNested extends boolean>(
+		isNested: IsNested,
+		isLocalSubquery: boolean,
+	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
+		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
+			this.#props;
 
-		// If we have no joins (no row explosion) and no ordering (nothing referencing
-		// the baseAlias), we can just apply the limit and offset to the base query.
-		if (!joinCollections.size && !orderBy) {
-			return this.#applyLimitAndOffset(this.#props.baseQuery);
+		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
+		// baseAlias) we can do less nesting.
+		if (!joinCollections.size && !orderBy.length && !orderByKeys) {
+			// No limit and offset and no joins means we can return as is for any type of query builder.
+			// No CTE, no subqueries, no nothing.
+			if (!limit && !offset) {
+				if (isNested && !isSelectQueryBuilder(baseQuery)) {
+					throw new InvalidJoinedQuerySetError(baseAlias);
+				}
+				return baseQuery as IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder;
+			}
+
+			// If it's a SELECT, we can just apply the limit and offset to the base query.
+			if (isSelectQueryBuilder(baseQuery)) {
+				return this.#applyLimitAndOffset(baseQuery);
+			}
+
+			// Otherwise, for writes, (unusual use case) we need to make it a CTE.  Just select all
+			// instead of hoisting, because these can't be nested anyway (so we will never need to hoist
+			// from here).
+			return this.#applyLimitAndOffset(
+				this.#getSelectFromBase(isNested, isLocalSubquery).selectAll(),
+			);
 		}
 
-		// If no pagination, just return the joined query.
+		// If no pagination, just return the joined query, even if it has row explosion.
 		if (!limit && !offset) {
-			return this.#toJoinedQuery(isSubquery);
+			return this.#toJoinedQuery(isNested, isLocalSubquery);
 		}
 
 		// If only cardinality-one joins, we can safely apply limit/offset to the
 		// joined query.
 		if (this.#isCardinalityOne()) {
-			return this.#applyLimitAndOffset(this.#toJoinedQuery(isSubquery));
+			return this.#applyLimitAndOffset(this.#toJoinedQuery(isNested, isLocalSubquery));
 		}
 
-		let cardinalityOneQuery = this.#toCardinalityOneQuery();
+		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery);
 
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
@@ -2470,9 +2633,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
 		let qb = db.selectFrom(aliasedCardinalityOneQuery);
-
-		const hoistedSelects = hoistSelections(aliasedCardinalityOneQuery);
-		qb = qb.select(hoistedSelects);
+		// Re-hoist ALL selections from the cardinality one query.  This will include base query
+		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
+		// hoisted further by parent queries.
+		qb = applyHoistedSelections(qb, cardinalityOneQuery, baseAlias);
 
 		// Add any cardinality-many joins.
 		for (const [key, collection] of joinCollections) {
@@ -2484,6 +2648,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Re-apply ordering since the order from the subquery is not guaranteed to
 		// be preserved.  This doesn't matter if we have a prefix because it means
 		// we're in a subquery already.
+		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb);
 		}
@@ -2499,12 +2664,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	toQuery(): AnySelectQueryBuilder {
-		return this.#toQuery(false);
+	toQuery(): any {
+		return this.#toQuery(false, false);
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
-		return this.#toCardinalityOneQuery()
+		return this.#toCardinalityOneQuery(false, false)
 			.clearSelect()
 			.select((eb) => eb.fn.countAll().as("count"));
 	}
@@ -2512,7 +2677,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	toExistsQuery(): OpaqueExistsQueryBuilder {
 		return this.#props.db.selectNoFrom(({ exists }) =>
 			exists(
-				this.#toCardinalityOneQuery()
+				this.#toCardinalityOneQuery(false, false)
 					.clearSelect()
 					.select((eb) => eb.lit(1).as("_")),
 			).as("exists"),
@@ -2652,13 +2817,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		nestedQuerySet: NestedQuerySetOrFactory<any, any, any>,
 		...args: AnyJoinArgsTail
 	): any {
-		const nest = ((
-			query: SelectQueryBuilderOrFactory<any, any, any, any, any>,
-			keyBy?: KeyBy<any>,
-		) => {
+		const nest = (query: NestedSelectQueryBuilderOrFactory<any, any, any>, keyBy?: KeyBy<any>) => {
 			const creator = querySet(this.#props.db);
 			return creator.selectAs(key, query as any, keyBy as any);
-		}) as any as NestFn<any, any, any>;
+		};
 
 		const resolved = typeof nestedQuerySet === "function" ? nestedQuerySet(nest) : nestedQuerySet;
 
@@ -2723,10 +2885,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Modification.
 	////////////////////////////////////////////////////////////
 
-	modify(
-		keyOrModifier: string | ((qb: AnySelectQueryBuilder) => AnySelectQueryBuilder),
-		modifier?: (value: any) => any,
-	): any {
+	modify(keyOrModifier: string | ((qb: any) => any), modifier?: (value: any) => any): any {
 		if (typeof keyOrModifier === "function") {
 			// It's safe to immediately apply modifications to the base query because
 			// it is scoped within its own subquery.  The types capture this.
@@ -2841,6 +3000,24 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	$call<R>(callback: (qs: this) => R): R {
 		return callback(this);
 	}
+
+	#asWrite(query: AnyQueryBuilderOrFactory): any {
+		return this.#clone({
+			baseQuery: typeof query === "function" ? query(this.#props.db) : query,
+		});
+	}
+
+	insert(iqb: AnyInsertQueryBuilder | AnyInsertQueryBuilderFactory) {
+		return this.#asWrite(iqb);
+	}
+
+	update(iqb: AnyUpdateQueryBuilder | AnyUpdateQueryBuilderFactory) {
+		return this.#asWrite(iqb);
+	}
+
+	delete(iqb: AnyDeleteQueryBuilder | AnyDeleteQueryBuilderFactory) {
+		return this.#asWrite(iqb);
+	}
 }
 
 ////////////////////////////////////////////////////////////
@@ -2850,25 +3027,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 interface InitialQuerySet<
 	in out DB,
 	in out BaseAlias extends string,
-	in out BaseDB,
-	in out BaseTB extends keyof BaseDB,
-	in out BaseO,
+	in out BaseQuery extends TQuery,
 > extends QuerySet<{
 	DB: DB;
 	IsMapped: false;
 	BaseAlias: BaseAlias;
-	BaseQuery: {
-		DB: BaseDB;
-		TB: BaseTB;
-		O: BaseO;
-	};
+	BaseQuery: BaseQuery;
 	Collections: {};
 	// The joined query mostly looks like the base query.
-	JoinedQuery: InitialJoinedQuery<BaseDB, BaseAlias, BaseO>;
+	JoinedQuery: InitialJoinedQuery<BaseQuery["DB"], BaseAlias, BaseQuery["O"]>;
 	// No orderable columns other than the base query yet.
-	OrderableColumns: keyof BaseO & string;
+	OrderableColumns: keyof BaseQuery["O"] & string;
 	// The hydrated output is the same as the base query output; no mapping yet.
-	HydratedOutput: BaseO;
+	HydratedOutput: BaseQuery["O"];
 }> {}
 
 // type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;
@@ -2877,47 +3048,83 @@ interface InitialQuerySet<
 
 // A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
 // such as with expressions.
-interface SelectCreator<in out DB, in out TB extends keyof DB> {
-	selectFrom: k.ExpressionBuilder<DB, TB>["selectFrom"];
+
+type NestedSelectQueryBuilderFactory<DB, TB extends keyof DB, SQB extends AnySelectQueryBuilder> = (
+	eb: k.ExpressionBuilder<DB, TB>,
+) => SQB;
+
+type NestedSelectQueryBuilderOrFactory<DB, TB extends keyof DB, SQB extends AnySelectQueryBuilder> =
+	| SQB
+	| NestedSelectQueryBuilderFactory<DB, TB, SQB>;
+
+interface SelectCreator<DB> {
+	selectFrom: k.QueryCreator<DB>["selectFrom"];
+}
+interface InsertCreator<DB> {
+	insertInto: k.QueryCreator<DB>["insertInto"];
+}
+interface UpdateCreator<DB> {
+	updateTable: k.QueryCreator<DB>["updateTable"];
+}
+interface DeleteCreator<DB> {
+	deleteFrom: k.QueryCreator<DB>["deleteFrom"];
 }
 
-interface SelectQueryBuilderFactory<
-	in out DB,
-	in out TB extends keyof DB,
-	in out BaseDB,
-	in out BaseTB extends keyof BaseDB,
-	in out BaseO,
-> {
-	(eb: SelectCreator<DB, TB>): k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>;
-}
+type SelectQueryBuilderFactory<InitialDB, SQB extends AnySelectQueryBuilder> = (
+	db: SelectCreator<InitialDB>,
+) => SQB;
 
-type SelectQueryBuilderOrFactory<
-	DB,
-	TB extends keyof DB,
-	BaseDB,
-	BaseTB extends keyof BaseDB,
-	BaseO,
-> =
-	| k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>
-	| SelectQueryBuilderFactory<DB, TB, BaseDB, BaseTB, BaseO>;
+type SelectQueryBuilderOrFactory<InitialDB, SQB extends AnySelectQueryBuilder> =
+	| SQB
+	| SelectQueryBuilderFactory<InitialDB, SQB>;
+
+type InsertQueryBuilderFactory<InitialDB, IQB extends AnyInsertQueryBuilder> = (
+	db: InsertCreator<InitialDB>,
+) => IQB;
+
+type InsertQueryBuilderOrFactory<InitialDB, IQB extends AnyInsertQueryBuilder> =
+	| IQB
+	| InsertQueryBuilderFactory<InitialDB, IQB>;
+
+type UpdateQueryBuilderFactory<InitialDB, UQB extends AnyUpdateQueryBuilder> = (
+	db: UpdateCreator<InitialDB>,
+) => UQB;
+
+type UpdateQueryBuilderOrFactory<InitialDB, UQB extends AnyUpdateQueryBuilder> =
+	| UQB
+	| UpdateQueryBuilderFactory<InitialDB, UQB>;
+
+type DeleteQueryBuilderFactory<InitialDB, DQB extends AnyDeleteQueryBuilder> = (
+	db: DeleteCreator<InitialDB>,
+) => DQB;
+
+type DeleteQueryBuilderOrFactory<InitialDB, DQB extends AnyDeleteQueryBuilder> =
+	| DQB
+	| DeleteQueryBuilderFactory<InitialDB, DQB>;
+
+type AnySelectQueryBuilderFactory = (db: SelectCreator<any>) => AnySelectQueryBuilder;
+type AnyInsertQueryBuilderFactory = (db: InsertCreator<any>) => AnyInsertQueryBuilder;
+type AnyUpdateQueryBuilderFactory = (db: UpdateCreator<any>) => AnyUpdateQueryBuilder;
+type AnyDeleteQueryBuilderFactory = (db: DeleteCreator<any>) => AnyDeleteQueryBuilder;
+
+type AnyQueryBuilderFactory =
+	| AnySelectQueryBuilderFactory
+	| AnyInsertQueryBuilderFactory
+	| AnyUpdateQueryBuilderFactory
+	| AnyDeleteQueryBuilderFactory;
+type AnyQueryBuilderOrFactory = AnyQueryBuilder | AnyQueryBuilderFactory;
 
 interface NestFn<in out DB, in out TB extends keyof DB, in out Alias extends string> {
-	<BaseDB, BaseTB extends keyof BaseDB, BaseO extends InputWithDefaultKey>(
-		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	<BaseDB, BaseTB extends keyof BaseDB, BaseO>(
-		query: SelectQueryBuilderOrFactory<DB, TB, BaseDB, BaseTB, BaseO>,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	<
-		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
-		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		TQ extends TQuery = InferTQuery<Q>,
-	>(
-		query: F,
-		keyBy: KeyBy<NoInfer<TQ["O"]>>,
-	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
+	<SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
+		query: NestedSelectQueryBuilderOrFactory<DB, TB, SQB>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	<SQB extends AnySelectQueryBuilder>(
+		query: NestedSelectQueryBuilderOrFactory<DB, TB, SQB>,
+		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
 }
+
+type InferO<X> = X extends k.SelectQueryBuilder<any, any, infer O> ? O : never;
 
 /**
  * Factory for creating query sets. Obtained by calling {@link querySet}.
@@ -2929,6 +3136,30 @@ class QuerySetCreator<in out DB> {
 
 	constructor(db: k.Kysely<DB>) {
 		this.#db = db;
+	}
+
+	#createQuerySet(
+		alias: string,
+		query: AnyQueryBuilderOrFactory,
+		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
+	) {
+		const baseQuery = typeof query === "function" ? query(this.#db) : query;
+
+		return new QuerySetImpl({
+			db: this.#db,
+			baseAlias: alias,
+			baseQuery,
+			keyBy: keyBy,
+			hydrator: createHydrator().orderByKeys(),
+			joinCollections: new Map(),
+			attachCollections: new Map(),
+			limit: null,
+			offset: null,
+			orderBy: [],
+			orderByKeys: true,
+			frontModifiers: [],
+			endModifiers: [],
+		}) as any;
 	}
 
 	/**
@@ -2982,53 +3213,95 @@ class QuerySetCreator<in out DB> {
 	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
 	 * @returns A new QuerySet.
 	 */
-	selectAs<
-		Alias extends string,
-		BaseDB,
-		BaseTB extends keyof BaseDB,
-		BaseO extends InputWithDefaultKey,
-	>(
+	selectAs<Alias extends string, SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
 		alias: Alias,
-		query: SelectQueryBuilderOrFactory<DB, never, BaseDB, BaseTB, BaseO>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	selectAs<Alias extends string, BaseDB, BaseTB extends keyof BaseDB, BaseO>(
+		query: SelectQueryBuilderOrFactory<DB, SQB>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	selectAs<Alias extends string, SQB extends AnySelectQueryBuilder>(
 		alias: Alias,
-		query: k.SelectQueryBuilder<BaseDB, BaseTB, BaseO>,
-		keyBy: KeyBy<NoInfer<BaseO>>,
-	): InitialQuerySet<DB, Alias, BaseDB, BaseTB, BaseO>;
-	// Infer output from ReturnType<F> to avoid circular inference.
-	selectAs<
-		Alias extends string,
-		F extends SelectQueryBuilderFactory<DB, never, any, any, any>,
-		Q extends k.SelectQueryBuilder<any, any, any> = ReturnType<F>,
-		TQ extends TQuery = InferTQuery<Q>,
-	>(
-		alias: Alias,
-		query: F,
-		keyBy: KeyBy<NoInfer<TQ["O"]>>,
-	): InitialQuerySet<DB, Alias, TQ["DB"], TQ["TB"], TQ["O"]>;
-	selectAs(
-		alias: string,
-		query: any,
-		keyBy: KeyBy<any> = DEFAULT_KEY_BY,
-	): InitialQuerySet<DB, string, any, any, any> {
-		const baseQuery = typeof query === "function" ? query(this.#db) : query;
+		query: SelectQueryBuilderOrFactory<DB, SQB>,
+		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	selectAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
+	}
 
-		return new QuerySetImpl({
-			db: this.#db,
-			baseAlias: alias,
-			baseQuery,
-			keyBy: keyBy,
-			hydrator: createHydrator().orderByKeys(),
-			joinCollections: new Map(),
-			attachCollections: new Map(),
-			limit: null,
-			offset: null,
-			orderBy: [],
-			orderByKeys: true,
-			frontModifiers: [],
-			endModifiers: [],
-		});
+	/**
+	 * Initializes a new query set with a base `INSERT` query.
+	 *
+	 * The provided `INSERT` statement is wrapped in a CTE (Common Table Expression)
+	 * to allow joining other data to the result. It MUST include a `RETURNING`
+	 * clause.
+	 *
+	 * **Note:** Data-modifying CTEs and `RETURNING` clauses are only supported by
+	 * some dialects (e.g. PostgreSQL).
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const newUser = await querySet(db)
+	 *   .insertAs(
+	 *     "user",
+	 *     db.insertInto("users")
+	 *       .values(userData)
+	 *       .returning(["id", "username", "firstName", "lastName"])
+	 *   )
+	 *   .extras({
+	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
+	 *   })
+	 *   .executeTakeFirst();
+	 * ```
+	 *
+	 * @param alias - The alias for the base query.
+	 * @param query - A Kysely insert query builder or factory function.
+	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
+	 * @returns A new QuerySet.
+	 */
+	insertAs<Alias extends string, IQB extends k.InsertQueryBuilder<any, any, InputWithDefaultKey>>(
+		alias: Alias,
+		query: InsertQueryBuilderOrFactory<DB, IQB>,
+	): InitialQuerySet<DB, Alias, InferTInsertQuery<IQB>>;
+	insertAs<Alias extends string, IQB extends AnyInsertQueryBuilder>(
+		alias: Alias,
+		query: InsertQueryBuilderOrFactory<DB, IQB>,
+		keyBy: KeyBy<InferO<NoInfer<IQB>>>,
+	): InitialQuerySet<DB, Alias, InferTInsertQuery<IQB>>;
+	insertAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
+	}
+
+	/**
+	 * Like {@link insertAs}, but for an `UPDATE` statement.
+	 */
+	updateAs<
+		Alias extends string,
+		UQB extends k.UpdateQueryBuilder<any, any, any, InputWithDefaultKey>,
+	>(
+		alias: Alias,
+		query: UpdateQueryBuilderOrFactory<DB, UQB>,
+	): InitialQuerySet<DB, Alias, InferTUpdateQuery<UQB>>;
+	updateAs<Alias extends string, UQB extends AnyUpdateQueryBuilder>(
+		alias: Alias,
+		query: UpdateQueryBuilderOrFactory<DB, UQB>,
+		keyBy: KeyBy<InferO<NoInfer<UQB>>>,
+	): InitialQuerySet<DB, Alias, InferTUpdateQuery<UQB>>;
+	updateAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
+	}
+
+	/**
+	 * Like {@link insertAs}, but for a `DELETE` statement.
+	 */
+	deleteAs<Alias extends string, DQB extends k.DeleteQueryBuilder<any, any, InputWithDefaultKey>>(
+		alias: Alias,
+		query: DeleteQueryBuilderOrFactory<DB, DQB>,
+	): InitialQuerySet<DB, Alias, InferTDeleteQuery<DQB>>;
+	deleteAs<Alias extends string, UQB extends AnyDeleteQueryBuilder>(
+		alias: Alias,
+		query: DeleteQueryBuilderOrFactory<DB, UQB>,
+		keyBy: KeyBy<InferO<NoInfer<UQB>>>,
+	): InitialQuerySet<DB, Alias, InferTDeleteQuery<UQB>>;
+	deleteAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		return this.#createQuerySet(alias, query, keyBy);
 	}
 }
 

@@ -32,11 +32,12 @@ sacrifice all of the benefits of your ORM.
 Kysely Hydrate grants Kysely the ability to produce rich, nested objects without
 compromising the power or control of SQL. It offers these features:
 
-- Nested objects from traditional joins
-- Application-level joins
-- Mapped fields in hydrated queries
-- Computed properties in hydrated queries
-- Counts, ordering, and limits accounting for row explosion from nested joins
+- [Nested objects from traditional joins](#joins-and-hydration)
+- [Application-level joins](#application-level-joins-with-attach)
+- [Mapped fields](#mapped-properties-with-mapfields) in hydrated queries
+- [Computed properties](#computed-properties-with-extras) in hydrated queries
+- [Hydrated writes](#hydrated-writes) (INSERT/UPDATE/DELETE with RETURNING)
+- [Counts, ordering, and limits](#pagination-and-aggregation) accounting for row explosion from nested joins
 
 For example:
 
@@ -134,6 +135,7 @@ type Result = Array<{
   - [Excluded properties with `.omit()`](#excluded-properties-with-omit)
   - [Output transformations with `.map()`](#output-transformations-with-map)
   - [Composable mappings with `.with()`](#composable-mappings-with-with)
+  - [Hydrated writes](#hydrated-writes)
 - [Hydrators](#hydrators)
   - [Creating hydrators with `createHydrator()`](#creating-hydrators-with-createhydrator)
   - [Manual hydration with `hydrate()`](#manual-hydration-with-hydrate)
@@ -1018,6 +1020,79 @@ When should you use `.map()` vs the more targeted methods?
 
 The targeted methods are more composable, because they can be interleaved with
 joins, unlike `.map()`.
+
+### Hydrated writes
+
+Kysely Hydrate can also hydrate the results of `INSERT`, `UPDATE`, and `DELETE`
+statements. This allows you to write data and get back a fully hydrated result—
+including mapped fields, computed extras, and even nested joins—in a single round
+trip.
+
+> [!NOTE]
+> This feature relies on data-modifying CTEs and `RETURNING` clauses, which only some database
+> dialects support.
+
+#### Initializing with writes (`querySet().*As()`)
+
+You can initialize a query set directly with a write query using `insertAs`,
+`updateAs`, or `deleteAs`.
+
+The write query is wrapped in a CTE, so you can join other data to the result just
+like a normal `SELECT` query.
+
+```ts
+const newUser = await querySet(db)
+	.insertAs("user", db.insertInto("users").values(newUserData).returning(["id", "username"]))
+	.extras({
+		upperName: (u) => u.username.toUpperCase(),
+	})
+	.executeTakeFirstOrThrow();
+// ⬇
+type Result = {
+	id: number;
+	username: string;
+	upperName: string;
+};
+```
+
+#### Reusing query sets for writes
+
+A powerful pattern is to define a "canonical" query set for fetching an entity,
+and then reuse that definition for writes. This ensures that your application
+always receives consistent objects, whether they come from a `SELECT` or an
+`INSERT`.
+
+Use the `.insert()`, `.update()`, or `.delete()` methods to switch the base query
+of an existing query set to a write operation.
+
+The write query must return columns compatible with the original base query.
+
+```ts
+// 1. Define the canonical way to fetch a user
+const usersQuerySet = querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.extras({
+		gravatarUrl: (u) => getGravatar(u.email),
+	});
+
+// 2. Reuse it for an insert
+const newUser = await usersQuerySet
+	.insert((db) =>
+		db
+			.insertInto("users")
+			.values(newUserData)
+			// Must return columns matching the base query
+			.returning(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
+// ⬇ Result has gravatarUrl computed automatically!
+type Result = {
+	id: number;
+	username: string;
+	email: string;
+	gravatarUrl: string;
+};
+```
 
 ## Hydrators
 

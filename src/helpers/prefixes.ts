@@ -6,6 +6,8 @@ export type MakePrefix<
 	Prefix extends string = "",
 > = `${ParentPrefix}${Prefix}${SEP}`;
 
+export type MakeInitialPrefix<Prefix extends string = ""> = `${Prefix}${SEP}`;
+
 /**
  * Creates a sub-prefix.
  *
