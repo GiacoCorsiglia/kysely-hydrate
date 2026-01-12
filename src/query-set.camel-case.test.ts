@@ -61,10 +61,8 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2)),
 				"posts.userId",
 				"user.id",
 			)
@@ -97,10 +95,8 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [1, 2])
 			.leftJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2)),
 				"posts.userId",
 				"user.id",
 			)
@@ -138,7 +134,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 1)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "userId", "bio"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "userId", "bio"])),
 				"profile.userId",
 				"user.id",
 			)
@@ -168,7 +164,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("posts.id", "=", 1)
 			.leftJoinOne(
 				"author",
-				(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
+				({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 				"author.id",
 				"post.userId",
 			)
@@ -200,15 +196,13 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb.selectFrom("posts").select(["id", "title", "userId"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) =>
-								eb.selectFrom("comments").select(["id", "content", "postId", "userId"]),
-							),
+						({ eb, qs }) =>
+							qs(eb.selectFrom("comments").select(["id", "content", "postId", "userId"])),
 						"comments.postId",
 						"posts.id",
 					),
@@ -257,10 +251,8 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "userId"]).orderBy("posts.id").limit(2)),
 				"posts.userId",
 				"user.id",
 			)
@@ -301,7 +293,7 @@ describe("CamelCasePlugin compatibility", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "userId"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
 				"posts.userId",
 				"user.id",
 			)

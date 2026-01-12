@@ -68,7 +68,7 @@ test("SQL: executeCount with innerJoinOne - join included in count", async () =>
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -108,7 +108,7 @@ test("SQL: executeCount with leftJoinOne - join included in count", async () => 
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -150,7 +150,7 @@ test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async ()
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -203,7 +203,7 @@ test("SQL: executeCount with leftJoinMany - join omitted from count", async () =
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -232,25 +232,25 @@ test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern",
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinOne(
 			"setting",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
 			"setting.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
 		.leftJoinMany(
 			"comments",
-			(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content"])),
+			({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content"])),
 			"user.id",
 			"user.id",
 		)
@@ -306,10 +306,10 @@ test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", asyn
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -362,7 +362,7 @@ test("SQL: pagination without many-joins - no nested subquery", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -407,7 +407,7 @@ test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -468,19 +468,19 @@ test("SQL: pagination with mixed joins - nested subquery with correct structure"
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinOne(
 			"setting",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
 			"setting.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -604,7 +604,7 @@ test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", a
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -656,7 +656,7 @@ test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joi
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -691,7 +691,7 @@ test("SQL: toQuery with pagination and cardinality-one only - applies limit dire
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -737,7 +737,7 @@ test("SQL: executeExists with joins - includes joins in EXISTS check", async () 
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -775,13 +775,13 @@ test("SQL: toBaseQuery strips all joins and returns base query", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -883,7 +883,7 @@ test("SQL: QuerySet.insert() with innerJoinOne - replaces base, preserves join",
 		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
 		.innerJoinOne(
 			"user",
-			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
+			({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 			"user.id",
 			"posts.user_id",
 		)
@@ -931,7 +931,7 @@ test("SQL: QuerySet.update() with leftJoinMany - replaces base, preserves join",
 		.selectAs("users", db.selectFrom("users").select(["id", "username", "email"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"users.id",
 		)
@@ -975,10 +975,10 @@ test("SQL: QuerySet.delete() with nested joins - preserves nested structure", as
 		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
 		.leftJoinOne(
 			"user",
-			(nest) =>
-				nest((eb) => eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
 					"profile",
-					(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 					"profile.user_id",
 					"user.id",
 				),

@@ -29,8 +29,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -60,8 +60,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [1, 2])
 			.leftJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -94,8 +94,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
-			.crossJoinLateralMany("allPosts", (nest) =>
-				nest((eb) =>
+			.crossJoinLateralMany("allPosts", ({ eb, qs }) =>
+				qs(
 					eb
 						.selectFrom("posts")
 						.select(["id", "title"])
@@ -128,8 +128,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralOne(
 				"latestPost",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -156,8 +156,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [1, 2])
 			.leftJoinLateralOne(
 				"latestPost",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -189,8 +189,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.leftJoinLateralOneOrThrow(
 				"latestPost",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -218,8 +218,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 				.where("users.id", "=", 1)
 				.leftJoinLateralOneOrThrow(
 					"latestPost",
-					(nest) =>
-						nest((eb) =>
+					({ eb, qs }) =>
+						qs(
 							eb
 								.selectFrom("posts")
 								.select(["id", "title"])
@@ -243,8 +243,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -253,8 +253,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 							.limit(2),
 					).leftJoinLateralMany(
 						"comments",
-						(init2) =>
-							init2((eb) =>
+						({ eb, qs }) =>
+							qs(
 								eb
 									.selectFrom("comments")
 									.select(["id", "content"])
@@ -301,8 +301,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -334,8 +334,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -367,8 +367,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title", "user_id"])
@@ -401,8 +401,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			})
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -418,8 +418,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 						})
 						.innerJoinLateralMany(
 							"comments",
-							(init2) =>
-								init2((eb) =>
+							({ eb, qs }) =>
+								qs(
 									eb
 										.selectFrom("comments")
 										.select(["id", "content"])
@@ -483,8 +483,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -496,8 +496,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			)
 			.leftJoinLateralOne(
 				"latestComment",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("comments")
 							.select(["id", "content"])
@@ -531,8 +531,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -556,8 +556,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -581,8 +581,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -616,8 +616,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [1, 2, 3])
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -641,8 +641,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [1, 2])
 			.leftJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -666,8 +666,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 3)
 			.leftJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -693,8 +693,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -731,8 +731,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -741,8 +741,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 							.limit(1),
 					).innerJoinLateralMany(
 						"comments",
-						(init2) =>
-							init2((eb) =>
+						({ eb, qs }) =>
+							qs(
 								eb
 									.selectFrom("comments")
 									.select(["id", "content"])
@@ -775,14 +775,14 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -813,17 +813,15 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
 				"posts.user_id",
 				"user.id",
 			)
 			.innerJoinLateralOne(
 				"latestComment",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("comments")
 							.select(["id", "content"])
@@ -858,8 +856,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])
@@ -890,8 +888,8 @@ describe("PostgreSQL QuerySet tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinLateralMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb
 							.selectFrom("posts")
 							.select(["id", "title"])

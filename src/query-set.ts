@@ -489,8 +489,8 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * ```ts
 	 * const users = await querySet(db)
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-	 *   .leftJoinMany("posts", (nest) =>
-	 *     nest("post", eb => eb.selectFrom("posts").select(["id", "title"])),
+	 *   .leftJoinMany("posts", ({ eb, qs }) =>
+	 *     qs(eb.selectFrom("posts").select(["id", "title"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -841,7 +841,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinOne(
 	 *     "profile",
-	 *     (nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 	 *     "profile.user_id",
 	 *     "user.id"
 	 *   )
@@ -1290,7 +1290,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne(
 	 *     "author",  // Key (alias) - extra argument compared to Kysely
-	 *     (nest) => nest("user", eb => eb.selectFrom("users").select(["id", "username"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 	 *     "user.id",    // Same as Kysely's k1
 	 *     "post.userId", // Same as Kysely's k2
 	 *   )
@@ -1310,7 +1310,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .innerJoinOne(
 	 *     "author",
-	 *     (nest) => nest("user", eb =>eb.selectFrom("users").select(["id", "username"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 	 *     (join) => join.onRef("user.id", "=", "post.userId"),  // Same as Kysely's callback
 	 *   )
 	 *   .execute();
@@ -1366,7 +1366,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "posts",
-	 *     (nest) => nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1386,9 +1386,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "publishedPosts",
-	 *     (nest) =>
-	 *       nest("post", (eb) =>
-	 *         eb
+	 *     ({ select }) =>
+	 *       select(qb =>
+	 *         qb
 	 *           .selectFrom("posts")
 	 *           .select(["id", "title", "userId"])
 	 *           .where("status", "=", "published")
@@ -1442,7 +1442,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinOne(
 	 *     "profile",
-	 *     (nest) => nest("profile", eb => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "userId"])),
 	 *     "profile.userId",
 	 *     "user.id",
 	 *   )
@@ -1496,7 +1496,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
 	 *   .leftJoinOneOrThrow(
 	 *     "author",
-	 *     (nest) => nest("user", eb => eb.selectFrom("users").select(["id", "username"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 	 *     "user.id",
 	 *     "post.userId",
 	 *   )
@@ -1550,7 +1550,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (nest) => nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     ({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1570,12 +1570,12 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (nest) =>
-	 *       nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"]))
+	 *     ({ eb, qs }) =>
+	 *       qs(eb.selectFrom("posts").select(["id", "title", "userId"]))
 	 *         .leftJoinMany(
 	 *           "comments",
-	 *           (nest) =>
-	 *             nest("comment", eb => eb.selectFrom("comments").select(["id", "content", "postId"])),
+	 *           ({ eb, qs }) =>
+	 *             qs(eb.selectFrom("comments").select(["id", "content", "postId"])),
 	 *           "comment.postId",
 	 *           "post.id",
 	 *         ),
@@ -1630,6 +1630,17 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * A cross join produces the Cartesian product of the base and nested query sets.
 	 * This is a filtering join like {@link innerJoinMany}.
 	 *
+	 * **Example:**
+	 * ```ts
+	 * const products = await querySet(db)
+	 *   .selectAs("product", db.selectFrom("products").select(["id", "name"]))
+	 *   .crossJoinMany(
+	 *     "colors",
+	 *     ({ eb, qs }) => qs(eb.selectFrom("colors").select(["id", "name"])),
+	 *   )
+	 *   .execute();
+	 * ```
+	 *
 	 * @param key - The key name for the nested array in the output.
 	 * @param querySet - A nested query set or factory function.
 	 * @returns A new QuerySet with the cross join added.
@@ -1650,8 +1661,28 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
 	 * of a table expression.
 	 *
-	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Lateral joins allow the nested query to reference columns from the base query
+	 * using the `eb` (expression builder) parameter.
 	 * Works like {@link innerJoinOne} but with `INNER JOIN LATERAL` in SQL.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinLateralOne(
+	 *     "latestPost",
+	 *     ({ eb, qs }) =>
+	 *       qs(
+	 *         eb.selectFrom("posts")
+	 *           .select(["id", "title", "createdAt"])
+	 *           .where("userId", "=", eb.ref("user.id"))
+	 *           .orderBy("createdAt", "desc")
+	 *           .limit(1)
+	 *       ),
+	 *     (join) => join.onTrue(),
+	 *   )
+	 *   .execute();
+	 * ```
 	 *
 	 * @param key - The key name for the nested object in the output.
 	 * @param querySet - A nested query set or factory function.
@@ -1679,8 +1710,28 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
 	 * of a table expression.
 	 *
-	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Lateral joins allow the nested query to reference columns from the base query
+	 * using the `eb` (expression builder) parameter.
 	 * Works like {@link innerJoinMany} but with `INNER JOIN LATERAL` in SQL.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .innerJoinLateralMany(
+	 *     "topPosts",
+	 *     ({ eb, qs }) =>
+	 *       qs(
+	 *         eb.selectFrom("posts")
+	 *           .select(["id", "title", "views"])
+	 *           .where("userId", "=", eb.ref("user.id"))
+	 *           .orderBy("views", "desc")
+	 *           .limit(5)
+	 *       ),
+	 *     (join) => join.onTrue(),
+	 *   )
+	 *   .execute();
+	 * ```
 	 *
 	 * @param key - The key name for the nested array in the output.
 	 * @param querySet - A nested query set or factory function.
@@ -1712,8 +1763,28 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
 	 * of a table expression.
 	 *
-	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Lateral joins allow the nested query to reference columns from the base query
+	 * using the `eb` (expression builder) parameter.
 	 * Works like {@link leftJoinOne} but with `LEFT JOIN LATERAL` in SQL.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinLateralOne(
+	 *     "latestPost",
+	 *     ({ eb, qs }) =>
+	 *       qs(
+	 *         eb.selectFrom("posts")
+	 *           .select(["id", "title", "createdAt"])
+	 *           .where("userId", "=", eb.ref("user.id"))
+	 *           .orderBy("createdAt", "desc")
+	 *           .limit(1)
+	 *       ),
+	 *     (join) => join.onTrue(),
+	 *   )
+	 *   .execute();
+	 * ```
 	 *
 	 * @param key - The key name for the nested object in the output.
 	 * @param querySet - A nested query set or factory function.
@@ -1741,7 +1812,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
 	 * of a table expression.
 	 *
-	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Lateral joins allow the nested query to reference columns from the base query
+	 * using the `eb` (expression builder) parameter.
+	 *
 	 * Works like {@link leftJoinOneOrThrow} but with `LEFT JOIN LATERAL` in SQL.
 	 *
 	 * @param key - The key name for the nested object in the output.
@@ -1770,8 +1843,29 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
 	 * of a table expression.
 	 *
-	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Lateral joins allow the nested query to reference columns from the base query
+	 * using the `eb` (expression builder) parameter.
+	 *
 	 * Works like {@link leftJoinMany} but with `LEFT JOIN LATERAL` in SQL.
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinLateralMany(
+	 *     "recentPosts",
+	 *     ({ eb, qs }) =>
+	 *       qs(
+	 *         eb.selectFrom("posts")
+	 *           .select(["id", "title", "createdAt"])
+	 *           .where("userId", "=", eb.ref("user.id"))
+	 *           .orderBy("createdAt", "desc")
+	 *           .limit(3)
+	 *       ),
+	 *     (join) => join.onTrue(),
+	 *   )
+	 *   .execute();
+	 * ```
 	 *
 	 * @param key - The key name for the nested array in the output.
 	 * @param querySet - A nested query set or factory function.
@@ -1803,7 +1897,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * first argument (`key`) for the alias/key name, and requiring a QuerySet instead
 	 * of a table expression.
 	 *
-	 * Lateral joins allow the nested query to reference columns from the base query.
+	 * Lateral joins allow the nested query to reference columns from the base query
+	 * using the `eb` (expression builder) parameter.
+	 *
 	 * Works like {@link crossJoinMany} but with `CROSS JOIN LATERAL` in SQL.
 	 *
 	 * @param key - The key name for the nested array in the output.
@@ -1848,8 +1944,8 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany(
 	 *     "posts",
-	 *     (nest) =>
-	 *       nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     ({ eb, qs }) =>
+	 *       qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -1867,8 +1963,8 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "posts",
-	 *     (nest) =>
-	 *       nest("post", eb => eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     ({ eb, qs }) =>
+	 *       qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
 	 *     "post.userId",
 	 *     "user.id",
 	 *   )
@@ -2104,15 +2200,21 @@ type NestedQuerySetOrFactory<
 	T extends TQuerySet,
 	Alias extends string,
 	TNested extends TSelectQuerySet,
-> = MappedQuerySet<TNested> | NestCallback<T, Alias, TNested>;
+> = MappedQuerySet<TNested> | JoinBuilderCallback<T, Alias, TNested>;
 
-type NestCallback<T extends TQuerySet, Alias extends string, TNested extends TSelectQuerySet> = (
-	nest: NestFnFor<T, Alias>,
-) => MappedQuerySet<TNested>;
+type JoinBuilderCallback<
+	T extends TQuerySet,
+	Alias extends string,
+	TNested extends TSelectQuerySet,
+> = (builder: JoinBuilderCallbackArgs<T, Alias>) => MappedQuerySet<TNested>;
 
-type NestFnFor<T extends TQuerySet, Alias extends string> = NestFn<
+interface JoinBuilderCallbackArgs<T extends TQuerySet, Alias extends string> {
+	eb: k.ExpressionBuilder<ToInitialJoinedDB<T>, ToInitialJoinedTB<T>>;
+	qs: NestedQuerySetFnFor<T, Alias>;
+}
+
+type NestedQuerySetFnFor<T extends TQuerySet, Alias extends string> = NestedQuerySetFn<
 	ToInitialJoinedDB<T>,
-	ToInitialJoinedTB<T>,
 	Alias
 >;
 
@@ -2817,12 +2919,23 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		nestedQuerySet: NestedQuerySetOrFactory<any, any, any>,
 		...args: AnyJoinArgsTail
 	): any {
-		const nest = (query: NestedSelectQueryBuilderOrFactory<any, any, any>, keyBy?: KeyBy<any>) => {
-			const creator = querySet(this.#props.db);
-			return creator.selectAs(key, query as any, keyBy as any);
-		};
+		let resolved: MappedQuerySet<any>;
 
-		const resolved = typeof nestedQuerySet === "function" ? nestedQuerySet(nest) : nestedQuerySet;
+		if (typeof nestedQuerySet === "function") {
+			const qs = ((query: AnySelectQueryBuilder, keyBy?: KeyBy<any>) => {
+				const creator = querySet(this.#props.db);
+				return creator.selectAs(key, query, keyBy as any);
+			}) as any;
+
+			const callbackArgs = {
+				eb: k.expressionBuilder<any, any>(),
+				qs,
+			};
+
+			resolved = nestedQuerySet(callbackArgs);
+		} else {
+			resolved = nestedQuerySet;
+		}
 
 		return this.#addCollection(key, {
 			type: "join",
@@ -3046,16 +3159,8 @@ interface InitialQuerySet<
 // type InferTB<Q> = Q extends k.SelectQueryBuilder<any, infer BaseTB, any> ? BaseTB : never;
 // type InferO<Q> = Q extends k.SelectQueryBuilder<any, any, infer BaseO> ? BaseO : never;
 
-// A minimal subset of k.Kysely<DB>, which doesn't allow doing other things,
-// such as with expressions.
-
-type NestedSelectQueryBuilderFactory<DB, TB extends keyof DB, SQB extends AnySelectQueryBuilder> = (
-	eb: k.ExpressionBuilder<DB, TB>,
-) => SQB;
-
-type NestedSelectQueryBuilderOrFactory<DB, TB extends keyof DB, SQB extends AnySelectQueryBuilder> =
-	| SQB
-	| NestedSelectQueryBuilderFactory<DB, TB, SQB>;
+// Minimal subsets of k.Kysely<DB>, which doesn't allow doing other things, such as with
+// expressions.
 
 interface SelectCreator<DB> {
 	selectFrom: k.QueryCreator<DB>["selectFrom"];
@@ -3114,12 +3219,12 @@ type AnyQueryBuilderFactory =
 	| AnyDeleteQueryBuilderFactory;
 type AnyQueryBuilderOrFactory = AnyQueryBuilder | AnyQueryBuilderFactory;
 
-interface NestFn<in out DB, in out TB extends keyof DB, in out Alias extends string> {
+interface NestedQuerySetFn<in out DB, in out Alias extends string> {
 	<SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
-		query: NestedSelectQueryBuilderOrFactory<DB, TB, SQB>,
+		query: SQB,
 	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
 	<SQB extends AnySelectQueryBuilder>(
-		query: NestedSelectQueryBuilderOrFactory<DB, TB, SQB>,
+		query: SQB,
 		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
 	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
 }
@@ -3316,8 +3421,8 @@ class QuerySetCreator<in out DB> {
  * ```ts
  * const users = await querySet(db)
  *   .selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
- *   .leftJoinMany("posts", (nest) =>
- *     nest("post", (eb) => eb.selectFrom("posts").select(["id", "userId", "title"])),
+ *   .leftJoinMany("posts", ({ eb, qs }) =>
+ *     qs(eb.selectFrom("posts").select(["id", "userId", "title"])),
  *     "post.userId",
  *     "user.id",
  *   )

@@ -60,7 +60,7 @@ test("edge case: empty result set with joins - execute returns empty array", asy
 		.where("users.id", "=", 999)
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -75,7 +75,7 @@ test("edge case: empty result set with many joins - execute returns empty array"
 		.where("users.id", "=", 999)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -90,10 +90,8 @@ test("edge case: leftJoinOne with no match returns null", async () => {
 		.where("users.id", "=", 1)
 		.leftJoinOne(
 			"nonExistentProfile",
-			(nest) =>
-				nest((eb) =>
-					eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999),
-				),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999)),
 			"nonExistentProfile.user_id",
 			"user.id",
 		)
@@ -115,10 +113,8 @@ test("edge case: leftJoinOneOrThrow with no match throws", async () => {
 			.where("users.id", "=", 1)
 			.leftJoinOneOrThrow(
 				"nonExistentProfile",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999)),
 				"nonExistentProfile.user_id",
 				"user.id",
 			)
@@ -132,7 +128,7 @@ test("edge case: leftJoinMany with no matches returns empty array", async () => 
 		.where("users.id", "=", 1)
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -153,13 +149,13 @@ test("edge case: toBaseQuery ignores all joins and hydration", async () => {
 		.where("users.id", "<=", 2)
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -181,10 +177,8 @@ test("edge case: toJoinedQuery vs toQuery without pagination are equivalent", as
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
-					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
-				),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
 			"posts.user_id",
 			"user.id",
 		);
@@ -203,7 +197,7 @@ test("edge case: toJoinedQuery vs toQuery with pagination differ for many-joins"
 		.where("users.id", "in", [2, 3])
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -250,15 +244,15 @@ test("edge case: collection override - second join with same key wins", async ()
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1)),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1)),
 			"posts.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 2)),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 2)),
 			"posts.user_id",
 			"user.id",
 		)
@@ -302,7 +296,7 @@ test("edge case: toJoinedQuery shows raw prefixed columns", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -325,12 +319,12 @@ test("edge case: deeply nested toJoinedQuery shows double prefixes", async () =>
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1),
 				).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -354,7 +348,7 @@ test("edge case: executeCount with many-joins counts unique base records", async
 		.where("users.id", "in", [2, 3])
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		);
@@ -431,8 +425,8 @@ test("edge case: crossJoinMany creates cartesian product", async () => {
 	// Create a small dataset to verify cartesian product
 	const result = await querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "<=", 2))
-		.crossJoinMany("allPosts", (nest) =>
-			nest((eb) => eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3)),
+		.crossJoinMany("allPosts", ({ eb, qs }) =>
+			qs(eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3)),
 		)
 		.execute();
 

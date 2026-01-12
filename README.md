@@ -265,11 +265,7 @@ const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinOne(
 		"profile", // The key for the nested object on the parent.
-		(nest) =>
-			nest(
-				"profile", // Alias for the nested table
-				(eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"]),
-			),
+		({ eb, qs }) => qs((eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
 		// Join condition (referenced by alias)
 		"profile.userId",
 		"user.id",
@@ -298,7 +294,7 @@ const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.leftJoinMany(
 		"posts",
-		(nest) => nest("post", (eb) => eb.selectFrom("posts").select(["id", "title", "authorId"])),
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "authorId"])),
 		"post.authorId",
 		"user.id",
 	)
@@ -344,7 +340,7 @@ const query = querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinMany(
 		"posts",
-		(nest) => nest("post", (eb) => eb.selectFrom("posts").select(["id", "title"])),
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title"])),
 		"post.userId",
 		"user.id",
 	)
@@ -434,8 +430,8 @@ const query = querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id"]))
 	.leftJoinLateralMany(
 		"latestPosts",
-		(nest) =>
-			nest("post", (eb) =>
+		({ eb, qs }) =>
+			qs(
 				eb
 					.selectFrom("posts")
 					.select(["id", "title"])
@@ -483,7 +479,7 @@ const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select("id"))
 	.leftJoinMany(
 		"posts",
-		(nest) => nest("post", db.selectFrom("posts").select(["id", "title", "userId"])),
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
 		"post.userId",
 		"user.id",
 	)
@@ -702,7 +698,7 @@ const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinOne(
 		"profile",
-		(nest) => nest("p", (eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+		({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "userId"])),
 		"profile.userId",
 		"user.id",
 	)
@@ -917,8 +913,8 @@ const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id"]))
 	.leftJoinMany(
 		"posts",
-		(nest) =>
-			nest("post", (eb) => eb.selectFrom("posts").select(["id", "title"]))
+		({ eb, qs }) =>
+			qs(eb.selectFrom("posts").select(["id", "title"]))
 				// Transform child:
 				.map((post) => ({ postId: post.id, postTitle: post.title })),
 		"post.userId",

@@ -73,7 +73,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 3)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -89,7 +89,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 3)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -104,7 +104,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 3)
 			.leftJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -118,7 +118,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -137,7 +137,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -153,7 +153,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -169,7 +169,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -187,7 +187,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [1, 2])
 			.leftJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -204,10 +204,8 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 2)
-			.crossJoinMany("allPosts", (nest) =>
-				nest((eb) =>
-					eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(2),
-				),
+			.crossJoinMany("allPosts", ({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(2)),
 			)
 			.execute();
 
@@ -237,7 +235,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
@@ -254,7 +252,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -271,13 +269,13 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -299,13 +297,12 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 						"comments.post_id",
 						"posts.id",
 					),
@@ -325,11 +322,10 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 						"comments.post_id",
 						"posts.id",
 					),
@@ -350,19 +346,18 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
+				({ eb, qs }) =>
+					qs(
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 						"comments.post_id",
 						"posts.id",
 					),
@@ -387,11 +382,10 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 4)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 						"comments.post_id",
 						"posts.id",
 					),
@@ -410,32 +404,30 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 5)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.leftJoinOne(
 				"profile2",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile2.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
 			.leftJoinMany(
 				"allPosts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"allPosts.user_id",
 				"user.id",
 			)
-			.crossJoinMany("crossPosts", (nest) =>
-				nest((eb) =>
-					eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(1),
-				),
+			.crossJoinMany("crossPosts", ({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(1)),
 			)
 			.executeCount(Number);
 
@@ -479,13 +471,13 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -515,13 +507,13 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 3)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -541,16 +533,14 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
 				"posts.user_id",
 				"user.id",
 			)
@@ -569,10 +559,8 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) =>
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
 				"posts.user_id",
 				"user.id",
 			);
@@ -590,7 +578,7 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "in", [2, 3])
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
@@ -616,17 +604,16 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 999)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 						"comments.post_id",
 						"posts.id",
 					),
@@ -666,13 +653,13 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinMany(
 				"posts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"posts.user_id",
 				"user.id",
 			)
 			.leftJoinMany(
 				"allPosts",
-				(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 				"allPosts.user_id",
 				"user.id",
 			)
@@ -689,13 +676,13 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "=", 2)
 			.innerJoinOne(
 				"profile",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile.user_id",
 				"user.id",
 			)
 			.leftJoinOne(
 				"profile2",
-				(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 				"profile2.user_id",
 				"user.id",
 			)
@@ -717,12 +704,8 @@ describe("PostgreSQL QuerySet kitchen sink tests", { skip: !shouldRun }, () => {
 			.where("users.id", "<=", 5)
 			.innerJoinMany(
 				"posts",
-				(nest) =>
-					nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).where(
-						"posts.id",
-						"<=",
-						10,
-					),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).where("posts.id", "<=", 10),
 				"posts.user_id",
 				"user.id",
 			)

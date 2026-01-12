@@ -182,7 +182,7 @@ test("orderBy: orders by base column with innerJoinOne", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -209,7 +209,7 @@ test("orderBy: orders by joined column with innerJoinOne", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -236,7 +236,7 @@ test("orderBy: orders by multiple columns including joined columns with leftJoin
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -269,7 +269,7 @@ test("orderBy: orders base records with leftJoinMany", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -327,7 +327,7 @@ test("orderBy: orders base records with innerJoinMany", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -383,13 +383,13 @@ test("orderBy: orders by base and cardinality-one joined columns with cardinalit
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -507,7 +507,7 @@ test("orderBy: works correctly with leftJoinMany and pagination", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -531,10 +531,10 @@ test("orderBy: with nested one-many (user -> profile -> posts)", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
 					"posts",
-					(init2) => init2((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 					"posts.user_id",
 					"profile.user_id",
 				),
@@ -639,13 +639,11 @@ test("orderBy: with nested many-many (user -> posts -> comments)", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
-					(init2) =>
-						init2((eb) =>
-							eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"]),
-						),
+					({ eb, qs }) =>
+						qs(eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -757,18 +755,16 @@ test("orderBy: with nested many-many-many (user -> posts -> comments -> replies)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
-					(init2) =>
-						init2((eb) =>
+					({ eb, qs }) =>
+						qs(
 							eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"]),
 						).leftJoinMany(
 							"replies",
-							(init3) =>
-								init3((eb) =>
-									eb.selectFrom("replies").select(["id", "content", "comment_id", "user_id"]),
-								),
+							({ eb, qs }) =>
+								qs(eb.selectFrom("replies").select(["id", "content", "comment_id", "user_id"])),
 							"replies.comment_id",
 							"comments.id",
 						),

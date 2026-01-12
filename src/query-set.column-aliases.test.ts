@@ -33,8 +33,7 @@ test("SQL: innerJoinMany with column aliases are correctly prefixed", () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		);
@@ -58,13 +57,11 @@ test("SQL: doubly-prefixed aliases for deeply nested collections", () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
-					eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"]),
-				).innerJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])).innerJoinMany(
 					"comments",
-					(init2) =>
-						init2((eb) =>
+					({ eb, qs }) =>
+						qs(
 							eb
 								.selectFrom("comments")
 								.select(["id", "content as commentText", "post_id", "user_id"]),
@@ -92,8 +89,7 @@ test("SQL: mixed aliased and non-aliased columns", () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name", "email"]))
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		);
@@ -122,7 +118,7 @@ test("SQL: leftJoinOne with column alias", () => {
 		.selectAs("post", db.selectFrom("posts").select(["id", "title as postTitle", "user_id"]))
 		.leftJoinOne(
 			"author",
-			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username as authorName"])),
+			({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username as authorName"])),
 			"author.id",
 			"post.user_id",
 		);
@@ -165,8 +161,8 @@ test("execute: innerJoinMany with column aliases hydrates correctly", async () =
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb
 						.selectFrom("posts")
 						.select(["id", "title as postTitle", "user_id"])
@@ -198,7 +194,7 @@ test("execute: leftJoinOne with column aliases hydrates correctly", async () => 
 		)
 		.leftJoinOne(
 			"author",
-			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username as authorName"])),
+			({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username as authorName"])),
 			"author.id",
 			"post.user_id",
 		)
@@ -219,8 +215,7 @@ test("execute: innerJoinOne with column aliases hydrates correctly", async () =>
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 1))
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -240,8 +235,8 @@ test("execute: nested joins with column aliases at multiple levels", async () =>
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb
 						.selectFrom("posts")
 						.select(["id", "title as postTitle", "user_id"])
@@ -249,8 +244,8 @@ test("execute: nested joins with column aliases at multiple levels", async () =>
 						.orderBy("id"),
 				).innerJoinMany(
 					"comments",
-					(init2) =>
-						init2((eb) =>
+					({ eb, qs }) =>
+						qs(
 							eb
 								.selectFrom("comments")
 								.select(["id", "content as commentText", "post_id", "user_id"])
@@ -297,8 +292,7 @@ test("execute: mixed aliased and non-aliased columns in same query", async () =>
 		)
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -319,8 +313,7 @@ test("execute: leftJoinMany with column aliases and empty results", async () => 
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 1))
 		.leftJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -341,8 +334,8 @@ test("execute: toJoinedQuery with column aliases shows prefixed aliases", async 
 		.selectAs("user", db.selectFrom("users").select(["id", "username as name"]).where("id", "=", 2))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb
 						.selectFrom("posts")
 						.select(["id", "title as postTitle", "user_id"])

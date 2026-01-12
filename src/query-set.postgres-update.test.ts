@@ -157,7 +157,7 @@ describe("Postgres: UPDATE operations", { skip: shouldSkip }, () => {
 				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
 				.leftJoinOne(
 					"user",
-					(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
+					({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 					"user.id",
 					"posts.user_id",
 				)
@@ -195,7 +195,7 @@ describe("Postgres: UPDATE operations", { skip: shouldSkip }, () => {
 				.selectAs("users", trx.selectFrom("users").select(["id", "username", "email"]))
 				.leftJoinMany(
 					"posts",
-					(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 					"posts.user_id",
 					"users.id",
 				)
@@ -229,10 +229,10 @@ describe("Postgres: UPDATE operations", { skip: shouldSkip }, () => {
 				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
 				.leftJoinOne(
 					"user",
-					(nest) =>
-						nest((eb) => eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
+					({ eb, qs }) =>
+						qs(eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
 							"profile",
-							(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+							({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 							"profile.user_id",
 							"user.id",
 						),
@@ -310,8 +310,8 @@ describe("Postgres: UPDATE operations", { skip: shouldSkip }, () => {
 				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
 				.leftJoinOne(
 					"user",
-					(nest) =>
-						nest((eb) => eb.selectFrom("users").select(["id", "username"])).extras({
+					({ eb, qs }) =>
+						qs(eb.selectFrom("users").select(["id", "username"])).extras({
 							usernameUpper: (row) => row.username.toUpperCase(),
 						}),
 					"user.id",

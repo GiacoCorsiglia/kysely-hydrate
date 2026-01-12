@@ -14,7 +14,7 @@ test("leftJoinMany: toJoinedQuery shows nullable columns for no matches", async 
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -41,7 +41,7 @@ test("leftJoinMany: toJoinedQuery shows row explosion when matches exist", async
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -89,7 +89,7 @@ test("leftJoinMany: execute returns empty array when no matches", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -111,7 +111,7 @@ test("leftJoinMany: execute returns hydrated arrays when matches exist", async (
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -139,7 +139,7 @@ test("leftJoinMany: execute includes all base records (with and without matches)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -171,7 +171,7 @@ test("leftJoinMany: executeTakeFirst returns first base record with all children
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -196,7 +196,7 @@ test("leftJoinMany: executeCount counts all base records", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -211,7 +211,7 @@ test("leftJoinMany: executeExists checks existence", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -227,7 +227,7 @@ test("leftJoinMany: toBaseQuery returns base query without joins", async () => {
 		.where("id", "<=", 2)
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -246,7 +246,7 @@ test("leftJoinMany: callback join condition with onRef", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			(join) => join.onRef("posts.user_id", "=", "user.id"),
 		)
 		.where("users.id", "<=", 2)

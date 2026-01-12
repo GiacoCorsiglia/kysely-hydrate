@@ -61,7 +61,7 @@ test("pagination: limit with innerJoinOne", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -81,7 +81,7 @@ test("pagination: limit and offset with leftJoinOne", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -105,7 +105,7 @@ test("pagination: limit with innerJoinMany returns limited users with ALL their 
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -129,7 +129,7 @@ test("pagination: limit with leftJoinMany returns limited users with ALL their p
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -151,7 +151,7 @@ test("pagination: offset with innerJoinMany skips base records correctly", async
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -174,7 +174,7 @@ test("pagination: limit and offset with innerJoinMany", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -220,7 +220,7 @@ test("pagination: executeCount with joins ignores limit/offset", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)

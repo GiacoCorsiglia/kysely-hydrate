@@ -14,7 +14,7 @@ test("modify collection: add WHERE clause to joined collection", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -41,7 +41,7 @@ test("modify collection: add extras to joined collection", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -71,7 +71,7 @@ test("modify collection: add nested join within collection", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -80,7 +80,7 @@ test("modify collection: add nested join within collection", async () => {
 				.where("posts.id", "<=", 2)
 				.leftJoinMany(
 					"comments",
-					(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -120,7 +120,7 @@ test("modify collection: multiple modifications on same collection", async () =>
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -153,10 +153,10 @@ test("modify collection: modify nested collection within collection", async () =
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
-					(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -201,7 +201,7 @@ test("modify collection: omit fields from joined collection", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -227,7 +227,7 @@ test("modify collection: map joined collection items", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)

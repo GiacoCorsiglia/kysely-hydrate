@@ -15,10 +15,9 @@ test("leftJoinOne: toJoinedQuery shows nullable columns", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) =>
-				nest(
-					(eb) =>
-						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
+			({ eb, qs }) =>
+				qs(
+					eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
 				),
 			"profile.user_id",
 			"user.id",
@@ -52,10 +51,9 @@ test("leftJoinOne: execute returns null when no match", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) =>
-				nest(
-					(eb) =>
-						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
+			({ eb, qs }) =>
+				qs(
+					eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profile with this user_id
 				),
 			"profile.user_id",
 			"user.id",
@@ -75,7 +73,7 @@ test("leftJoinOne: execute returns object when match exists", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -107,10 +105,9 @@ test("leftJoinOne: executeCount counts all base records", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) =>
-				nest(
-					(eb) =>
-						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profiles match
+			({ eb, qs }) =>
+				qs(
+					eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profiles match
 				),
 			"profile.user_id",
 			"user.id",
@@ -127,10 +124,9 @@ test("leftJoinOne: executeExists checks existence", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) =>
-				nest(
-					(eb) =>
-						eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profiles match
+			({ eb, qs }) =>
+				qs(
+					eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999), // No profiles match
 				),
 			"profile.user_id",
 			"user.id",
@@ -147,7 +143,7 @@ test("leftJoinOne: executeTakeFirst with join", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -167,7 +163,7 @@ test("leftJoinOne: toBaseQuery returns base query without joins", async () => {
 		.where("id", "<=", 3)
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)

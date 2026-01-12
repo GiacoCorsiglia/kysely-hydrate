@@ -60,8 +60,8 @@ test("extras: add computed field in nested join", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
 					titleUpper: (row) => row.title.toUpperCase(),
 				}),
 			"posts.user_id",
@@ -158,8 +158,8 @@ test("mapFields: in nested join", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
 					title: (value) => value.toUpperCase(),
 				}),
 			"posts.user_id",
@@ -244,8 +244,8 @@ test("omit: in nested join", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).omit(["user_id"]),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).omit(["user_id"]),
 			"posts.user_id",
 			"user.id",
 		)
@@ -390,8 +390,8 @@ test("with: works in nested QuerySet", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).with(postHydrator),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).with(postHydrator),
 			"posts.user_id",
 			"user.id",
 		)
@@ -419,8 +419,8 @@ test("nested QuerySet with extras and omit", async () => {
 		.where("users.id", "=", 1)
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"]))
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]))
 					.omit(["user_id"])
 					.extras({
 						bioLength: (row) => row.bio?.length ?? 0,
@@ -527,7 +527,7 @@ test("map: with nested joins", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)

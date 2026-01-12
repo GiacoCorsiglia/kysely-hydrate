@@ -171,8 +171,8 @@ test("attachMany: works at nested level", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				).attachMany("comments", fetchComments, { matchChild: "post_id", toParent: "id" }),
 			"posts.user_id",
@@ -266,8 +266,8 @@ test("attachOne: works at nested level", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				).attachOne("latestComment", fetchLatestComment, { matchChild: "post_id", toParent: "id" }),
 			"posts.user_id",
@@ -352,8 +352,8 @@ test("attachOneOrThrow: works at nested level", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
 				).attachOneOrThrow("author", fetchAuthor, { matchChild: "id", toParent: "user_id" }),
 			"posts.user_id",
@@ -395,8 +395,8 @@ test("attachOneOrThrow: throws at nested level when missing", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1),
 				).attachOneOrThrow("requiredAuthor", fetchAuthor, {
 					matchChild: "id",
@@ -462,10 +462,8 @@ test("attachMany: with nested join and attach combination", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
-					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]),
-				)
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 2]))
 					.attachMany("comments", fetchComments, { matchChild: "post_id", toParent: "id" })
 					.attachMany("tags", fetchTags, { matchChild: "post_id", toParent: "id" }),
 			"posts.user_id",

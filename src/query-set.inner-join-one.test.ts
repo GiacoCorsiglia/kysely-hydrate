@@ -13,7 +13,7 @@ test("innerJoinOne: toJoinedQuery returns flat rows with $$ prefixes", async () 
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -52,7 +52,7 @@ test("innerJoinOne: execute returns hydrated nested objects", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -84,7 +84,7 @@ test("innerJoinOne: executeTakeFirst with join", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -103,7 +103,7 @@ test("innerJoinOne: executeCount counts base records", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -118,7 +118,7 @@ test("innerJoinOne: executeExists checks existence", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -134,7 +134,7 @@ test("innerJoinOne: toBaseQuery returns base query without joins", async () => {
 		.where("id", "<=", 4)
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -155,7 +155,7 @@ test("innerJoinOne: callback join condition with onRef", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			(join) => join.onRef("profile.user_id", "=", "user.id"),
 		)
 		.where("users.id", "<=", 2)

@@ -14,12 +14,12 @@ test("complex: 3-level nesting users → posts → comments", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 				).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -59,18 +59,18 @@ test("complex: 4-level nesting with mixed cardinality", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 				).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -118,12 +118,11 @@ test("complex: nested joins with attach at multiple levels", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2))
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2))
 					.innerJoinMany(
 						"comments",
-						(init2) =>
-							init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 						"comments.post_id",
 						"posts.id",
 					)
@@ -166,7 +165,7 @@ test("complex: multiple modifications chained with hydration", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -197,18 +196,18 @@ test("complex: mixed nullability with deep nesting", async () => {
 		.where("users.id", "in", [1, 2])
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.leftJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 				).leftJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -254,10 +253,10 @@ test("complex: pagination with deep nesting", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -311,8 +310,8 @@ test("complex: sibling collections with transformation", async () => {
 		.where("users.id", "=", 2)
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).extras({
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).extras({
 					bioLength: (row) => row.bio?.length ?? 0,
 				}),
 			"profile.user_id",
@@ -320,8 +319,8 @@ test("complex: sibling collections with transformation", async () => {
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 				).mapFields({
 					title: (value) => value.toUpperCase(),
@@ -354,10 +353,10 @@ test("complex: executeCount with deep nesting", async () => {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -382,12 +381,12 @@ test("complex: toJoinedQuery with deep nesting shows full row explosion", async 
 		.where("users.id", "=", 2)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 				).innerJoinMany(
 					"comments",
-					(init2) => init2((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),

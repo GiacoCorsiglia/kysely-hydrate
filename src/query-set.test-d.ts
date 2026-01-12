@@ -191,8 +191,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
-				const nested = nest(db.selectFrom("posts").select(["id", "user_id"]));
+			({ qs }) => {
+				const nested = qs(db.selectFrom("posts").select(["id", "user_id"]));
 
 				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
 
@@ -210,8 +210,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
-				const nested = nest(db.selectFrom("posts").select(["id", "user_id"]), "user_id");
+			({ qs }) => {
+				const nested = qs(db.selectFrom("posts").select(["id", "user_id"]), "user_id");
 
 				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
 
@@ -233,8 +233,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
-				const nested = nest(db.selectFrom("posts").select(["title", "user_id"]), "title");
+			({ qs }) => {
+				const nested = qs(db.selectFrom("posts").select(["title", "user_id"]), "title");
 
 				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<
 					{ title: string; user_id: number }[]
@@ -253,70 +253,9 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
+			({ qs }) => {
 				// @ts-expect-error - keyBy required when no "id"
-				const nested = nest(db.selectFrom("posts").select(["title", "user_id"]));
-
-				return nested;
-			},
-			// @ts-expect-error - fallout from above
-			"posts.user_id",
-			"user.id",
-		);
-}
-
-//
-// Factory function variant
-//
-
-{
-	// Valid: factory with default keyBy
-	querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id"]))
-		.innerJoinMany(
-			"posts",
-			(nest) => {
-				const nested = nest((eb) => eb.selectFrom("posts").select(["id", "user_id"]));
-
-				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
-
-				return nested;
-			},
-			"posts.user_id",
-			"user.id",
-		)
-		.execute();
-}
-
-{
-	// Valid: factory with explicit keyBy
-	querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id"]))
-		.innerJoinMany(
-			"posts",
-			(nest) => {
-				const nested = nest((eb) => eb.selectFrom("posts").select(["title", "user_id"]), "title");
-
-				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<
-					{ title: string; user_id: number }[]
-				>();
-
-				return nested;
-			},
-			"posts.user_id",
-			"user.id",
-		)
-		.execute();
-}
-
-{
-	querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id"]))
-		.innerJoinMany(
-			"posts",
-			(nest) => {
-				// @ts-expect-error - keyBy required when no "id"
-				const nested = nest((eb) => eb.selectFrom("posts").select(["title", "user_id"]));
+				const nested = qs(db.selectFrom("posts").select(["title", "user_id"]));
 
 				return nested;
 			},
@@ -335,8 +274,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
-				const nested = nest(
+			({ qs }) => {
+				const nested = qs(
 					db.selectFrom("posts").select(["id", "user_id"]),
 					// @ts-expect-error - invalid keyBy (with default key by)
 					"invalid",
@@ -354,49 +293,12 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
-				const nested = nest(
+			({ qs }) => {
+				const nested = qs(
 					db.selectFrom("posts").select(["user_id"]),
 					// @ts-expect-error - invalid keyBy (without default key by)
 					"invalid",
 				);
-
-				return nested;
-			},
-			"posts.user_id",
-			"user.id",
-		);
-}
-
-// Factory
-
-{
-	querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id"]))
-		.innerJoinMany(
-			"posts",
-			(nest) => {
-				const nested = nest(
-					(eb) => eb.selectFrom("posts").select(["id", "user_id"]),
-					// @ts-expect-error - invalid keyBy (with default key by)
-					"invalid",
-				);
-
-				return nested;
-			},
-			"posts.user_id",
-			"user.id",
-		);
-}
-
-{
-	querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id"]))
-		.innerJoinMany(
-			"posts",
-			(nest) => {
-				// @ts-expect-error - invalid keyBy (without default key by)
-				const nested = nest((eb) => eb.selectFrom("posts").select(["user_id"]), "invalid");
 
 				return nested;
 			},
@@ -414,8 +316,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => {
-				const nested = nest(db.selectFrom("posts").select(["id", "user_id"]), ["user_id", "id"]);
+			({ qs }) => {
+				const nested = qs(db.selectFrom("posts").select(["id", "user_id"]), ["user_id", "id"]);
 
 				expectTypeOf(nested.execute()).resolves.toEqualTypeOf<{ id: number; user_id: number }[]>();
 
@@ -440,7 +342,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -488,7 +390,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			(join) => join.onRef("profile.user_id", "=", "user.id"),
 		)
 		.execute();
@@ -511,11 +413,10 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) =>
-				nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])).innerJoinOne(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).innerJoinOne(
 					"comments",
-					(init2) =>
-						init2((eb2) => eb2.selectFrom("comments").select(["user_id", "content"]), "user_id"),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["user_id", "content"]), "user_id"),
 					"comments.user_id",
 					"profile.user_id",
 				),
@@ -547,7 +448,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id"])),
 			// @ts-expect-error - invalid left column
 			"profile.nonExistent",
 			"user.id",
@@ -559,7 +460,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id"])),
 			"profile.id",
 			// @ts-expect-error - invalid right column
 			"user.nonExistent",
@@ -579,7 +480,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -603,7 +504,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			(join) => join.onRef("posts.user_id", "=", "user.id"),
 		)
 		.execute();
@@ -630,7 +531,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -658,7 +559,7 @@ interface Comment {
 		.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
 		.leftJoinOneOrThrow(
 			"author",
-			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
+			({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 			"author.id",
 			"post.user_id",
 		)
@@ -687,7 +588,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -713,8 +614,8 @@ interface Comment {
 {
 	const result = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinMany("comments", (nest) =>
-			nest((eb) => eb.selectFrom("comments").select(["id", "content"])),
+		.crossJoinMany("comments", ({ eb, qs }) =>
+			qs(eb.selectFrom("comments").select(["id", "content"])),
 		)
 		.execute();
 
@@ -740,7 +641,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinLateralOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -764,7 +665,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinLateralMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -788,7 +689,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinLateralOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -812,7 +713,7 @@ interface Comment {
 		.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
 		.leftJoinLateralOneOrThrow(
 			"author",
-			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
+			({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
 			"author.id",
 			"post.user_id",
 		)
@@ -837,7 +738,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinLateralMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -859,8 +760,8 @@ interface Comment {
 {
 	const result = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.crossJoinLateralMany("comments", (nest) =>
-			nest((eb) => eb.selectFrom("comments").select(["id", "content"])),
+		.crossJoinLateralMany("comments", ({ eb, qs }) =>
+			qs(eb.selectFrom("comments").select(["id", "content"])),
 		)
 		.execute();
 
@@ -1356,8 +1257,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).extras({
 					titleUpper: (post) => {
 						expectTypeOf(post).toEqualTypeOf<{ id: number; title: string; user_id: number }>();
 						return post.title.toUpperCase();
@@ -1386,8 +1287,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).mapFields({
 					title: (title) => {
 						expectTypeOf(title).toEqualTypeOf<string>();
 						return title.toUpperCase();
@@ -1416,10 +1317,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id", "content"])).omit([
-					"content",
-				]),
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id", "content"])).omit(["content"]),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1503,7 +1402,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1530,7 +1429,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1557,7 +1456,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -1815,7 +1714,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -1865,7 +1764,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -1903,7 +1802,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.leftJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
@@ -1945,17 +1844,16 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
 					"comments",
-					(init2) =>
-						init2((eb2) => eb2.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -2273,8 +2171,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).map((post) => {
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).map((post) => {
 					expectTypeOf(post).toEqualTypeOf<{ id: number; title: string; user_id: number }>();
 					return { postId: post.id, postTitle: post.title };
 				}),
@@ -2324,11 +2222,10 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
 					"comments",
-					(init2) =>
-						init2((eb2) => eb2.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				),
@@ -2360,13 +2257,13 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"profile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"profile.user_id",
 			"user.id",
 		)
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -2391,13 +2288,13 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinOne(
 			"requiredProfile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
 			"requiredProfile.user_id",
 			"user.id",
 		)
 		.leftJoinOne(
 			"optionalProfile",
-			(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "user_id", "bio"])),
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id", "bio"])),
 			"optionalProfile.user_id",
 			"user.id",
 		)
@@ -2426,8 +2323,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) =>
-				nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])).attachMany(
+			({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).attachMany(
 					"comments",
 					async () => [] as Comment[],
 					{ matchChild: "post_id", toParent: "id" },
@@ -2491,7 +2388,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -2543,7 +2440,7 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.innerJoinMany(
 			"posts",
-			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
 			"posts.user_id",
 			"user.id",
 		)
@@ -2601,8 +2498,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb
 						.selectFrom("posts")
 						// @ts-expect-error - invalid nested selection
@@ -2618,8 +2515,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id"]))
 		.innerJoinOne(
 			"posts",
-			(nest) =>
-				nest((eb) =>
+			({ eb, qs }) =>
+				qs(
 					eb
 						.selectFrom("posts")
 						// @ts-expect-error - selecting from table not in nested query

@@ -96,7 +96,7 @@ describe("Postgres: Mixed write operations", { skip: shouldSkip }, () => {
 				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
 				.leftJoinMany(
 					"comments",
-					(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				)
@@ -132,7 +132,7 @@ describe("Postgres: Mixed write operations", { skip: shouldSkip }, () => {
 				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
 				.leftJoinMany(
 					"comments",
-					(nest) => nest((eb) => eb.selectFrom("comments").select(["id", "content", "post_id"])),
+					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
 					"comments.post_id",
 					"posts.id",
 				)
