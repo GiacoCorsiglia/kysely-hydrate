@@ -10,24 +10,24 @@ describe("query-set: basic", () => {
 	//
 
 	test("execute: returns array of hydrated rows", async () => {
-	const users = await querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.execute();
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.execute();
 
-	assert.ok(Array.isArray(users));
-	assert.strictEqual(users.length, 10);
-	assert.deepStrictEqual(users, [
-		{ id: 1, username: "alice" },
-		{ id: 2, username: "bob" },
-		{ id: 3, username: "carol" },
-		{ id: 4, username: "dave" },
-		{ id: 5, username: "eve" },
-		{ id: 6, username: "frank" },
-		{ id: 7, username: "grace" },
-		{ id: 8, username: "heidi" },
-		{ id: 9, username: "ivan" },
-		{ id: 10, username: "judy" },
-	]);
+		assert.ok(Array.isArray(users));
+		assert.strictEqual(users.length, 10);
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice" },
+			{ id: 2, username: "bob" },
+			{ id: 3, username: "carol" },
+			{ id: 4, username: "dave" },
+			{ id: 5, username: "eve" },
+			{ id: 6, username: "frank" },
+			{ id: 7, username: "grace" },
+			{ id: 8, username: "heidi" },
+			{ id: 9, username: "ivan" },
+			{ id: 10, username: "judy" },
+		]);
 	});
 
 	test("executeTakeFirst: returns first row or undefined", async () => {
@@ -144,9 +144,9 @@ describe("query-set: basic", () => {
 	});
 
 	test("toQuery: returns opaque query builder", async () => {
-	const query = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.toQuery();
+		const query = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.toQuery();
 
 		const rows = await query.execute();
 		assert.strictEqual(rows.length, 10);

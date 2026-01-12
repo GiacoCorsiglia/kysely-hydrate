@@ -27,10 +27,10 @@ function snapshot(template: TemplateStringsArray) {
 
 describe("query-set: sql-generation", () => {
 	test("snapshot", () => {
-	const unindented = "foo bar baz (bing)";
-	assert.strictEqual(
-		unindented,
-		snapshot`
+		const unindented = "foo bar baz (bing)";
+		assert.strictEqual(
+			unindented,
+			snapshot`
 			foo
 				-- comment ignored
 			  bar
@@ -38,49 +38,49 @@ describe("query-set: sql-generation", () => {
 			bing
 		)
 		`,
-	);
-});
+		);
+	});
 
-//
-// executeCount SQL Generation
-//
+	//
+	// executeCount SQL Generation
+	//
 
 	test("SQL: executeCount with no joins - simple count query", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	// Should be: SELECT COUNT(*) FROM (base query) AS count_subquery
-	assert.strictEqual(
-		sql,
-		snapshot`
+		// Should be: SELECT COUNT(*) FROM (base query) AS count_subquery
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count"
 			from (
 				select "id", "username" from "users" where "users"."id" <= ?
 			) as "user"
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: executeCount with innerJoinOne - join included in count", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	// Should include the innerJoinOne as a regular inner join
-	assert.strictEqual(
-		sql,
-		snapshot`
+		// Should include the innerJoinOne as a regular inner join
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count"
 			from (
 				select "id", "username"
@@ -101,25 +101,25 @@ describe("query-set: sql-generation", () => {
 				) as "profile"
 			) as "profile" on "profile"."user_id" = "user"."id"
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: executeCount with leftJoinOne - join included in count", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.leftJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count"
 			from (
 				select
@@ -143,25 +143,25 @@ describe("query-set: sql-generation", () => {
 				) as "profile"
 			) as "profile" on "profile"."user_id" = "user"."id"
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: executeCount with innerJoinMany - converts to WHERE EXISTS", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count"
 			from (
 				select
@@ -196,25 +196,25 @@ describe("query-set: sql-generation", () => {
 					) as "posts" on "posts"."user_id" = "user"."id"
 			)
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: executeCount with leftJoinMany - join omitted from count", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.leftJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count"
 			from (
 				select
@@ -225,43 +225,43 @@ describe("query-set: sql-generation", () => {
 			) as "user"
 			-- leftJoinMany should be omitted from count query
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.leftJoinOne(
-			"setting",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
-			"setting.user_id",
-			"user.id",
-		)
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.leftJoinMany(
-			"comments",
-			({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content"])),
-			"user.id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinOne(
+				"setting",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
+				"setting.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"comments",
+				({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content"])),
+				"user.id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count"
 			from (
 				select "id", "username"
@@ -299,31 +299,31 @@ describe("query-set: sql-generation", () => {
 			)
 			-- leftJoinMany: omitted entirely (doesn't filter, doesn't affect count)
 			`,
-	);
-});
+		);
+	});
 
 	test("SQL: executeCount with nested innerJoinMany - multiple WHERE EXISTS", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) =>
-				qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
-					"comments",
-					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-					"comments.post_id",
-					"posts.id",
-				),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+						"comments",
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						"comments.post_id",
+						"posts.id",
+					),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toCountQuery().compile().sql;
+		const sql = qs.toCountQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select count(*) as "count" from (
 				select "id", "username" from "users" where "users"."id" <= ?
 			) as "user"
@@ -351,31 +351,31 @@ describe("query-set: sql-generation", () => {
 				) as "posts" on "posts"."user_id" = "user"."id"
 			)
 		`,
-	);
-});
+		);
+	});
 
-//
-// Pagination SQL Generation with Many-Joins
-//
+	//
+	// Pagination SQL Generation with Many-Joins
+	//
 
 	test("SQL: pagination without many-joins - no nested subquery", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3)
-		.limit(2)
-		.offset(1);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3)
+			.limit(2)
+			.offset(1);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select
 				"user"."id" as "id",
 				"user"."username" as "username",
@@ -400,29 +400,29 @@ describe("query-set: sql-generation", () => {
 			limit ?
 			offset ?
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: pagination with innerJoinMany - uses nested subquery", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3)
-		.limit(2)
-		.offset(1);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3)
+			.limit(2)
+			.offset(1);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	// 1. Inner query: base + cardinality-one joins + WHERE EXISTS for many-joins + limit/offset
-	// 2. Outer query: apply cardinality-many joins to paginated base
-	assert.strictEqual(
-		sql,
-		snapshot`
+		// 1. Inner query: base + cardinality-one joins + WHERE EXISTS for many-joins + limit/offset
+		// 2. Outer query: apply cardinality-many joins to paginated base
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select
 				"user"."id" as "id", "user"."username" as "username", "posts"."id" as "posts$$id", "posts"."title" as "posts$$title", "posts"."user_id" as "posts$$user_id"
 			from (
@@ -461,47 +461,47 @@ describe("query-set: sql-generation", () => {
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: pagination with mixed joins - nested subquery with correct structure", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.leftJoinOne(
-			"setting",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
-			"setting.user_id",
-			"user.id",
-		)
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3)
-		.limit(2);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinOne(
+				"setting",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
+				"setting.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3)
+			.limit(2);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	// Inner subquery should have:
-	// - base query
-	// - innerJoinOne (safe for ordering)
-	// - leftJoinOne (safe for ordering, can be used in WHERE)
-	// - WHERE EXISTS for innerJoinMany (not left join)
-	// - limit/offset applied here
+		// Inner subquery should have:
+		// - base query
+		// - innerJoinOne (safe for ordering)
+		// - leftJoinOne (safe for ordering, can be used in WHERE)
+		// - WHERE EXISTS for innerJoinMany (not left join)
+		// - limit/offset applied here
 
-	// Outer query should have:
-	// - innerJoinMany applied for real
-	assert.strictEqual(
-		sql,
-		snapshot`
+		// Outer query should have:
+		// - innerJoinMany applied for real
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select
 				"user"."id" as "id",
 				"user"."username" as "username",
@@ -593,37 +593,37 @@ describe("query-set: sql-generation", () => {
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
-	);
-});
+		);
+	});
 
-//
-// toQuery vs toJoinedQuery Differences
-//
+	//
+	// toQuery vs toJoinedQuery Differences
+	//
 
 	test("SQL: toQuery vs toJoinedQuery without pagination - should be identical", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const toQuerySql = qs.toQuery().compile().sql;
-	const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
+		const toQuerySql = qs.toQuery().compile().sql;
+		const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
 
-	// Without pagination, both should produce the same SQL
-	assert.strictEqual(
-		toQuerySql,
-		toJoinedQuerySql,
-		"toQuery() and toJoinedQuery() should be identical without pagination",
-	);
+		// Without pagination, both should produce the same SQL
+		assert.strictEqual(
+			toQuerySql,
+			toJoinedQuerySql,
+			"toQuery() and toJoinedQuery() should be identical without pagination",
+		);
 
-	assert.strictEqual(
-		toQuerySql,
-		snapshot`
+		assert.strictEqual(
+			toQuerySql,
+			snapshot`
 			select
 				"user"."id" as "id",
 				"user"."username" as "username",
@@ -649,175 +649,175 @@ describe("query-set: sql-generation", () => {
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: toQuery vs toJoinedQuery with pagination - should differ for many-joins", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3)
-		.limit(2);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3)
+			.limit(2);
 
-	const toQuerySql = qs.toQuery().compile().sql;
-	const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
+		const toQuerySql = qs.toQuery().compile().sql;
+		const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
 
-	// With pagination + many-joins:
-	// - toQuery() uses nested subquery strategy
-	// - toJoinedQuery() applies limit to raw exploded rows
+		// With pagination + many-joins:
+		// - toQuery() uses nested subquery strategy
+		// - toJoinedQuery() applies limit to raw exploded rows
 
-	assert.notStrictEqual(
-		toQuerySql,
-		toJoinedQuerySql,
-		"toQuery() and toJoinedQuery() should differ with pagination + many-joins",
-	);
+		assert.notStrictEqual(
+			toQuerySql,
+			toJoinedQuerySql,
+			"toQuery() and toJoinedQuery() should differ with pagination + many-joins",
+		);
 
-	// toQuery should have nested structure with WHERE EXISTS
-	assert.ok(toQuerySql.includes("where exists"), "toQuery() should use WHERE EXISTS");
-	const toQueryFromCount = (toQuerySql.match(/from \(/g) || []).length;
-	assert.ok(toQueryFromCount >= 2, "toQuery() should have nested subquery");
+		// toQuery should have nested structure with WHERE EXISTS
+		assert.ok(toQuerySql.includes("where exists"), "toQuery() should use WHERE EXISTS");
+		const toQueryFromCount = (toQuerySql.match(/from \(/g) || []).length;
+		assert.ok(toQueryFromCount >= 2, "toQuery() should have nested subquery");
 
-	// toJoinedQuery is the raw view without limit/offset (user must handle row explosion themselves)
-	assert.ok(!toJoinedQuerySql.includes("limit"), "toJoinedQuery() should not apply limit");
-	assert.ok(!toJoinedQuerySql.includes("where exists"), "toJoinedQuery() should not use EXISTS");
-});
+		// toJoinedQuery is the raw view without limit/offset (user must handle row explosion themselves)
+		assert.ok(!toJoinedQuerySql.includes("limit"), "toJoinedQuery() should not apply limit");
+		assert.ok(!toJoinedQuerySql.includes("where exists"), "toJoinedQuery() should not use EXISTS");
+	});
 
 	test("SQL: toQuery with pagination and cardinality-one only - applies limit directly", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3)
-		.limit(2);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3)
+			.limit(2);
 
-	const toQuerySql = qs.toQuery().compile().sql;
-	const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
+		const toQuerySql = qs.toQuery().compile().sql;
+		const toJoinedQuerySql = qs.toJoinedQuery().compile().sql;
 
-	// toQuery() applies limit when only cardinality-one joins (safe, no row explosion)
-	assert.ok(toQuerySql.includes("limit ?"), "toQuery() should have limit");
+		// toQuery() applies limit when only cardinality-one joins (safe, no row explosion)
+		assert.ok(toQuerySql.includes("limit ?"), "toQuery() should have limit");
 
-	// toJoinedQuery() never applies limit (raw view)
-	assert.ok(!toJoinedQuerySql.includes("limit"), "toJoinedQuery() should not apply limit");
+		// toJoinedQuery() never applies limit (raw view)
+		assert.ok(!toJoinedQuerySql.includes("limit"), "toJoinedQuery() should not apply limit");
 
-	// Should not have WHERE EXISTS (not needed for cardinality-one)
-	assert.ok(!toQuerySql.includes("where exists"), "Should not use EXISTS for cardinality-one");
+		// Should not have WHERE EXISTS (not needed for cardinality-one)
+		assert.ok(!toQuerySql.includes("where exists"), "Should not use EXISTS for cardinality-one");
 
-	// Should not use nested subquery (not needed for cardinality-one)
-	assert.ok(!toQuerySql.includes("where exists"), "Should not use nested subquery");
-});
+		// Should not use nested subquery (not needed for cardinality-one)
+		assert.ok(!toQuerySql.includes("where exists"), "Should not use nested subquery");
+	});
 
-//
-// executeExists SQL Generation
-//
+	//
+	// executeExists SQL Generation
+	//
 
 	test("SQL: executeExists - wraps query in EXISTS check", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.where("users.id", "=", 999);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 999);
 
-	const sql = qs.toExistsQuery().compile().sql;
+		const sql = qs.toExistsQuery().compile().sql;
 
-	// Should wrap the base query in an EXISTS check
-	assert.ok(sql.startsWith("select exists"), "Should start with SELECT EXISTS");
-	assert.ok(sql.includes("select 1"), "EXISTS should use SELECT 1");
-	assert.ok(sql.includes('from "users"'), "Should query from users table");
-	assert.ok(sql.includes('where "users"."id" = ?'), "Should include WHERE condition");
-});
+		// Should wrap the base query in an EXISTS check
+		assert.ok(sql.startsWith("select exists"), "Should start with SELECT EXISTS");
+		assert.ok(sql.includes("select 1"), "EXISTS should use SELECT 1");
+		assert.ok(sql.includes('from "users"'), "Should query from users table");
+		assert.ok(sql.includes('where "users"."id" = ?'), "Should include WHERE condition");
+	});
 
 	test("SQL: executeExists with joins - includes joins in EXISTS check", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toExistsQuery().compile().sql;
+		const sql = qs.toExistsQuery().compile().sql;
 
-	// Should include the join in the EXISTS subquery
-	assert.ok(sql.startsWith("select exists"), "Should start with SELECT EXISTS");
-	assert.ok(sql.includes("inner join"), "Should include inner join");
-	assert.ok(sql.includes("select 1"), "EXISTS should use SELECT 1");
-});
+		// Should include the join in the EXISTS subquery
+		assert.ok(sql.startsWith("select exists"), "Should start with SELECT EXISTS");
+		assert.ok(sql.includes("inner join"), "Should include inner join");
+		assert.ok(sql.includes("select 1"), "EXISTS should use SELECT 1");
+	});
 
 	test("SQL: executeExists ignores limit and offset", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.where("users.id", "<=", 3)
-		.limit(1)
-		.offset(2);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 3)
+			.limit(1)
+			.offset(2);
 
-	const sql = qs.toExistsQuery().compile().sql;
+		const sql = qs.toExistsQuery().compile().sql;
 
-	// executeExists should ignore pagination
-	assert.ok(!sql.includes("limit"), "EXISTS should ignore limit");
-	assert.ok(!sql.includes("offset"), "EXISTS should ignore offset");
-	assert.ok(sql.startsWith("select exists"), "Should still be an EXISTS query");
-});
+		// executeExists should ignore pagination
+		assert.ok(!sql.includes("limit"), "EXISTS should ignore limit");
+		assert.ok(!sql.includes("offset"), "EXISTS should ignore offset");
+		assert.ok(sql.startsWith("select exists"), "Should still be an EXISTS query");
+	});
 
-//
-// toBaseQuery - Returns Base Query Without Joins
-//
+	//
+	// toBaseQuery - Returns Base Query Without Joins
+	//
 
 	test("SQL: toBaseQuery strips all joins and returns base query", async () => {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.innerJoinOne(
-			"profile",
-			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-			"profile.user_id",
-			"user.id",
-		)
-		.innerJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"user.id",
-		)
-		.where("users.id", "<=", 3);
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 3);
 
-	const sql = qs.toBaseQuery().compile().sql;
+		const sql = qs.toBaseQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			select "id", "username" from "users" where "users"."id" <= ?
 		`,
-	);
-});
+		);
+	});
 
-//
-// Write Operations SQL Generation (INSERT/UPDATE/DELETE)
-//
+	//
+	// Write Operations SQL Generation (INSERT/UPDATE/DELETE)
+	//
 
 	test("SQL: insertAs - creates CTE with INSERT RETURNING", async () => {
-	const qs = querySet(db).insertAs("newUser", (db) =>
-		db
-			.insertInto("users")
-			.values({
-				username: "insertuser",
-				email: "insert@example.com",
-			})
-			.returningAll(),
-	);
+		const qs = querySet(db).insertAs("newUser", (db) =>
+			db
+				.insertInto("users")
+				.values({
+					username: "insertuser",
+					email: "insert@example.com",
+				})
+				.returningAll(),
+		);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				insert into "users" ("username", "email")
 				values (?, ?)
@@ -827,23 +827,23 @@ describe("query-set: sql-generation", () => {
 			from "__base" as "newUser"
 			order by "newUser"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: updateAs - creates CTE with UPDATE RETURNING", async () => {
-	const qs = querySet(db).updateAs("updatedUser", (db) =>
-		db
-			.updateTable("users")
-			.set({ email: "updated@example.com" })
-			.where("id", "=", 1)
-			.returningAll(),
-	);
+		const qs = querySet(db).updateAs("updatedUser", (db) =>
+			db
+				.updateTable("users")
+				.set({ email: "updated@example.com" })
+				.where("id", "=", 1)
+				.returningAll(),
+		);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				update "users"
 				set "email" = ?
@@ -854,19 +854,19 @@ describe("query-set: sql-generation", () => {
 			from "__base" as "updatedUser"
 			order by "updatedUser"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: deleteAs - creates CTE with DELETE RETURNING", async () => {
-	const qs = querySet(db).deleteAs("deletedUser", (db) =>
-		db.deleteFrom("users").where("id", "=", 1).returningAll(),
-	);
+		const qs = querySet(db).deleteAs("deletedUser", (db) =>
+			db.deleteFrom("users").where("id", "=", 1).returningAll(),
+		);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				delete from "users"
 				where "id" = ?
@@ -876,34 +876,34 @@ describe("query-set: sql-generation", () => {
 			from "__base" as "deletedUser"
 			order by "deletedUser"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: QuerySet.insert() with innerJoinOne - replaces base, preserves join", async () => {
-	const qs = querySet(db)
-		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
-		.innerJoinOne(
-			"user",
-			({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
-			"user.id",
-			"posts.user_id",
-		)
-		.insert(
-			db
-				.insertInto("posts")
-				.values({
-					user_id: 1,
-					title: "New Post",
-					content: "Content",
-				})
-				.returning(["id", "user_id", "title"]),
-		);
+		const qs = querySet(db)
+			.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
+			.innerJoinOne(
+				"user",
+				({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
+				"user.id",
+				"posts.user_id",
+			)
+			.insert(
+				db
+					.insertInto("posts")
+					.values({
+						user_id: 1,
+						title: "New Post",
+						content: "Content",
+					})
+					.returning(["id", "user_id", "title"]),
+			);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				insert into "posts" ("user_id", "title", "content")
 				values (?, ?, ?)
@@ -924,27 +924,31 @@ describe("query-set: sql-generation", () => {
 			) as "user" on "user"."id" = "posts"."user_id"
 			order by "posts"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: QuerySet.update() with leftJoinMany - replaces base, preserves join", async () => {
-	const qs = querySet(db)
-		.selectAs("users", db.selectFrom("users").select(["id", "username", "email"]))
-		.leftJoinMany(
-			"posts",
-			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-			"posts.user_id",
-			"users.id",
-		)
-		.update(
-			db.updateTable("users").set({ email: "new@example.com" }).where("id", "=", 1).returningAll(),
-		);
+		const qs = querySet(db)
+			.selectAs("users", db.selectFrom("users").select(["id", "username", "email"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"users.id",
+			)
+			.update(
+				db
+					.updateTable("users")
+					.set({ email: "new@example.com" })
+					.where("id", "=", 1)
+					.returningAll(),
+			);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				update "users"
 				set "email" = ?
@@ -968,31 +972,31 @@ describe("query-set: sql-generation", () => {
 			) as "posts" on "posts"."user_id" = "users"."id"
 			order by "users"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: QuerySet.delete() with nested joins - preserves nested structure", async () => {
-	const qs = querySet(db)
-		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
-		.leftJoinOne(
-			"user",
-			({ eb, qs }) =>
-				qs(eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
-					"profile",
-					({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-					"profile.user_id",
-					"user.id",
-				),
-			"user.id",
-			"posts.user_id",
-		)
-		.delete(db.deleteFrom("posts").where("id", "=", 1).returning(["id", "user_id", "title"]));
+		const qs = querySet(db)
+			.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
+			.leftJoinOne(
+				"user",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
+						"profile",
+						({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+						"profile.user_id",
+						"user.id",
+					),
+				"user.id",
+				"posts.user_id",
+			)
+			.delete(db.deleteFrom("posts").where("id", "=", 1).returning(["id", "user_id", "title"]));
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				delete from "posts"
 				where "id" = ?
@@ -1028,27 +1032,27 @@ describe("query-set: sql-generation", () => {
 			) as "user" on "user"."id" = "posts"."user_id"
 			order by "posts"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: insertAs with orderBy - applies ordering to result", async () => {
-	const qs = querySet(db)
-		.insertAs("newUsers", (db) =>
-			db
-				.insertInto("users")
-				.values([
-					{ username: "user1", email: "user1@example.com" },
-					{ username: "user2", email: "user2@example.com" },
-				])
-				.returningAll(),
-		)
-		.orderBy("username", "desc");
+		const qs = querySet(db)
+			.insertAs("newUsers", (db) =>
+				db
+					.insertInto("users")
+					.values([
+						{ username: "user1", email: "user1@example.com" },
+						{ username: "user2", email: "user2@example.com" },
+					])
+					.returningAll(),
+			)
+			.orderBy("username", "desc");
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				insert into "users" ("username", "email")
 				values (?, ?), (?, ?)
@@ -1058,28 +1062,28 @@ describe("query-set: sql-generation", () => {
 			from "__base" as "newUsers"
 			order by "newUsers"."username" desc, "newUsers"."id" asc
 		`,
-	);
-});
+		);
+	});
 
 	test("SQL: write operations with pagination - applies limit/offset", async () => {
-	const qs = querySet(db)
-		.insertAs("newUsers", (db) =>
-			db
-				.insertInto("users")
-				.values([
-					{ username: "user1", email: "user1@example.com" },
-					{ username: "user2", email: "user2@example.com" },
-				])
-				.returningAll(),
-		)
-		.limit(1)
-		.offset(1);
+		const qs = querySet(db)
+			.insertAs("newUsers", (db) =>
+				db
+					.insertInto("users")
+					.values([
+						{ username: "user1", email: "user1@example.com" },
+						{ username: "user2", email: "user2@example.com" },
+					])
+					.returningAll(),
+			)
+			.limit(1)
+			.offset(1);
 
-	const sql = qs.toQuery().compile().sql;
+		const sql = qs.toQuery().compile().sql;
 
-	assert.strictEqual(
-		sql,
-		snapshot`
+		assert.strictEqual(
+			sql,
+			snapshot`
 			with "__base" as (
 				insert into "users" ("username", "email")
 				values (?, ?), (?, ?)
@@ -1091,6 +1095,6 @@ describe("query-set: sql-generation", () => {
 			limit ?
 			offset ?
 		`,
-	);
-});
+		);
+	});
 });
