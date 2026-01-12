@@ -796,3 +796,299 @@ test("SQL: toBaseQuery strips all joins and returns base query", async () => {
 		`,
 	);
 });
+
+//
+// Write Operations SQL Generation (INSERT/UPDATE/DELETE)
+//
+
+test("SQL: insertAs - creates CTE with INSERT RETURNING", async () => {
+	const qs = querySet(db).insertAs("newUser", (db) =>
+		db
+			.insertInto("users")
+			.values({
+				username: "insertuser",
+				email: "insert@example.com",
+			})
+			.returningAll(),
+	);
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?)
+				returning *
+			)
+			select "newUser".*
+			from "__base" as "newUser"
+			order by "newUser"."id" asc
+		`,
+	);
+});
+
+test("SQL: updateAs - creates CTE with UPDATE RETURNING", async () => {
+	const qs = querySet(db).updateAs("updatedUser", (db) =>
+		db
+			.updateTable("users")
+			.set({ email: "updated@example.com" })
+			.where("id", "=", 1)
+			.returningAll(),
+	);
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select "updatedUser".*
+			from "__base" as "updatedUser"
+			order by "updatedUser"."id" asc
+		`,
+	);
+});
+
+test("SQL: deleteAs - creates CTE with DELETE RETURNING", async () => {
+	const qs = querySet(db).deleteAs("deletedUser", (db) =>
+		db.deleteFrom("users").where("id", "=", 1).returningAll(),
+	);
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				delete from "users"
+				where "id" = ?
+				returning *
+			)
+			select "deletedUser".*
+			from "__base" as "deletedUser"
+			order by "deletedUser"."id" asc
+		`,
+	);
+});
+
+test("SQL: QuerySet.insert() with innerJoinOne - replaces base, preserves join", async () => {
+	const qs = querySet(db)
+		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
+		.innerJoinOne(
+			"user",
+			(nest) => nest((eb) => eb.selectFrom("users").select(["id", "username"])),
+			"user.id",
+			"posts.user_id",
+		)
+		.insert(
+			db
+				.insertInto("posts")
+				.values({
+					user_id: 1,
+					title: "New Post",
+					content: "Content",
+				})
+				.returning(["id", "user_id", "title"]),
+		);
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				insert into "posts" ("user_id", "title", "content")
+				values (?, ?, ?)
+				returning "id", "user_id", "title"
+			)
+			select
+				"posts".*,
+				"user"."id" as "user$$id",
+				"user"."username" as "user$$username"
+			from "__base" as "posts"
+			inner join (
+				select
+					"user"."id" as "id",
+					"user"."username" as "username"
+				from (
+					select "id", "username" from "users"
+				) as "user"
+			) as "user" on "user"."id" = "posts"."user_id"
+			order by "posts"."id" asc
+		`,
+	);
+});
+
+test("SQL: QuerySet.update() with leftJoinMany - replaces base, preserves join", async () => {
+	const qs = querySet(db)
+		.selectAs("users", db.selectFrom("users").select(["id", "username", "email"]))
+		.leftJoinMany(
+			"posts",
+			(nest) => nest((eb) => eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			"posts.user_id",
+			"users.id",
+		)
+		.update(
+			db.updateTable("users").set({ email: "new@example.com" }).where("id", "=", 1).returningAll(),
+		);
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"users".*,
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from "__base" as "users"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "users"."id"
+			order by "users"."id" asc
+		`,
+	);
+});
+
+test("SQL: QuerySet.delete() with nested joins - preserves nested structure", async () => {
+	const qs = querySet(db)
+		.selectAs("posts", db.selectFrom("posts").select(["id", "user_id", "title"]))
+		.leftJoinOne(
+			"user",
+			(nest) =>
+				nest((eb) => eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
+					"profile",
+					(nest) => nest((eb) => eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+					"profile.user_id",
+					"user.id",
+				),
+			"user.id",
+			"posts.user_id",
+		)
+		.delete(db.deleteFrom("posts").where("id", "=", 1).returning(["id", "user_id", "title"]));
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				delete from "posts"
+				where "id" = ?
+				returning "id", "user_id", "title"
+			)
+			select
+				"posts".*,
+				"user"."id" as "user$$id",
+				"user"."username" as "user$$username",
+				"user"."profile$$id" as "user$$profile$$id",
+				"user"."profile$$bio" as "user$$profile$$bio",
+				"user"."profile$$user_id" as "user$$profile$$user_id"
+			from "__base" as "posts"
+			left join (
+				select
+					"user"."id" as "id",
+					"user"."username" as "username",
+					"profile"."id" as "profile$$id",
+					"profile"."bio" as "profile$$bio",
+					"profile"."user_id" as "profile$$user_id"
+				from (
+					select "id", "username" from "users"
+				) as "user"
+				left join (
+					select
+						"profile"."id" as "id",
+						"profile"."bio" as "bio",
+						"profile"."user_id" as "user_id"
+					from (
+						select "id", "bio", "user_id" from "profiles"
+					) as "profile"
+				) as "profile" on "profile"."user_id" = "user"."id"
+			) as "user" on "user"."id" = "posts"."user_id"
+			order by "posts"."id" asc
+		`,
+	);
+});
+
+test("SQL: insertAs with orderBy - applies ordering to result", async () => {
+	const qs = querySet(db)
+		.insertAs("newUsers", (db) =>
+			db
+				.insertInto("users")
+				.values([
+					{ username: "user1", email: "user1@example.com" },
+					{ username: "user2", email: "user2@example.com" },
+				])
+				.returningAll(),
+		)
+		.orderBy("username", "desc");
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?), (?, ?)
+				returning *
+			)
+			select "newUsers".*
+			from "__base" as "newUsers"
+			order by "newUsers"."username" desc, "newUsers"."id" asc
+		`,
+	);
+});
+
+test("SQL: write operations with pagination - applies limit/offset", async () => {
+	const qs = querySet(db)
+		.insertAs("newUsers", (db) =>
+			db
+				.insertInto("users")
+				.values([
+					{ username: "user1", email: "user1@example.com" },
+					{ username: "user2", email: "user2@example.com" },
+				])
+				.returningAll(),
+		)
+		.limit(1)
+		.offset(1);
+
+	const sql = qs.toQuery().compile().sql;
+
+	assert.strictEqual(
+		sql,
+		snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?), (?, ?)
+				returning *
+			)
+			select "newUsers".*
+			from "__base" as "newUsers"
+			order by "newUsers"."id" asc
+			limit ?
+			offset ?
+		`,
+	);
+});
