@@ -32,12 +32,12 @@ sacrifice all of the benefits of your ORM.
 Kysely Hydrate grants Kysely the ability to produce rich, nested objects without
 compromising the power or control of SQL. It offers these features:
 
-- Nested objects from traditional joins
-- Application-level joins
-- Mapped fields in hydrated queries
-- Computed properties in hydrated queries
-- Hydrated writes (INSERT/UPDATE/DELETE with RETURNING)
-- Counts, ordering, and limits accounting for row explosion from nested joins
+- [Nested objects from traditional joins](#joins-and-hydration)
+- [Application-level joins](#application-level-joins-with-attach)
+- [Mapped fields](#mapped-properties-with-mapfields) in hydrated queries
+- [Computed properties](#computed-properties-with-extras) in hydrated queries
+- [Hydrated writes](#hydrated-writes) (INSERT/UPDATE/DELETE with RETURNING)
+- [Counts, ordering, and limits](#pagination-and-aggregation) accounting for row explosion from nested joins
 
 For example:
 
@@ -1042,19 +1042,16 @@ like a normal `SELECT` query.
 
 ```ts
 const newUser = await querySet(db)
-  .insertAs(
-    "user",
-    db.insertInto("users").values(newUserData).returning(["id", "username"])
-  )
-  .extras({
-    upperName: (u) => u.username.toUpperCase(),
-  })
-  .executeTakeFirstOrThrow();
+	.insertAs("user", db.insertInto("users").values(newUserData).returning(["id", "username"]))
+	.extras({
+		upperName: (u) => u.username.toUpperCase(),
+	})
+	.executeTakeFirstOrThrow();
 // ⬇
 type Result = {
 	id: number;
 	username: string;
-	upperName: string
+	upperName: string;
 };
 ```
 
@@ -1073,26 +1070,27 @@ The write query must return columns compatible with the original base query.
 ```ts
 // 1. Define the canonical way to fetch a user
 const usersQuerySet = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-  .extras({
-    gravatarUrl: (u) => getGravatar(u.email),
-  });
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.extras({
+		gravatarUrl: (u) => getGravatar(u.email),
+	});
 
 // 2. Reuse it for an insert
 const newUser = await usersQuerySet
-  .insert((db) =>
-    db.insertInto("users")
-      .values(newUserData)
-      // Must return columns matching the base query
-      .returning(["id", "username", "email"])
-  )
-  .executeTakeFirstOrThrow();
+	.insert((db) =>
+		db
+			.insertInto("users")
+			.values(newUserData)
+			// Must return columns matching the base query
+			.returning(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
 // ⬇ Result has gravatarUrl computed automatically!
 type Result = {
-  id: number;
-  username: string;
-  email: string;
-  gravatarUrl: string;
+	id: number;
+	username: string;
+	email: string;
+	gravatarUrl: string;
 };
 ```
 
