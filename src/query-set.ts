@@ -909,14 +909,53 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	// Writes
 	//
 
+	/**
+	 * Switches the base query to an `INSERT` statement.
+	 *
+	 * The provided `INSERT` statement is wrapped in a CTE (Common Table Expression).
+	 * It MUST include a `RETURNING` clause that returns columns compatible with
+	 * the QuerySet's existing base selection to ensure correct hydration.
+	 *
+	 * **Note:** Data-modifying CTEs and `RETURNING` clauses are only supported by
+	 * some dialects (e.g. PostgreSQL).
+	 *
+	 * **Example:**
+	 * ```ts
+	 * // Define a reusable query set for fetching users
+	 * const usersQuerySet = querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username", "firstName", "lastName"]))
+	 *   .extras({
+	 *     fullName: (row) => `${row.firstName} ${row.lastName}`
+	 *   });
+	 *
+	 * // Use it to insert a new user and get back the hydrated result
+	 * const newUser = await usersQuerySet
+	 *   .insert((db) =>
+	 *     db.insertInto("users")
+	 *       .values(userData)
+	 *       // Must return columns matching the base query selection
+	 *       .returning(["id", "username", "firstName", "lastName"])
+	 *   )
+	 *   .executeTakeFirst();
+	 * ```
+	 *
+	 * @param iqb - An insert query builder or factory function.
+	 * @returns A new QuerySet with the insert query as the base.
+	 */
 	insert<IQB extends k.InsertQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
 		iqb: InsertQueryBuilderOrFactory<T["DB"], IQB>,
 	): QuerySet<TWithBaseQuery<T, InferTInsertQuery<IQB>>>;
 
+	/**
+	 * Like {@link insert}, but switches to an `UPDATE` statement.
+	 */
 	update<IQB extends k.UpdateQueryBuilder<any, any, any, T["BaseQuery"]["O"]>>(
 		iqb: UpdateQueryBuilderOrFactory<T["DB"], IQB>,
 	): QuerySet<TWithBaseQuery<T, InferTUpdateQuery<IQB>>>;
 
+	/**
+	 * Like {@link insert}, but switches to a `DELETE` statement.
+	 */
 	delete<IQB extends k.DeleteQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
 		iqb: DeleteQueryBuilderOrFactory<T["DB"], IQB>,
 	): QuerySet<TWithBaseQuery<T, InferTDeleteQuery<IQB>>>;
@@ -3188,8 +3227,34 @@ class QuerySetCreator<in out DB> {
 	}
 
 	/**
-	 * Like {@link selectAs} but receives an INSERT statement with a RETURNING clause that will be
-	 * inserted as a CTE.  Only supported by some dialects.
+	 * Initializes a new query set with a base `INSERT` query.
+	 *
+	 * The provided `INSERT` statement is wrapped in a CTE (Common Table Expression)
+	 * to allow joining other data to the result. It MUST include a `RETURNING`
+	 * clause.
+	 *
+	 * **Note:** Data-modifying CTEs and `RETURNING` clauses are only supported by
+	 * some dialects (e.g. PostgreSQL).
+	 *
+	 * **Example:**
+	 * ```ts
+	 * const newUser = await querySet(db)
+	 *   .insertAs(
+	 *     "user",
+	 *     db.insertInto("users")
+	 *       .values(userData)
+	 *       .returning(["id", "username", "firstName", "lastName"])
+	 *   )
+	 *   .extras({
+	 *     fullName: (row) => `${row.firstName} ${row.lastName}`,
+	 *   })
+	 *   .executeTakeFirst();
+	 * ```
+	 *
+	 * @param alias - The alias for the base query.
+	 * @param query - A Kysely insert query builder or factory function.
+	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
+	 * @returns A new QuerySet.
 	 */
 	insertAs<Alias extends string, IQB extends k.InsertQueryBuilder<any, any, InputWithDefaultKey>>(
 		alias: Alias,
@@ -3205,8 +3270,7 @@ class QuerySetCreator<in out DB> {
 	}
 
 	/**
-	 * Like {@link insertAs} but receives an UPDATE statement with a RETURNING clause that will be
-	 * inserted as a CTE.  Only supported by some dialects.
+	 * Like {@link insertAs}, but for an `UPDATE` statement.
 	 */
 	updateAs<
 		Alias extends string,
@@ -3225,8 +3289,7 @@ class QuerySetCreator<in out DB> {
 	}
 
 	/**
-	 * Like {@link insertAs} but receives a DELETE statement with a RETURNING clause that will be
-	 * inserted as a CTE.  Only supported by some dialects.
+	 * Like {@link insertAs}, but for a `DELETE` statement.
 	 */
 	deleteAs<Alias extends string, DQB extends k.DeleteQueryBuilder<any, any, InputWithDefaultKey>>(
 		alias: Alias,
