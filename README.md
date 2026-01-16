@@ -388,11 +388,12 @@ const result = await querySet(db)
 
 ###### Generated SQL strategy:
 
-1 **Inner Query**: Selects the parent rows, applying the `LIMIT 10` here. This
+1. **Inner Query**: Selects the parent rows, applying the `LIMIT 10` here. This
 inner query will include "cardinality-one" joins (`*One()`), so you can use them
 in filtering. "Cardinality-many" filtering joins (`innerJoinMany` or
-`crossJoinMany`) will be converted to a WHERE EXISTS to filter without causing
-row explosion. 2. **Outer Query**: Joins the "many" relations to the limited set of parents.
+`crossJoinMany`) will be converted to a `WHERE EXISTS` to filter without causing
+row explosion.
+2. **Outer Query**: Joins the "many" relations to the limited set of parents.
 
 For example, a query for "users who have posted" looks something like this:
 
