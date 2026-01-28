@@ -905,6 +905,14 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 */
 	$call<R>(callback: (qs: this) => R): R;
 
+	/**
+	 * Changes the output type of the query.
+	 *
+	 * This method call doesn't change the SQL in any way. This method simply
+	 * returns a copy of this query set with a new output type.
+	 */
+	$castTo<NewOutput>(): MappedQuerySet<TWithOutput<T, NewOutput>>;
+
 	//
 	// Writes
 	//
@@ -979,6 +987,14 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	////////////////////////////////////////////////////////////
 	// Hydration
 	////////////////////////////////////////////////////////////
+
+	/**
+	 * Changes the output type of the query.
+	 *
+	 * This method call doesn't change the SQL in any way. This method simply
+	 * returns a copy of this query set with a new output type.
+	 */
+	$castTo<NewOutput>(): QuerySet<TWithOutput<T, NewOutput>>;
 
 	/**
 	 * Configures extra computed fields to add to the hydrated output.
@@ -3112,6 +3128,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	$call<R>(callback: (qs: this) => R): R {
 		return callback(this);
+	}
+
+	$castTo(): any {
+		return this;
 	}
 
 	#asWrite(query: AnyQueryBuilderOrFactory): any {

@@ -2659,3 +2659,68 @@ interface Comment {
 			"user.id",
 		);
 }
+
+////////////////////////////////////////////////////////////
+// Section 49: $castTo
+////////////////////////////////////////////////////////////
+
+{
+	// Basic cast changes output type
+	interface CustomOutput {
+		userId: number;
+		name: string;
+	}
+
+	const result = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.$castTo<CustomOutput>()
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<CustomOutput[]>();
+}
+
+{
+	// Multiple $castTo calls chain correctly
+	const result = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.$castTo<{ a: number }>()
+		.$castTo<{ b: string }>()
+		.$castTo<{ c: boolean }>()
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ c: boolean }[]>();
+}
+
+{
+	// $castTo returns QuerySet, so join methods are still available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.$castTo<{ id: number; username: string }>();
+
+	const result = qs
+		.innerJoinMany(
+			"posts",
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{ id: number; username: string; posts: { id: number; title: string; user_id: number }[] }[]
+	>();
+}
+
+{
+	// $castTo().map() returns MappedQuerySet (no QuerySet methods)
+	const mapped = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.$castTo<{ id: number; username: string }>()
+		.map((user) => user.id);
+
+	expectTypeOf(mapped.execute()).resolves.toEqualTypeOf<number[]>();
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.innerJoinMany;
+}
