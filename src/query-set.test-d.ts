@@ -2724,3 +2724,65 @@ interface Comment {
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.innerJoinMany;
 }
+
+////////////////////////////////////////////////////////////
+// Section 50: $narrowType
+////////////////////////////////////////////////////////////
+
+{
+	// $narrowType narrows nullable fields
+	const qs = querySet(db).selectAs(
+		"profile",
+		db.selectFrom("profiles").select(["id", "user_id", "avatar_url"]),
+	);
+
+	const result1 = qs.execute();
+	expectTypeOf(result1).resolves.toEqualTypeOf<
+		{ id: number; user_id: number; avatar_url: string | null }[]
+	>();
+
+	const result = qs.$narrowType<{ avatar_url: string }>().execute();
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{ id: number; user_id: number; avatar_url: string }[]
+	>();
+
+	// Can also use k.NotNull to narrow
+	const result2 = qs.$narrowType<{ avatar_url: k.NotNull }>().execute();
+	expectTypeOf(result2).resolves.toEqualTypeOf<
+		{ id: number; user_id: number; avatar_url: string }[]
+	>();
+}
+
+{
+	// $narrowType returns QuerySet, so join methods are still available
+	const qs = querySet(db)
+		.selectAs("profile", db.selectFrom("profiles").select(["id", "user_id"]))
+		.$narrowType<{ id: number }>();
+
+	const result = qs
+		.innerJoinMany(
+			"posts",
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			"posts.user_id",
+			"profile.user_id",
+		)
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{ id: number; user_id: number; posts: { id: number; title: string; user_id: number }[] }[]
+	>();
+}
+
+{
+	// $narrowType works on MappedQuerySet (after .map())
+	const mapped = querySet(db)
+		.selectAs("profile", db.selectFrom("profiles").select(["id", "avatar_url"]))
+		.map((row) => ({ visibleId: row.id, url: row.avatar_url }))
+		.$narrowType<{ url: string }>();
+
+	expectTypeOf(mapped.execute()).resolves.toEqualTypeOf<{ visibleId: number; url: string }[]>();
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.innerJoinMany;
+}

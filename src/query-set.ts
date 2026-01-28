@@ -41,6 +41,7 @@ import {
 	type ExtendWith,
 	type Flatten,
 	type KeyBy,
+	type NarrowPartial,
 	type StrictEqual,
 	type StrictSubset,
 	assertNever,
@@ -290,6 +291,8 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Extend<T["HydratedOutput"], Output>;
 }
+
+type NarrowOutput<T extends TQuerySet, Narrow> = NarrowPartial<T["HydratedOutput"], Narrow>;
 
 interface InitialJoinedQuery<in out DB, in out BaseAlias extends string, in out BaseO> {
 	Type: "Select";
@@ -913,6 +916,16 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 */
 	$castTo<NewOutput>(): MappedQuerySet<TWithOutput<T, NewOutput>>;
 
+	/**
+	 * Narrows (parts of) the output type of the query.
+	 *
+	 * This method call doesn't change the SQL in any way. This method simply
+	 * returns a copy of this query set with a narrowed output type.
+	 *
+	 * See {@link k.SelectQueryBuilder.$narrowType} for more information.
+	 */
+	$narrowType<Narrow>(): MappedQuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
+
 	//
 	// Writes
 	//
@@ -995,6 +1008,16 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * returns a copy of this query set with a new output type.
 	 */
 	$castTo<NewOutput>(): QuerySet<TWithOutput<T, NewOutput>>;
+
+	/**
+	 * Narrows (parts of) the output type of the query.
+	 *
+	 * This method call doesn't change the SQL in any way. This method simply
+	 * returns a copy of this query set with a narrowed output type.
+	 *
+	 * See {@link k.SelectQueryBuilder.$narrowType} for more information.
+	 */
+	$narrowType<Narrow>(): QuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
 
 	/**
 	 * Configures extra computed fields to add to the hydrated output.
@@ -3131,6 +3154,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	$castTo(): any {
+		return this;
+	}
+
+	$narrowType(): any {
 		return this;
 	}
 

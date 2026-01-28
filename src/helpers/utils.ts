@@ -10,6 +10,36 @@ export type DrainOuterGeneric<T> = [T] extends [unknown] ? T : never;
 
 export type Identity<T> = T;
 export type Flatten<T> = Identity<{ [k in keyof T]: T[k] }>;
+
+/**
+ * Type-level error message. Cloned from Kysely since it's not exported.
+ */
+export interface TypeErrorMessage<E extends string> {
+	readonly __typeError__: E;
+}
+
+/**
+ * Narrows a type by intersecting with another type, with validation.
+ * Cloned from Kysely's NarrowPartial since it's not exported.
+ *
+ * Unlike a simple intersection, this:
+ * - Validates that narrowing types are subsets of original types
+ * - Supports `k.NotNull` to exclude null from nullable fields
+ * - Produces readable error messages for invalid narrowing
+ */
+export type NarrowPartial<O, T> = DrainOuterGeneric<
+	T extends object
+		? {
+				[K in keyof O & string]: K extends keyof T
+					? T[K] extends k.NotNull
+						? Exclude<O[K], null>
+						: T[K] extends O[K]
+							? T[K]
+							: TypeErrorMessage<`$narrowType() call failed: passed type does not exist in '${K}'s type union`>
+					: O[K];
+			}
+		: never
+>;
 export type Extend<A, B> = Flatten<
 	// fast path when there is no keys overlap
 	keyof A & keyof B extends never
