@@ -1122,10 +1122,18 @@ interface Comment {
 //
 
 {
-	const result = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-		.omit(["email"])
-		.execute();
+	const qs = querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id", "username", "email"]),
+	);
+
+	const originalResult = qs.execute();
+
+	expectTypeOf(originalResult).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
+
+	const result = qs.omit(["email"]).execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
 }
@@ -1135,12 +1143,108 @@ interface Comment {
 //
 
 {
-	const result = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-		.omit(["username", "email"])
-		.execute();
+	const qs = querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id", "username", "email"]),
+	);
+
+	const originalResult = qs.execute();
+
+	expectTypeOf(originalResult).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
+
+	const result = qs.omit(["username", "email"]).execute();
 
 	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number }[]>();
+}
+
+//
+// Omit single field - executeTakeFirst
+//
+
+{
+	const qs = querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id", "username", "email"]),
+	);
+
+	const originalResult = qs.executeTakeFirst();
+
+	expectTypeOf(originalResult).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string } | undefined
+	>();
+
+	const result = qs.omit(["email"]).executeTakeFirst();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string } | undefined>();
+}
+
+//
+// Omit multiple fields - executeTakeFirst
+//
+
+{
+	const qs = querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id", "username", "email"]),
+	);
+
+	const originalResult = qs.executeTakeFirst();
+
+	expectTypeOf(originalResult).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string } | undefined
+	>();
+
+	const result = qs.omit(["username", "email"]).executeTakeFirst();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number } | undefined>();
+}
+
+//
+// Omit single field - executeTakeFirstOrThrow
+//
+
+{
+	const qs = querySet(db).selectAs(
+		"user",
+		db.selectFrom("users").select(["id", "username", "email"]),
+	);
+
+	const originalResult = qs.executeTakeFirstOrThrow();
+
+	expectTypeOf(originalResult).resolves.toEqualTypeOf<{
+		id: number;
+		username: string;
+		email: string;
+	}>();
+
+	const result = qs.omit(["email"]).executeTakeFirstOrThrow();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }>();
+}
+
+//
+// Omit multiple fields - executeTakeFirstOrThrow
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.extras({ upperEmail: (row) => row.email.toUpperCase() });
+
+	const originalResult = qs.executeTakeFirstOrThrow();
+
+	expectTypeOf(originalResult).resolves.toEqualTypeOf<{
+		id: number;
+		username: string;
+		email: string;
+		upperEmail: string;
+	}>();
+
+	const result = qs.omit(["username", "email"]).executeTakeFirstOrThrow();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; upperEmail: string }>();
 }
 
 //
