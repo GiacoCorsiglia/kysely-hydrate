@@ -546,7 +546,7 @@ Kysely Hydrate how to match the attached rows back to their parents:
 - `matchChild`: the key (or keys) on the attached rows
 - `toParent` (optional): the key (or keys) on the parent rows
 
-If you omit `toParent`, it defaults to the parent collection’s `keyBy` (which
+If you omit `toParent`, it defaults to the parent collection's `keyBy` (which
 itself defaults to `"id"` when available).
 
 ```ts
@@ -598,7 +598,7 @@ type Result = Array<{
 ```
 
 Because the `fetchFn` can be any async function, `.attachMany()` is also useful
-for things that _aren’t_ database rows: HTTP calls, caches, etc.
+for things that _aren't_ database rows: HTTP calls, caches, etc.
 
 ```ts
 // Example: Attach feature flags from a cached HTTP endpoint
@@ -1108,6 +1108,12 @@ const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
 	.$castTo<{ id: number; name: string; extra: boolean }>()
 	.execute();
+// ⬇
+type Result = Array<{
+	id: number;
+	name: string;
+	extra: boolean; // You better be sure this is there!
+}>;
 ```
 
 See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html#castto).
@@ -1121,7 +1127,13 @@ nullable column is not null.
 const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "avatar_url"]))
 	.where("avatar_url", "is not", null)
-	.$narrowType<{ avatar_url: string }>(); // Remove null from the type  .execute();
+	.$narrowType<{ avatar_url: string }>(); // Remove null from the type
+	.execute()
+// ⬇
+type Result = Array<{
+	id: string;
+	avatar_url: string; // No `| null`!
+}>
 ```
 
 You can also use Kysely's `NotNull` type:
@@ -1132,7 +1144,13 @@ import type { NotNull } from "kysely";
 const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "avatar_url"]))
 	.where("avatar_url", "is not", null)
-	.$narrowType<{ avatar_url: string }>();
+	.$narrowType<{ avatar_url: NotNull }>();
+	.execute()
+// ⬇
+type Result = Array<{
+	id: string;
+	avatar_url: string; // No `| null`!
+}>
 ```
 
 See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html#narrowtype).
@@ -1140,14 +1158,17 @@ See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/Sel
 #### `$assertType<T>()`
 
 Asserts that the query's output type equals a given type. Unlike `$castTo`, this
-validates structural equality—if the types don't match, you get a compile error.
+validates structural equality—if the types don't match, you get a compile error. Useful as a strategy for annotating your query sets with their expected return type, and also useful if you run into a dreaded "excessively deep" type instantiation error.
 
 ```ts
 type UserDto = { id: number; name: string };
 
 const users = await querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
-	.$assertType<UserDto>(); // Compile error if output doesn't match UserDto  .execute();
+	.$assertType<UserDto>(); // Compile error if output doesn't match UserDto
+	.execute();
+// ⬇
+type Result = Array<UserDto>
 ```
 
 See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html#asserttype).
@@ -1169,7 +1190,7 @@ type User = InferOutput<typeof usersQuery>;
 
 ## Hydrators
 
-The `querySet()` API described above is the happy path when you’re building a
+The `querySet()` API described above is the happy path when you're building a
 query in Kysely and want nested results.
 
 Hydrators are the lower-level API: they let you take _already-fetched_ rows
@@ -1182,7 +1203,7 @@ Use hydrators when:
 - You want to define reusable hydration logic independent of any particular query.
 
 > [!NOTE]
-> Hydrators don’t “know” what you selected. Unlike `querySet()`, you need to
+> Hydrators don't "know" what you selected. Unlike `querySet()`, you need to
 > specify what you want in the output using `.fields()` (and/or `.extras()`).
 
 ### Creating hydrators with `createHydrator()`
@@ -1353,7 +1374,7 @@ mapped.extend(...);       // Error: Property 'extend' does not exist
 ### Attached collections with `.attach*()`
 
 These work the same as in the `querySet()` API (see the `.attach*()` section above).
-They’re useful when your “rows” come from somewhere other than SQL, but you still
+They're useful when your "rows" come from somewhere other than SQL, but you still
 want to batch-fetch and attach related data.
 
 ### Prefixed collections with `.has*()`
@@ -1406,11 +1427,11 @@ know the difference, and so does not suffer from this problem.
 
 Merges two hydrators. The second hydrator's configuration takes precedence.
 
-This is a good way to build small, reusable hydrators (for a “user preview”, a
-“user display name”, etc.) and compose them.
+This is a good way to build small, reusable hydrators (for a "user preview", a
+"user display name", etc.) and compose them.
 
 > [!NOTE]
-> Hydrators must have the same `keyBy`. If they don’t, `.extend()` throws.
+> Hydrators must have the same `keyBy`. If they don't, `.extend()` throws.
 
 ```ts
 type UserRow = { id: number; username: string; email: string };
