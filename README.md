@@ -136,6 +136,7 @@ type Result = Array<{
   - [Output transformations with `.map()`](#output-transformations-with-map)
   - [Composable mappings with `.with()`](#composable-mappings-with-with)
   - [Hydrated writes](#hydrated-writes)
+  - [Type helpers](#type-helpers)
 - [Hydrators](#hydrators)
   - [Creating hydrators with `createHydrator()`](#creating-hydrators-with-createhydrator)
   - [Manual hydration with `hydrate()`](#manual-hydration-with-hydrate)
@@ -389,10 +390,10 @@ const result = await querySet(db)
 ###### Generated SQL strategy:
 
 1. **Inner Query**: Selects the parent rows, applying the `LIMIT 10` here. This
-inner query will include "cardinality-one" joins (`*One()`), so you can use them
-in filtering. "Cardinality-many" filtering joins (`innerJoinMany` or
-`crossJoinMany`) will be converted to a `WHERE EXISTS` to filter without causing
-row explosion.
+   inner query will include "cardinality-one" joins (`*One()`), so you can use them
+   in filtering. "Cardinality-many" filtering joins (`innerJoinMany` or
+   `crossJoinMany`) will be converted to a `WHERE EXISTS` to filter without causing
+   row explosion.
 2. **Outer Query**: Joins the "many" relations to the limited set of parents.
 
 For example, a query for "users who have posted" looks something like this:
@@ -1089,6 +1090,81 @@ type Result = {
 	email: string;
 	gravatarUrl: string;
 };
+```
+
+### Type Helpers
+
+Kysely Hydrate provides type helpers that mirror
+[Kysely's type manipulation methods](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html).
+These methods don't change the SQL or have any runtime effect—they only affect TypeScript types.
+
+#### `$castTo<T>()`
+
+Changes the output type of the query. Use this when you know the actual output type better than
+TypeScript can infer. This is unsafe! You can change the type to anything.
+
+```ts
+const users = await querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.$castTo<{ id: number; name: string; extra: boolean }>()
+	.execute();
+```
+
+See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html#castto).
+
+#### `$narrowType<T>()`
+
+Narrows parts of the output type. Useful after `WHERE` clauses that guarantee a
+nullable column is not null.
+
+```ts
+const users = await querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "avatar_url"]))
+	.where("avatar_url", "is not", null)
+	.$narrowType<{ avatar_url: string }>(); // Remove null from the type  .execute();
+```
+
+You can also use Kysely's `NotNull` type:
+
+```ts
+import type { NotNull } from "kysely";
+
+const users = await querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "avatar_url"]))
+	.where("avatar_url", "is not", null)
+	.$narrowType<{ avatar_url: string }>();
+```
+
+See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html#narrowtype).
+
+#### `$assertType<T>()`
+
+Asserts that the query's output type equals a given type. Unlike `$castTo`, this
+validates structural equality—if the types don't match, you get a compile error.
+
+```ts
+type UserDto = { id: number; name: string };
+
+const users = await querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.$assertType<UserDto>(); // Compile error if output doesn't match UserDto  .execute();
+```
+
+See [Kysely's version](https://kysely-org.github.io/kysely-apidoc/interfaces/SelectQueryBuilder.html#asserttype).
+
+#### `InferOutput<T>`
+
+A type-level helper to extract the output type of a query set.
+
+```ts
+import type { InferOutput } from "kysely-hydrate";
+
+const usersQuery = querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.extras({ upperName: (u) => u.name.toUpperCase() });
+
+type User = InferOutput<typeof usersQuery>;
+// type User = { id: number; name: string; upperName: string }
 ```
 
 ## Hydrators
