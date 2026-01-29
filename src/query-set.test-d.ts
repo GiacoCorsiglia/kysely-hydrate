@@ -2786,3 +2786,78 @@ interface Comment {
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.innerJoinMany;
 }
+
+////////////////////////////////////////////////////////////
+// Section 51: $assertType
+////////////////////////////////////////////////////////////
+
+{
+	// $assertType works when types match (with extras for complexity)
+	const result = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() })
+		.$assertType<{ id: number; username: string; upper: string }>()
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string; upper: string }[]>();
+}
+
+{
+	// $assertType fails when asserted type is a subset (missing fields)
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() })
+		// @ts-expect-error - asserted type missing 'upper' field
+		.$assertType<{ id: number; username: string }>();
+}
+
+{
+	// $assertType fails when asserted type is a superset (extra fields)
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() })
+		.$assertType<{ id: number; username: string; upper: string; extra: boolean }>()
+		// @ts-expect-error - asserted type has extra 'extra' field
+		.execute();
+}
+
+{
+	// $assertType returns QuerySet, so join methods are still available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() })
+		.$assertType<{ id: number; username: string; upper: string }>();
+
+	const result = qs
+		.innerJoinMany(
+			"posts",
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			"posts.user_id",
+			"user.id",
+		)
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			upper: string;
+			posts: { id: number; title: string; user_id: number }[];
+		}[]
+	>();
+}
+
+{
+	// $assertType works on MappedQuerySet (after .map())
+	const mapped = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() })
+		.map((row) => ({ visibleId: row.id, name: row.upper }))
+		.$assertType<{ visibleId: number; name: string }>();
+
+	expectTypeOf(mapped.execute()).resolves.toEqualTypeOf<{ visibleId: number; name: string }[]>();
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.innerJoinMany;
+}

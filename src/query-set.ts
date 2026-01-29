@@ -44,6 +44,7 @@ import {
 	type NarrowPartial,
 	type StrictEqual,
 	type StrictSubset,
+	type TypeErrorMessage,
 	assertNever,
 	isSelectQueryBuilder,
 	mapWithDeleted,
@@ -926,6 +927,26 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 */
 	$narrowType<Narrow>(): MappedQuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
 
+	/**
+	 * Asserts that query's output row type equals the given type `T`.
+	 *
+	 * This method can be used to simplify excessively complex types to make
+	 * TypeScript happy and faster.
+	 *
+	 * It's also useful as a type guard to ensure a query set matches an expected
+	 * shape, similar to annotating a function's return type. For example,
+	 * `.$assertType<UserDto>()` will produce a type error if the query's output
+	 * doesn't match `UserDto`.
+	 *
+	 * Using this method doesn't reduce type safety at all. You have to pass in
+	 * a type that is structurally equal to the current type.
+	 *
+	 * See {@link k.SelectQueryBuilder.$assertType} for more information.
+	 */
+	$assertType<NewOutput extends TOutput<T>>(): TOutput<T> extends NewOutput
+		? MappedQuerySet<TWithOutput<T, NewOutput>>
+		: TypeErrorMessage<"$assertType() call failed: The type passed in is not equal to the output type of the query.">;
+
 	//
 	// Writes
 	//
@@ -1018,6 +1039,26 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * See {@link k.SelectQueryBuilder.$narrowType} for more information.
 	 */
 	$narrowType<Narrow>(): QuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
+
+	/**
+	 * Asserts that query's output row type equals the given type `T`.
+	 *
+	 * This method can be used to simplify excessively complex types to make
+	 * TypeScript happy and faster.
+	 *
+	 * It's also useful as a type guard to ensure a query set matches an expected
+	 * shape, similar to annotating a function's return type. For example,
+	 * `.$assertType<UserDto>()` will produce a type error if the query's output
+	 * doesn't match `UserDto`.
+	 *
+	 * Using this method doesn't reduce type safety at all. You have to pass in
+	 * a type that is structurally equal to the current type.
+	 *
+	 * See {@link k.SelectQueryBuilder.$assertType} for more information.
+	 */
+	$assertType<NewOutput extends TOutput<T>>(): TOutput<T> extends NewOutput
+		? QuerySet<TWithOutput<T, NewOutput>>
+		: TypeErrorMessage<"$assertType() call failed: The type passed in is not equal to the output type of the query.">;
 
 	/**
 	 * Configures extra computed fields to add to the hydrated output.
@@ -3158,6 +3199,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	$narrowType(): any {
+		return this;
+	}
+
+	$assertType(): any {
 		return this;
 	}
 
