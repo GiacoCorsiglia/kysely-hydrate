@@ -340,6 +340,26 @@ type OpaqueExistsQueryBuilder = OpaqueSelectQueryBuilder<{ exists: k.SqlBool }>;
 type LimitOrOffset = number | bigint | null;
 
 /**
+ * Infer the output type of a query set.  This is the type of one hydrated row.  It's the same as
+ * the type returned by `.executeTakeFirstOrThrow()`.
+ *
+ * **Example:**
+ * ```ts
+ * const usersQuerySet = querySet(db)
+ *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+ *
+ * type User = InferOutput<typeof usersQuerySet>;
+ * // ⬇
+ * type User = { id: number; username: string };
+ * ```
+ */
+export type InferOutput<Q extends { _generics: TQuerySet | undefined }> = Q extends {
+	_generics: { HydratedOutput: infer O } | undefined;
+}
+	? Flatten<O>
+	: never;
+
+/**
  * A query set that has been mapped with a transformation function.
  *
  * After calling `.map()`, only query execution and further mapping are available.

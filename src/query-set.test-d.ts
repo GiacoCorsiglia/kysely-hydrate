@@ -8,7 +8,7 @@ import {
 	type Profile as DBProfile,
 } from "./__tests__/fixture.ts";
 import { createHydrator } from "./hydrator.ts";
-import { querySet } from "./query-set.ts";
+import { type InferOutput, querySet } from "./query-set.ts";
 
 const db = getDbForTest();
 
@@ -2860,4 +2860,28 @@ interface Comment {
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.innerJoinMany;
+}
+
+////////////////////////////////////////////////////////////
+// Section 52: InferOutput
+////////////////////////////////////////////////////////////
+
+{
+	// InferOutput on QuerySet
+	const usersQuerySet = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() });
+
+	type User = InferOutput<typeof usersQuerySet>;
+	expectTypeOf<User>().toEqualTypeOf<{ id: number; username: string; upper: string }>();
+}
+
+{
+	// InferOutput on MappedQuerySet (after .map())
+	const mappedQuerySet = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.map((row) => ({ visibleId: row.id }));
+
+	type MappedUser = InferOutput<typeof mappedQuerySet>;
+	expectTypeOf<MappedUser>().toEqualTypeOf<{ visibleId: number }>();
 }
