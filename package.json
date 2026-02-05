@@ -1,6 +1,6 @@
 {
 	"name": "kysely-hydrate",
-	"version": "0.7.1",
+	"version": "0.7.2",
 	"description": "Explicit ORM-style queries with Kysely",
 	"homepage": "https://github.com/GiacoCorsiglia/kysely-hydrate#readme",
 	"bugs": {
