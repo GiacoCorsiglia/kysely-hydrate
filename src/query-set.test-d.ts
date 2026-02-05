@@ -2972,6 +2972,11 @@ interface Comment {
 			db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll(),
 		);
 
+	// Output type IS expanded to include all columns from returningAll()
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
+
 	// innerJoinMany is available on QuerySet
 	// oxlint-disable-next-line no-unused-expressions
 	qs.innerJoinMany;
@@ -2986,6 +2991,8 @@ interface Comment {
 			db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll(),
 		);
 
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ visibleId: number }[]>();
+
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions
 	qs.innerJoinMany;
@@ -2998,6 +3005,11 @@ interface Comment {
 		.update(
 			db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
 		);
+
+	// Output type IS expanded to include all columns from returningAll()
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
 
 	// innerJoinMany is available on QuerySet
 	// oxlint-disable-next-line no-unused-expressions
@@ -3013,6 +3025,8 @@ interface Comment {
 			db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
 		);
 
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ visibleId: number }[]>();
+
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions
 	qs.innerJoinMany;
@@ -3023,6 +3037,11 @@ interface Comment {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.delete(db.deleteFrom("users").where("id", "=", 1).returningAll());
+
+	// Output type IS expanded to include all columns from returningAll()
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
 
 	// innerJoinMany is available on QuerySet
 	// oxlint-disable-next-line no-unused-expressions
@@ -3035,6 +3054,8 @@ interface Comment {
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((row) => ({ visibleId: row.id }))
 		.delete(db.deleteFrom("users").where("id", "=", 1).returningAll());
+
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ visibleId: number }[]>();
 
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions

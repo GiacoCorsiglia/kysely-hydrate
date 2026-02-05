@@ -273,10 +273,15 @@ interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQ
 	Collections: T["Collections"];
 	JoinedQuery: TJoinedQueryWithBaseQuery<T["BaseAlias"], T["JoinedQuery"], BaseQuery>;
 	OrderableColumns: T["OrderableColumns"] | (keyof BaseQuery["O"] & string);
-	// Extend in this order because we are expanding the input type, but it still
-	// needs to be overwritten by .extras() and whatnot. Then apply any omitted
-	// keys to ensure they're excluded even after the base query changes.
-	HydratedOutput: Flatten<Omit<RawExtend<BaseQuery["O"], T["HydratedOutput"]>, T["OmittedKeys"]>>;
+	// Extend in this order because we are expanding the input type, but it still needs to be
+	// overwritten by .extras() and whatnot. Then apply any omitted keys to ensure they're excluded
+	// even after the base query changes.
+	//
+	// Also, if the query set is mapped, you're not allowed to change the output type by modifying the
+	// input type.
+	HydratedOutput: T["IsMapped"] extends true
+		? T["HydratedOutput"]
+		: Flatten<Omit<RawExtend<BaseQuery["O"], T["HydratedOutput"]>, T["OmittedKeys"]>>;
 	OmittedKeys: T["OmittedKeys"];
 }
 
