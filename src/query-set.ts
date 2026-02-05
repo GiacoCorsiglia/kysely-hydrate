@@ -42,6 +42,7 @@ import {
 	type Flatten,
 	type KeyBy,
 	type NarrowPartial,
+	type RawExtend,
 	type StrictEqual,
 	type StrictSubset,
 	type TypeErrorMessage,
@@ -222,6 +223,11 @@ interface TQuerySet {
 	 * The final shape of the hydrated output row.
 	 */
 	HydratedOutput: any;
+	/**
+	 * Keys that have been omitted from the output. Tracked separately so they
+	 * can be preserved through base query changes (e.g., .insert(), .update()).
+	 */
+	OmittedKeys: PropertyKey;
 }
 
 interface TSelectQuerySet extends TQuerySet {
@@ -233,7 +239,7 @@ type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
 	: QuerySet<T>;
 
 type TInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
-type TOutput<T extends TQuerySet> = Flatten<T["HydratedOutput"]>;
+type TOutput<T extends TQuerySet> = T["HydratedOutput"];
 
 interface TMapped<in out T extends TQuerySet, in out Output> {
 	DB: T["DB"];
@@ -244,6 +250,7 @@ interface TMapped<in out T extends TQuerySet, in out Output> {
 	JoinedQuery: T["JoinedQuery"];
 	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Output;
+	OmittedKeys: T["OmittedKeys"];
 }
 
 interface TJoinedQueryWithBaseQuery<
@@ -267,8 +274,10 @@ interface TWithBaseQuery<in out T extends TQuerySet, in out BaseQuery extends TQ
 	JoinedQuery: TJoinedQueryWithBaseQuery<T["BaseAlias"], T["JoinedQuery"], BaseQuery>;
 	OrderableColumns: T["OrderableColumns"] | (keyof BaseQuery["O"] & string);
 	// Extend in this order because we are expanding the input type, but it still
-	// needs to be overwritten by .extras() and whatnot.
-	HydratedOutput: Extend<BaseQuery["O"], TOutput<T>>;
+	// needs to be overwritten by .extras() and whatnot. Then apply any omitted
+	// keys to ensure they're excluded even after the base query changes.
+	HydratedOutput: Flatten<Omit<RawExtend<BaseQuery["O"], T["HydratedOutput"]>, T["OmittedKeys"]>>;
+	OmittedKeys: T["OmittedKeys"];
 }
 
 interface TWithOutput<in out T extends TQuerySet, in out Output> {
@@ -280,6 +289,7 @@ interface TWithOutput<in out T extends TQuerySet, in out Output> {
 	JoinedQuery: T["JoinedQuery"];
 	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Output;
+	OmittedKeys: T["OmittedKeys"];
 }
 
 interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
@@ -291,6 +301,19 @@ interface TWithExtendedOutput<in out T extends TQuerySet, in out Output> {
 	JoinedQuery: T["JoinedQuery"];
 	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: Extend<T["HydratedOutput"], Output>;
+	OmittedKeys: T["OmittedKeys"];
+}
+
+interface TWithOmit<in out T extends TQuerySet, in out K extends PropertyKey> {
+	DB: T["DB"];
+	IsMapped: T["IsMapped"];
+	BaseAlias: T["BaseAlias"];
+	BaseQuery: T["BaseQuery"];
+	Collections: T["Collections"];
+	JoinedQuery: T["JoinedQuery"];
+	OrderableColumns: T["OrderableColumns"];
+	HydratedOutput: Flatten<Omit<T["HydratedOutput"], K>>;
+	OmittedKeys: T["OmittedKeys"] | K;
 }
 
 type NarrowOutput<T extends TQuerySet, Narrow> = NarrowPartial<T["HydratedOutput"], Narrow>;
@@ -356,8 +379,16 @@ type LimitOrOffset = number | bigint | null;
 export type InferOutput<Q extends { _generics: TQuerySet | undefined }> = Q extends {
 	_generics: { HydratedOutput: infer O } | undefined;
 }
-	? Flatten<O>
+	? O
 	: never;
+
+/**
+ * Given a TQuerySet, return a QuerySet or MappedQuerySet depending on whether the query set has
+ * been mapped (indicated by T["IsMapped"]).
+ */
+type MaybeMappedQuerySet<T extends TQuerySet> = T["IsMapped"] extends true
+	? MappedQuerySet<T>
+	: QuerySet<T>;
 
 /**
  * A query set that has been mapped with a transformation function.
@@ -935,7 +966,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * This method call doesn't change the SQL in any way. This method simply
 	 * returns a copy of this query set with a new output type.
 	 */
-	$castTo<NewOutput>(): MappedQuerySet<TWithOutput<T, NewOutput>>;
+	$castTo<NewOutput>(): MaybeMappedQuerySet<TWithOutput<T, NewOutput>>;
 
 	/**
 	 * Narrows (parts of) the output type of the query.
@@ -945,7 +976,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 *
 	 * See {@link k.SelectQueryBuilder.$narrowType} for more information.
 	 */
-	$narrowType<Narrow>(): MappedQuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
+	$narrowType<Narrow>(): MaybeMappedQuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
 
 	/**
 	 * Asserts that query's output row type equals the given type `T`.
@@ -964,7 +995,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * See {@link k.SelectQueryBuilder.$assertType} for more information.
 	 */
 	$assertType<NewOutput extends TOutput<T>>(): TOutput<T> extends NewOutput
-		? MappedQuerySet<TWithOutput<T, NewOutput>>
+		? MaybeMappedQuerySet<TWithOutput<T, NewOutput>>
 		: TypeErrorMessage<"$assertType() call failed: The type passed in is not equal to the output type of the query.">;
 
 	//
@@ -1006,21 +1037,21 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 */
 	insert<IQB extends k.InsertQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
 		iqb: InsertQueryBuilderOrFactory<T["DB"], IQB>,
-	): QuerySet<TWithBaseQuery<T, InferTInsertQuery<IQB>>>;
+	): MaybeMappedQuerySet<TWithBaseQuery<T, InferTInsertQuery<IQB>>>;
 
 	/**
 	 * Like {@link insert}, but switches to an `UPDATE` statement.
 	 */
 	update<IQB extends k.UpdateQueryBuilder<any, any, any, T["BaseQuery"]["O"]>>(
-		iqb: UpdateQueryBuilderOrFactory<T["DB"], IQB>,
-	): QuerySet<TWithBaseQuery<T, InferTUpdateQuery<IQB>>>;
+		uqb: UpdateQueryBuilderOrFactory<T["DB"], IQB>,
+	): MaybeMappedQuerySet<TWithBaseQuery<T, InferTUpdateQuery<IQB>>>;
 
 	/**
 	 * Like {@link insert}, but switches to a `DELETE` statement.
 	 */
 	delete<IQB extends k.DeleteQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
-		iqb: DeleteQueryBuilderOrFactory<T["DB"], IQB>,
-	): QuerySet<TWithBaseQuery<T, InferTDeleteQuery<IQB>>>;
+		dqb: DeleteQueryBuilderOrFactory<T["DB"], IQB>,
+	): MaybeMappedQuerySet<TWithBaseQuery<T, InferTDeleteQuery<IQB>>>;
 }
 
 /**
@@ -1041,44 +1072,6 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	////////////////////////////////////////////////////////////
 	// Hydration
 	////////////////////////////////////////////////////////////
-
-	/**
-	 * Changes the output type of the query.
-	 *
-	 * This method call doesn't change the SQL in any way. This method simply
-	 * returns a copy of this query set with a new output type.
-	 */
-	$castTo<NewOutput>(): QuerySet<TWithOutput<T, NewOutput>>;
-
-	/**
-	 * Narrows (parts of) the output type of the query.
-	 *
-	 * This method call doesn't change the SQL in any way. This method simply
-	 * returns a copy of this query set with a narrowed output type.
-	 *
-	 * See {@link k.SelectQueryBuilder.$narrowType} for more information.
-	 */
-	$narrowType<Narrow>(): QuerySet<TWithOutput<T, NarrowOutput<T, Narrow>>>;
-
-	/**
-	 * Asserts that query's output row type equals the given type `T`.
-	 *
-	 * This method can be used to simplify excessively complex types to make
-	 * TypeScript happy and faster.
-	 *
-	 * It's also useful as a type guard to ensure a query set matches an expected
-	 * shape, similar to annotating a function's return type. For example,
-	 * `.$assertType<UserDto>()` will produce a type error if the query's output
-	 * doesn't match `UserDto`.
-	 *
-	 * Using this method doesn't reduce type safety at all. You have to pass in
-	 * a type that is structurally equal to the current type.
-	 *
-	 * See {@link k.SelectQueryBuilder.$assertType} for more information.
-	 */
-	$assertType<NewOutput extends TOutput<T>>(): TOutput<T> extends NewOutput
-		? QuerySet<TWithOutput<T, NewOutput>>
-		: TypeErrorMessage<"$assertType() call failed: The type passed in is not equal to the output type of the query.">;
 
 	/**
 	 * Configures extra computed fields to add to the hydrated output.
@@ -1157,9 +1150,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param keys - Field names to omit from the output.
 	 * @returns A new HydratedQueryBuilder with the fields omitted.
 	 */
-	omit<K extends keyof TInput<T>>(
-		keys: readonly K[],
-	): QuerySet<TWithOutput<T, Omit<TOutput<T>, K>>>;
+	omit<K extends keyof TInput<T>>(keys: readonly K[]): QuerySet<TWithOmit<T, K>>;
 
 	/**
 	 * Extends this query builder's hydration configuration with another Hydrator.
@@ -2278,6 +2269,7 @@ interface TQuerySetWithAttach<
 	>;
 	OrderableColumns: T["OrderableColumns"];
 	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, AttachedOutputMap<FetchFnReturn>[Type]>;
+	OmittedKeys: T["OmittedKeys"];
 }
 
 interface QuerySetWithAttach<
@@ -2439,6 +2431,7 @@ type TQuerySetWithJoin<
 	JoinedQuery: JoinedQueryMap<T, Key, TNested>[Type];
 	OrderableColumns: TOrderableColumnsWithJoin<T, Key, Type, TNested>;
 	HydratedOutput: ExtendWith<T["HydratedOutput"], Key, JoinHydratedRowMap<TNested>[Type]>;
+	OmittedKeys: T["OmittedKeys"];
 }>;
 
 interface QuerySetWithJoin<
@@ -3264,7 +3257,9 @@ interface InitialQuerySet<
 	// No orderable columns other than the base query yet.
 	OrderableColumns: keyof BaseQuery["O"] & string;
 	// The hydrated output is the same as the base query output; no mapping yet.
-	HydratedOutput: BaseQuery["O"];
+	HydratedOutput: Flatten<BaseQuery["O"]>;
+	// No keys have been omitted yet.
+	OmittedKeys: never;
 }> {}
 
 // type InferDB<Q> = Q extends k.SelectQueryBuilder<infer BaseDB, any, any> ? BaseDB : never;

@@ -40,14 +40,14 @@ export type NarrowPartial<O, T> = DrainOuterGeneric<
 			}
 		: never
 >;
-export type Extend<A, B> = Flatten<
+export type Extend<A, B> = Flatten<RawExtend<A, B>>;
+export type RawExtend<A, B> =
 	// fast path when there is no keys overlap
 	keyof A & keyof B extends never
 		? A & B
 		: {
 				[K in keyof A | keyof B]: K extends keyof B ? B[K] : K extends keyof A ? A[K] : never;
-			}
->;
+			};
 export type ExtendWith<T, K extends PropertyKey, V> = Flatten<
 	// fast path when there is no keys overlap
 	K & keyof T extends never ? T & { [_ in K]: V } : Omit<T, K> & { [_ in K]: V }

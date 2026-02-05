@@ -1118,6 +1118,104 @@ interface Comment {
 ////////////////////////////////////////////////////////////
 
 //
+// Omit after selectAs().insert()
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.insert(
+			db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll(),
+		)
+		.omit(["email"]);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// Omit after selectAs().update()
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.update(
+			db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+		)
+		.omit(["email"]);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// Omit after selectAs().delete()
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.delete(db.deleteFrom("users").where("id", "=", 1).returningAll())
+		.omit(["email"]);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// Omit before insert (omit().insert())
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.omit(["email"])
+		.insert(
+			db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll(),
+		);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// Omit before update (omit().update())
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.omit(["email"])
+		.update(
+			db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+		);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// Omit before delete (omit().delete())
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.omit(["email"])
+		.delete(db.deleteFrom("users").where("id", "=", 1).returningAll());
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
 // Omit single field
 //
 
@@ -2860,6 +2958,79 @@ interface Comment {
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.innerJoinMany;
+}
+
+//
+// Write operations on QuerySet vs MappedQuerySet
+//
+
+{
+	// .insert() on QuerySet returns QuerySet, so .innerJoinMany IS available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.insert(db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll());
+
+	// innerJoinMany is available on QuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// .insert() on MappedQuerySet (after .map()) - .innerJoinMany is NOT available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.map((row) => ({ visibleId: row.id }))
+		.insert(db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll());
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// .update() on QuerySet returns QuerySet, so .innerJoinMany IS available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.update(db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll());
+
+	// innerJoinMany is available on QuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// .update() on MappedQuerySet (after .map()) - .innerJoinMany is NOT available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.map((row) => ({ visibleId: row.id }))
+		.update(db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll());
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// .delete() on QuerySet returns QuerySet, so .innerJoinMany IS available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.delete(db.deleteFrom("users").where("id", "=", 1).returningAll());
+
+	// innerJoinMany is available on QuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// .delete() on MappedQuerySet (after .map()) - .innerJoinMany is NOT available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.map((row) => ({ visibleId: row.id }))
+		.delete(db.deleteFrom("users").where("id", "=", 1).returningAll());
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
 }
 
 ////////////////////////////////////////////////////////////
