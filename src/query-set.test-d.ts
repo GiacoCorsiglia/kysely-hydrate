@@ -2968,7 +2968,9 @@ interface Comment {
 	// .insert() on QuerySet returns QuerySet, so .innerJoinMany IS available
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.insert(db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll());
+		.insert(
+			db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll(),
+		);
 
 	// innerJoinMany is available on QuerySet
 	// oxlint-disable-next-line no-unused-expressions
@@ -2980,7 +2982,9 @@ interface Comment {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((row) => ({ visibleId: row.id }))
-		.insert(db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll());
+		.insert(
+			db.insertInto("users").values({ username: "test", email: "test@test.com" }).returningAll(),
+		);
 
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions
@@ -2991,7 +2995,9 @@ interface Comment {
 	// .update() on QuerySet returns QuerySet, so .innerJoinMany IS available
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.update(db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll());
+		.update(
+			db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+		);
 
 	// innerJoinMany is available on QuerySet
 	// oxlint-disable-next-line no-unused-expressions
@@ -3003,7 +3009,9 @@ interface Comment {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((row) => ({ visibleId: row.id }))
-		.update(db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll());
+		.update(
+			db.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+		);
 
 	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
 	// oxlint-disable-next-line no-unused-expressions
