@@ -54,10 +54,12 @@ import {
 	type AttachedKeysArg,
 	type AttachedOutputFromFetchFnReturn,
 	type CollectionMode,
+	type Extender,
 	type Extras,
 	type FieldMappings,
 	type FullHydrator,
 	type Hydrator,
+	type InferExtender,
 	type InferExtras,
 	type InferFields,
 	type InputWithDefaultKey,
@@ -1108,6 +1110,40 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	extras<E extends Extras<TInput<T>>>(
 		extras: E,
 	): QuerySet<TWithExtendedOutput<T, InferExtras<TInput<T>, E>>>;
+
+	/**
+	 * Adds computed fields to the hydrated output by spreading the return value
+	 * of a function.  Unlike `.extras()` which defines one field at a time,
+	 * `.extend()` calls a single function whose returned object is merged into
+	 * the output.
+	 *
+	 * ### Examples
+	 *
+	 * ```ts
+	 * const users = await querySet(db)
+	 *   .selectAs("users", (eb) => eb.selectFrom("users").select(["users.id", "users.firstName", "users.lastName"]))
+	 *   .extend((row) => ({
+	 *     fullName: `${row.firstName} ${row.lastName}`,
+	 *     initials: `${row.firstName[0]}${row.lastName[0]}`,
+	 *   }))
+	 *   .execute();
+	 * // ⬇
+	 * type Result = Array<{
+	 *   id: number;
+	 *   firstName: string;
+	 *   lastName: string;
+	 *   fullName: string;
+	 *   initials: string;
+	 * }>;
+	 * ```
+	 *
+	 * @param fn - A function that receives the row and returns an object of
+	 *   computed properties.
+	 * @returns A new HydratedQueryBuilder with the extender applied.
+	 */
+	extend<F extends Extender<TInput<T>>>(
+		fn: F,
+	): QuerySet<TWithExtendedOutput<T, InferExtender<TInput<T>, F>>>;
 
 	/**
 	 * Transforms already-selected field values in the hydrated output.  Fields
@@ -2961,6 +2997,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		});
 	}
 
+	extend(fn: Extender<any>) {
+		return this.#clone({
+			hydrator: asFullHydrator(this.#props.hydrator).extend(fn),
+		});
+	}
+
 	mapFields(mappings: FieldMappings<any>) {
 		return this.#clone({
 			hydrator: asFullHydrator(this.#props.hydrator).fields(mappings),
@@ -2975,7 +3017,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	with(hydrator: Hydrator<any, any>) {
 		return this.#clone({
-			hydrator: asFullHydrator(this.#props.hydrator).extend(hydrator),
+			hydrator: asFullHydrator(this.#props.hydrator).with(hydrator),
 		});
 	}
 

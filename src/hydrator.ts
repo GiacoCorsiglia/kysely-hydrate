@@ -83,6 +83,17 @@ export type InferExtras<Input, E extends Extras<Input>> = {
 };
 
 /**
+ * An extender function that receives the full input and returns an object
+ * of computed properties to merge into the output.
+ */
+export type Extender<Input> = (input: Input) => Record<string, unknown>;
+
+/**
+ * Infers the output type for an extender function.
+ */
+export type InferExtender<Input, F extends Extender<Input>> = ReturnType<F>;
+
+/**
  * The mode of a collection.
  *
  * - "many": The collection is an array of objects.
@@ -210,6 +221,11 @@ type FieldsMap = Map<string, true | false | ((value: any) => unknown)>;
 type ExtrasMap = Map<string, (input: any) => unknown>;
 
 /**
+ * Internal array type for extender functions.
+ */
+type ExtendersArray = Array<(input: any) => Record<string, unknown>>;
+
+/**
  * Internal map type for nested collections configuration.
  */
 type CollectionsMap = Map<string, Collection<any, any>>;
@@ -239,6 +255,11 @@ interface HydratorProps<Input> {
 	 * Extra fields generated from the entire input.
 	 */
 	readonly extras?: ExtrasMap | undefined;
+
+	/**
+	 * Extender functions that return objects to merge into the output.
+	 */
+	readonly extenders?: ExtendersArray | undefined;
 
 	/**
 	 * An optional map of nested collections.
@@ -482,17 +503,31 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	): FullHydrator<Input, Extend<Output, InferExtras<Input, E>>>;
 
 	/**
-	 * Extends this Hydrator with the configuration from another Hydrator.  The
+	 * Adds computed fields to the hydrated output by spreading the return value
+	 * of a function.  Unlike `.extras()` which defines one field at a time,
+	 * `.extend()` calls a single function whose returned object is merged into
+	 * the output.
+	 *
+	 * @param fn - A function that receives the input and returns an object of
+	 *   computed properties
+	 * @returns A new Hydrator with the extender applied
+	 */
+	extend<F extends Extender<Input>>(
+		fn: F,
+	): FullHydrator<Input, Extend<Output, InferExtender<Input, F>>>;
+
+	/**
+	 * Composes this Hydrator with the configuration from another Hydrator.  The
 	 * other Hydrator's configuration takes precedence in case of conflicts.
 	 *
 	 * Both hydrators must have the same `keyBy`, and any overlapping fields
 	 * between the two input types must have compatible types.
 	 *
-	 * @param other - The Hydrator to extend with
+	 * @param other - The Hydrator to compose with
 	 * @returns A new Hydrator with merged configuration
 	 * @throws {KeyByMismatchError} If the keyBy configurations don't match
 	 */
-	extend<
+	with<
 		// OtherInput doesn't need to overlap with Input, but any overlapping fields
 		// must have compatible types.
 		OtherInput extends Partial<Input>,
@@ -505,7 +540,7 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 		// Extend, don't intersect, because the output gets overridden.
 		Extend<Output, OtherOutput>
 	>;
-	extend<
+	with<
 		// OtherInput doesn't need to overlap with Input, but any overlapping fields
 		// must have compatible types.
 		OtherInput extends Partial<Input>,
@@ -831,7 +866,15 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}) as any;
 	}
 
-	extend(other: MappedHydrator<any, any>): any {
+	extend(fn: Extender<any>): any {
+		return new HydratorImpl({
+			...this.#props,
+
+			extenders: [...(this.#props.extenders ?? []), fn],
+		}) as any;
+	}
+
+	with(other: MappedHydrator<any, any>): any {
 		const otherImpl = other as any as HydratorImpl;
 		const thisKeyBy = JSON.stringify(this.#props.keyBy);
 		const otherKeyBy = JSON.stringify(otherImpl.#props.keyBy);
@@ -849,6 +892,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			keyBy: otherProps.keyBy as any,
 			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
 			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
+			extenders: [...(ownProps.extenders ?? []), ...(otherProps.extenders ?? [])],
 			collections: mergedCollections,
 			attachedCollections: new Map([
 				...(ownProps.attachedCollections ?? []),
@@ -1083,7 +1127,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * Hydrates a single entity. All attach collections are already fetched and provided in attachedDataMap.
 	 */
 	#hydrateOne(ctx: HydrationContext, prefix: string, input: Input, inputRows: Input[]): Output {
-		const { fields, extras, collections, attachedCollections } = this.#props;
+		const { fields, extras, extenders, collections, attachedCollections } = this.#props;
 
 		const entity: any = {};
 
@@ -1105,11 +1149,19 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			}
 		}
 
-		if (extras) {
+		if (extras || extenders) {
 			const accessor = createdPrefixedAccessor(prefix, input as object);
 
-			for (const [key, extra] of extras) {
-				entity[key] = extra(accessor as Input);
+			if (extras) {
+				for (const [key, extra] of extras) {
+					entity[key] = extra(accessor as Input);
+				}
+			}
+
+			if (extenders) {
+				for (const extender of extenders) {
+					Object.assign(entity, extender(accessor as Input));
+				}
 			}
 		}
 

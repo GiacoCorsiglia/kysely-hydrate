@@ -132,6 +132,7 @@ type Result = Array<{
   - [Inspect the SQL](#inspecting-the-sql)
   - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
   - [Computed properties with `.extras()`](#computed-properties-with-extras)
+  - [Computed properties with `.extend()`](#computed-properties-with-extend)
   - [Excluded properties with `.omit()`](#excluded-properties-with-omit)
   - [Output transformations with `.map()`](#output-transformations-with-map)
   - [Composable mappings with `.with()`](#composable-mappings-with-with)
@@ -146,7 +147,7 @@ type Result = Array<{
   - [Output transformations with `.map()`](#output-transformations-with-map-1)
   - [Attached collections with `.attach*()`](#attached-collections-with-attach)
   - [Prefixed collections with `.has*()`](#prefixed-collections-with-has)
-  - [Composing hydrators with `.extend()`](#composing-hydrators-with-extend)
+  - [Composing hydrators with `.with()`](#composing-hydrators-with-with)
 - [FAQ](#faq)
 
 ## Installation
@@ -843,6 +844,34 @@ type Result = Array<{
 }>;
 ```
 
+### Computed properties with `.extend()`
+
+Like `.extras()`, but takes a single function that returns an object. All
+returned keys are merged into the output. This is useful when multiple computed
+fields share intermediate work.
+
+```ts
+const users = await querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "firstName", "lastName", "birthDate"]))
+	.extend((row) => {
+		const names = [row.firstName, row.lastName];
+		return {
+			fullName: names.join(" "),
+			initials: names.map((n) => n[0]).join(""),
+		};
+	})
+	.execute();
+// ⬇
+type Result = Array<{
+	id: number;
+	firstName: string;
+	lastName: string;
+	birthDate: Date;
+	fullName: string;
+	initials: string;
+}>;
+```
+
 ### Excluded properties with `.omit()`
 
 Remove fields from the final output. This is useful for removing intermediate
@@ -1355,7 +1384,7 @@ type Result = UserModel[];
 
 As in query sets, `.map()` is a terminal operation—after calling it, you can
 only call `.map()` again or `.hydrate()`. You cannot call configuration methods
-like `.fields()`, `.extras()`, `.has*()`, or `.extend()`.
+like `.fields()`, `.extras()`, `.has*()`, or `.with()`.
 
 ```ts
 const mapped = createHydrator<User>()
@@ -1368,7 +1397,7 @@ mapped.hydrate(rows);
 
 // ❌ These don't compile:
 mapped.fields({ ... });   // Error: Property 'fields' does not exist
-mapped.extend(...);       // Error: Property 'extend' does not exist
+mapped.with(...);         // Error: Property 'with' does not exist
 ```
 
 ### Attached collections with `.attach*()`
@@ -1423,7 +1452,7 @@ non-nullable column that was made nullable by a left join; or, (b) it's actually
 nullable in the "posts" table. The query set API, on the other hand, _does_
 know the difference, and so does not suffer from this problem.
 
-### Composing hydrators with `.extend()`
+### Composing hydrators with `.with()`
 
 Merges two hydrators. The second hydrator's configuration takes precedence.
 
@@ -1431,7 +1460,7 @@ This is a good way to build small, reusable hydrators (for a "user preview", a
 "user display name", etc.) and compose them.
 
 > [!NOTE]
-> Hydrators must have the same `keyBy`. If they don't, `.extend()` throws.
+> Hydrators must have the same `keyBy`. If they don't, `.with()` throws.
 
 ```ts
 type UserRow = { id: number; username: string; email: string };
@@ -1442,7 +1471,7 @@ const withDisplayName = createHydrator<UserRow>().extras({
 	displayName: (u) => `${u.username} <${u.email}>`,
 });
 
-const combined = base.extend(withDisplayName);
+const combined = base.with(withDisplayName);
 // ⬇
 type Result = Hydrator<UserRow, { id: number; username: string; displayName: string }>;
 ```

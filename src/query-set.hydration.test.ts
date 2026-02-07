@@ -101,6 +101,34 @@ describe("query-set: hydration", () => {
 		assert.deepStrictEqual(users, [{ id: 1, username: "alice", first: "first", second: "second" }]);
 	});
 
+	// extend: Add computed fields from a single function
+
+	test("extend: spreads returned object onto hydrated output", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 1)
+			.extend((row) => ({
+				greeting: `Hello, ${row.username}`,
+				nameLength: row.username.length,
+			}))
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice", greeting: "Hello, alice", nameLength: 5 },
+		]);
+	});
+
+	test("extend: interleaves with extras", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 1)
+			.extras({ upper: (row) => row.username.toUpperCase() })
+			.extend((row) => ({ lower: row.username.toLowerCase() }))
+			.execute();
+
+		assert.deepStrictEqual(users, [{ id: 1, username: "alice", upper: "ALICE", lower: "alice" }]);
+	});
+
 	// mapFields: Transform field values
 
 	test("mapFields: transform single field value", async () => {

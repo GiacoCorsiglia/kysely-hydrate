@@ -123,6 +123,52 @@ test("extras: work at nested level", async () => {
 	assert.strictEqual(result[0]?.posts[0]?.fullTitle, "Post #10: Post");
 });
 
+test("extend: spreads returned object onto hydrated output", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extend((input) => ({
+			displayName: `User ${input.name}`,
+			nameLength: input.name.length,
+		}));
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, displayName: "User Alice", nameLength: 5 }]);
+});
+
+test("extend: can be chained and interleaved with extras", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extras({ upper: (input) => input.name.toUpperCase() })
+		.extend((input) => ({ lower: input.name.toLowerCase() }))
+		.extras({ length: (input) => input.name.length });
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, upper: "ALICE", lower: "alice", length: 5 }]);
+});
+
+test("extend: preserved through .with() composition", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const baseHydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extend((input) => ({ displayName: `User ${input.name}` }));
+
+	const otherHydrator = createHydrator<User>("id").extras({
+		upper: (input) => input.name.toUpperCase(),
+	});
+
+	const combined = baseHydrator.with(otherHydrator);
+	const result = await hydrate(users, combined);
+
+	assert.deepStrictEqual(result, [{ id: 1, displayName: "User Alice", upper: "ALICE" }]);
+});
+
 test("omit: removes specified fields from output", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
@@ -1077,20 +1123,20 @@ test("complex nesting: has and attach at multiple levels", async () => {
 // Hydrator composition
 //
 
-test("extend: merges fields from two hydrators", async () => {
+test("with: merges fields from two hydrators", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
 	const baseHydrator = createHydrator<User>("id").fields({ id: true });
 
 	const nameHydrator = createHydrator<User>("id").fields({ name: true });
 
-	const combined = baseHydrator.extend(nameHydrator);
+	const combined = baseHydrator.with(nameHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
 });
 
-test("extend: other hydrator's fields take precedence", async () => {
+test("with: other hydrator's fields take precedence", async () => {
 	const users: User[] = [{ id: 1, name: "alice" }];
 
 	const baseHydrator = createHydrator<User>("id").fields({
@@ -1102,13 +1148,13 @@ test("extend: other hydrator's fields take precedence", async () => {
 		name: (name) => name.toLowerCase() + "-other",
 	});
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "alice-other" }]);
 });
 
-test("extend: merges extras from two hydrators", async () => {
+test("with: merges extras from two hydrators", async () => {
 	interface UserWithEmail extends User {
 		email: string;
 	}
@@ -1125,7 +1171,7 @@ test("extend: merges extras from two hydrators", async () => {
 		emailUpper: (user) => user.email.toUpperCase(),
 	});
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1139,7 +1185,7 @@ test("extend: merges extras from two hydrators", async () => {
 	]);
 });
 
-test("extend: other hydrator's extras take precedence", async () => {
+test("with: other hydrator's extras take precedence", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
 	const baseHydrator = createHydrator<User>("id")
@@ -1152,13 +1198,13 @@ test("extend: other hydrator's extras take precedence", async () => {
 		greeting: () => "Hi",
 	});
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.strictEqual(result[0]?.greeting, "Hi");
 });
 
-test("extend: merges collections from two hydrators", async () => {
+test("with: merges collections from two hydrators", async () => {
 	interface UserWithPosts extends User {
 		posts$$id: number | null;
 		posts$$title: string | null;
@@ -1185,7 +1231,7 @@ test("extend: merges collections from two hydrators", async () => {
 		h("id").fields({ id: true, content: true }),
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1198,7 +1244,7 @@ test("extend: merges collections from two hydrators", async () => {
 	]);
 });
 
-test("extend: other hydrator's collections take precedence", async () => {
+test("with: other hydrator's collections take precedence", async () => {
 	interface UserWithPosts extends User {
 		posts$$id: number | null;
 		posts$$title: string | null;
@@ -1221,7 +1267,7 @@ test("extend: other hydrator's collections take precedence", async () => {
 		h("id").fields({ id: true, title: (title) => title?.toUpperCase() ?? "" }),
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1233,7 +1279,7 @@ test("extend: other hydrator's collections take precedence", async () => {
 	]);
 });
 
-test("extend: throws when keyBy doesn't match", () => {
+test("with: throws when keyBy doesn't match", () => {
 	interface Post {
 		id: number;
 		userId: number;
@@ -1243,10 +1289,10 @@ test("extend: throws when keyBy doesn't match", () => {
 
 	const postHydrator = createHydrator<Post>("userId").fields({ userId: true });
 
-	assert.throws(() => userHydrator.extend(postHydrator as any), KeyByMismatchError);
+	assert.throws(() => userHydrator.with(postHydrator as any), KeyByMismatchError);
 });
 
-test("extend: works with composite keys", async () => {
+test("with: works with composite keys", async () => {
 	interface UserPost {
 		userId: number;
 		postId: number;
@@ -1264,13 +1310,13 @@ test("extend: works with composite keys", async () => {
 		content: true,
 	});
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [{ userId: 1, postId: 10, content: "Hello" }]);
 });
 
-test("extend: works bidirectionally (no constraint on OtherInput)", async () => {
+test("with: works bidirectionally (no constraint on OtherInput)", async () => {
 	interface AdminUser extends User {
 		role: string;
 	}
@@ -1281,20 +1327,20 @@ test("extend: works bidirectionally (no constraint on OtherInput)", async () => 
 
 	const adminHydrator = createHydrator<AdminUser>("id").fields({ role: true });
 
-	// Direction 1: User extended with AdminUser
-	const combined1 = userHydrator.extend(adminHydrator);
+	// Direction 1: User composed with AdminUser
+	const combined1 = userHydrator.with(adminHydrator);
 	const result1 = await hydrate(users, combined1);
 
 	assert.deepStrictEqual(result1, [{ id: 1, name: "Alice", role: "admin" }]);
 
-	// Direction 2: AdminUser extended with User (reverse)
-	const combined2 = adminHydrator.extend(userHydrator);
+	// Direction 2: AdminUser composed with User (reverse)
+	const combined2 = adminHydrator.with(userHydrator);
 	const result2 = await hydrate(users, combined2);
 
 	assert.deepStrictEqual(result2, [{ id: 1, name: "Alice", role: "admin" }]);
 });
 
-test("extend: merges hasOne collections", async () => {
+test("with: merges hasOne collections", async () => {
 	interface UserWithProfile extends User {
 		profile$$id: number | null;
 		profile$$bio: string | null;
@@ -1323,7 +1369,7 @@ test("extend: merges hasOne collections", async () => {
 		(h) => h("id").fields({ id: true, theme: true }),
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1336,7 +1382,7 @@ test("extend: merges hasOne collections", async () => {
 	]);
 });
 
-test("extend: merges hasOneOrThrow collections", async () => {
+test("with: merges hasOneOrThrow collections", async () => {
 	interface UserWithSettings extends User {
 		settings$$id: number;
 		settings$$theme: string;
@@ -1365,7 +1411,7 @@ test("extend: merges hasOneOrThrow collections", async () => {
 		(h) => h("id").fields({ id: true, language: true }),
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(rows, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1378,7 +1424,7 @@ test("extend: merges hasOneOrThrow collections", async () => {
 	]);
 });
 
-test("extend: merges attachMany collections", async () => {
+test("with: merges attachMany collections", async () => {
 	interface Post {
 		id: number;
 		userId: number;
@@ -1413,7 +1459,7 @@ test("extend: merges attachMany collections", async () => {
 		{ matchChild: "userId" },
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1426,7 +1472,7 @@ test("extend: merges attachMany collections", async () => {
 	]);
 });
 
-test("extend: merges attachOne collections", async () => {
+test("with: merges attachOne collections", async () => {
 	interface Profile {
 		userId: number;
 		bio: string;
@@ -1451,7 +1497,7 @@ test("extend: merges attachOne collections", async () => {
 		{ matchChild: "userId" },
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [
@@ -1464,7 +1510,7 @@ test("extend: merges attachOne collections", async () => {
 	]);
 });
 
-test("extend: merges attachOneOrThrow collections", async () => {
+test("with: merges attachOneOrThrow collections", async () => {
 	interface Settings {
 		userId: number;
 		theme: string;
@@ -1489,7 +1535,7 @@ test("extend: merges attachOneOrThrow collections", async () => {
 		{ matchChild: "userId" },
 	);
 
-	const combined = baseHydrator.extend(otherHydrator);
+	const combined = baseHydrator.with(otherHydrator);
 	const result = await hydrate(users, combined);
 
 	assert.deepStrictEqual(result, [

@@ -118,6 +118,50 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 }
 
 //
+// Extend: computed fields from a single function
+//
+
+{
+	interface User {
+		id: number;
+		firstName: string;
+		lastName: string;
+	}
+
+	// Return type is correctly inferred and merged with existing output
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extend((user) => ({
+			fullName: `${user.firstName} ${user.lastName}`,
+			nameLength: user.firstName.length + user.lastName.length,
+		}));
+
+	const result = hydrator.hydrate([] as User[]);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			fullName: string;
+			nameLength: number;
+		}[]
+	>();
+
+	// Chaining .extras() then .extend() produces the union of both
+	const hydrator2 = createHydrator<User>("id")
+		.fields({ id: true })
+		.extras({ upper: (u) => u.firstName.toUpperCase() })
+		.extend((u) => ({ lower: u.firstName.toLowerCase() }));
+
+	expectTypeOf(hydrator2.hydrate([] as User[])).resolves.toEqualTypeOf<
+		{
+			id: number;
+			upper: string;
+			lower: string;
+		}[]
+	>();
+}
+
+//
 // Nested collections: hasMany, hasOne, hasOneOrThrow
 //
 
@@ -693,7 +737,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 }
 
 //
-// extend: composing hydrators
+// with: composing hydrators
 //
 
 {
@@ -703,12 +747,12 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 		email: string;
 	}
 
-	// Basic extend: merges fields
+	// Basic with: merges fields
 	const baseHydrator = createHydrator<User>("id").fields({ id: true, name: true });
 
 	const emailHydrator = createHydrator<User>("id").fields({ email: true });
 
-	const combined = baseHydrator.extend(emailHydrator);
+	const combined = baseHydrator.with(emailHydrator);
 
 	const result = combined.hydrate([] as User[]);
 
@@ -723,7 +767,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 		name: (name): number => name.length,
 	});
 
-	const combined2 = upperHydrator.extend(lengthHydrator);
+	const combined2 = upperHydrator.with(lengthHydrator);
 
 	const result2 = combined2.hydrate([] as User[]);
 
@@ -741,7 +785,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 		emailLower: (user) => user.email.toLowerCase(),
 	});
 
-	const combined3 = hydrator1.extend(hydrator2);
+	const combined3 = hydrator1.with(hydrator2);
 
 	const result3 = combined3.hydrate([] as User[]);
 
@@ -758,7 +802,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 
 	const adminHydrator = createHydrator<AdminUser>("id").fields({ role: true });
 
-	const combined4 = userHydrator.extend(adminHydrator);
+	const combined4 = userHydrator.with(adminHydrator);
 
 	// Input type is intersection: User & AdminUser = AdminUser
 	const result4 = combined4.hydrate([] as AdminUser[]);
@@ -766,7 +810,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 	expectTypeOf(result4).resolves.toEqualTypeOf<{ id: number; name: string; role: string }[]>();
 
 	// Also works in reverse direction (no constraint on OtherInput)
-	const combined5 = adminHydrator.extend(userHydrator);
+	const combined5 = adminHydrator.with(userHydrator);
 
 	// Input type is still AdminUser (AdminUser & User = AdminUser)
 	const result5 = combined5.hydrate([] as AdminUser[]);
@@ -783,7 +827,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 
 	const titleHydrator = createHydrator<Post>("id").fields({ title: true });
 
-	const combined6 = nameHydrator.extend(titleHydrator);
+	const combined6 = nameHydrator.with(titleHydrator);
 
 	// Input type is User & Post = { id, name, email, title }
 	type UserAndPost = User & Post;
@@ -791,14 +835,14 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 
 	expectTypeOf(result6).resolves.toEqualTypeOf<{ name: string; title: string }[]>();
 
-	// Cannot extend with incompatible overlapping field types
-	createHydrator<{ id: number; name: string }>("id").extend(
+	// Cannot compose with incompatible overlapping field types
+	createHydrator<{ id: number; name: string }>("id").with(
 		// @ts-expect-error - id type mismatch (number vs string)
 		createHydrator<{ id: string; role: string }>("id"),
 	);
 
 	// Incompatible field types in the other direction too
-	createHydrator<{ id: string; role: string }>("id").extend(
+	createHydrator<{ id: string; role: string }>("id").with(
 		// @ts-expect-error - id type mismatch (string vs number)
 		createHydrator<{ id: number; name: string }>("id"),
 	);
@@ -1008,6 +1052,10 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.attachOneOrThrow;
 
+	// @ts-expect-error - cannot call with() after map()
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.with;
+
 	// @ts-expect-error - cannot call extend() after map()
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.extend;
@@ -1081,7 +1129,7 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 }
 
 //
-// map() with extend()
+// map() with with()
 //
 
 {
@@ -1090,28 +1138,28 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 		name: string;
 	}
 
-	// Cannot extend a mapped hydrator
+	// Cannot compose onto a mapped hydrator
 	const baseHydrator = createHydrator<User>("id").fields({ id: true, name: true });
 
 	const mappedHydrator = createHydrator<User>("id")
 		.fields({ id: true })
 		.map((u) => ({ userId: u.id }));
 
-	// This should work - extending with a mapped hydrator
-	const extended = baseHydrator.extend(mappedHydrator);
-	const result1 = extended.hydrate([] as User[]);
+	// This should work - composing with a mapped hydrator
+	const composed = baseHydrator.with(mappedHydrator);
+	const result1 = composed.hydrate([] as User[]);
 	expectTypeOf(result1).resolves.toEqualTypeOf<{ id: number; name: string; userId: number }[]>();
 
-	// @ts-expect-error - cannot call fields() after extend() with a mapped hydrator
+	// @ts-expect-error - cannot call fields() after with() with a mapped hydrator
 	// oxlint-disable-next-line no-unused-expressions
-	extended.extras;
+	composed.extras;
 
 	const otherHydrator = createHydrator<User>("id").extras({ displayName: (u) => u.name });
 
-	// However, extending with a full hydrator should produce a full hydrator.
-	const extendedButNotMapped = baseHydrator.extend(otherHydrator);
+	// However, composing with a full hydrator should produce a full hydrator.
+	const composedButNotMapped = baseHydrator.with(otherHydrator);
 	// This is allowed.
-	const extendedWithExtras = extendedButNotMapped.extras({ idSquared: (u) => u.id ** 2 });
+	const extendedWithExtras = composedButNotMapped.extras({ idSquared: (u) => u.id ** 2 });
 	expectTypeOf(extendedWithExtras.hydrate([] as User[])).resolves.toEqualTypeOf<
 		{
 			id: number;

@@ -1048,6 +1048,34 @@ interface Comment {
 }
 
 ////////////////////////////////////////////////////////////
+// Section 17b: Hydration - extend
+////////////////////////////////////////////////////////////
+
+//
+// Return type is correctly inferred through QuerySet
+//
+
+{
+	const result = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.extend((row) => ({
+			displayName: `${row.username} <${row.email}>`,
+			nameLength: row.username.length,
+		}))
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			email: string;
+			displayName: string;
+			nameLength: number;
+		}[]
+	>();
+}
+
+////////////////////////////////////////////////////////////
 // Section 18: Hydration - mapFields
 ////////////////////////////////////////////////////////////
 
@@ -2318,6 +2346,10 @@ interface Comment {
 	// @ts-expect-error - cannot call with after map
 	// oxlint-disable-next-line no-unused-expressions
 	mapped.with;
+
+	// @ts-expect-error - cannot call extend after map
+	// oxlint-disable-next-line no-unused-expressions
+	mapped.extend;
 }
 
 //

@@ -233,7 +233,7 @@ describe("Hydrator ordering", () => {
 
 		const baseHydrator = createHydrator<Post>().fields(["id", "title", "user_id"]).orderByKeys();
 
-		const extendedHydrator = createHydrator<Post>().orderBy("title", "asc").extend(baseHydrator);
+		const extendedHydrator = createHydrator<Post>().orderBy("title", "asc").with(baseHydrator);
 
 		const hydrator = createHydrator<User>()
 			.fields(["id", "username"])

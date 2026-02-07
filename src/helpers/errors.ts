@@ -87,12 +87,12 @@ export class UnsupportedNodeTypeError extends KyselyHydrateError {
 }
 
 /**
- * Error thrown when attempting to extend a Hydrator with another Hydrator
+ * Error thrown when composing a Hydrator with another Hydrator
  * that has a different keyBy configuration.
  */
 export class KeyByMismatchError extends KyselyHydrateError {
 	constructor(thisKeyBy: string, otherKeyBy: string) {
-		super(`Cannot extend hydrators with different keyBy: ${thisKeyBy} vs ${otherKeyBy}`);
+		super(`Cannot compose hydrators with different keyBy: ${thisKeyBy} vs ${otherKeyBy}`);
 	}
 }
 
