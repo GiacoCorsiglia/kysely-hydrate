@@ -1261,10 +1261,6 @@ type Result = {
 };
 ```
 
-> [!NOTE]
-> If the provided `SELECT` has no CTEs, `writeAs()` behaves identically to
-> `selectAs()`.
-
 ### Type Helpers
 
 Kysely Hydrate provides type helpers that mirror
