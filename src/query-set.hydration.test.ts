@@ -571,4 +571,106 @@ describe("query-set: hydration", () => {
 
 		assert.deepStrictEqual(users, [{ userId: 2, name: "bob", postCount: 4 }]);
 	});
+
+	// hydrate: Hydrate pre-fetched rows without executing a query
+
+	test("hydrate: hydrates an array of raw rows", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 2);
+
+		const rows = await qs.toQuery().execute();
+		const users = await qs.hydrate(rows);
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice" },
+			{ id: 2, username: "bob" },
+		]);
+	});
+
+	test("hydrate: hydrates a single raw row", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 1);
+
+		const [row] = await qs.toQuery().execute();
+		const user = await qs.hydrate(row!);
+
+		assert.deepStrictEqual(user, { id: 1, username: "alice" });
+	});
+
+	test("hydrate: applies extras and mapFields", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+			.where("users.id", "=", 1)
+			.extras({ displayName: (row) => `User: ${row.username}` })
+			.mapFields({ username: (v) => v.toUpperCase() });
+
+		const rows = await qs.toQuery().execute();
+		const users = await qs.hydrate(rows);
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "ALICE", email: "alice@example.com", displayName: "User: alice" },
+		]);
+	});
+
+	test("hydrate: hydrates nested joins", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			);
+
+		const rows = await qs.toQuery().execute();
+		const users = await qs.hydrate(rows);
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2 },
+					{ id: 2, title: "Post 2", user_id: 2 },
+					{ id: 5, title: "Post 5", user_id: 2 },
+					{ id: 12, title: "Post 12", user_id: 2 },
+				],
+			},
+		]);
+	});
+
+	test("hydrate: accepts a promise of rows", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 2);
+
+		const users = await qs.hydrate(qs.toQuery().execute());
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice" },
+			{ id: 2, username: "bob" },
+		]);
+	});
+
+	test("hydrate: produces same result as execute", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 3)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).omit(["user_id"]),
+				"posts.user_id",
+				"user.id",
+			);
+
+		const fromExecute = await qs.execute();
+		const rows = await qs.toQuery().execute();
+		const fromHydrate = await qs.hydrate(rows);
+
+		assert.deepStrictEqual(fromHydrate, fromExecute);
+	});
 });

@@ -240,7 +240,8 @@ type QuerySetFor<T extends TQuerySet> = T["IsMapped"] extends true
 	? MappedQuerySet<T>
 	: QuerySet<T>;
 
-type TInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
+type THydrationInput<T extends TQuerySet> = T["JoinedQuery"]["O"];
+
 type TOutput<T extends TQuerySet> = T["HydratedOutput"];
 
 interface TMapped<in out T extends TQuerySet, in out Output> {
@@ -540,6 +541,46 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * ```
 	 */
 	toExistsQuery(): OpaqueExistsQueryBuilder;
+
+	/**
+	 * Hydrates pre-fetched raw joined rows into nested output objects without
+	 * executing a query.
+	 *
+	 * This is useful when you already have the flat SQL result (e.g. from a
+	 * separate query, a cache, or a transaction) and want to apply the same
+	 * hydration logic that `.execute()` uses.
+	 *
+	 * **Example - single row:**
+	 * ```ts
+	 * const qs = querySet(db)
+	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	 *   .leftJoinMany("posts", ...);
+	 *
+	 * const row = await qs.toQuery().executeTakeFirstOrThrow();
+	 * const user = await qs.hydrate(row);
+	 * ```
+	 *
+	 * **Example - multiple rows:**
+	 * ```ts
+	 * const rows = await qs.toQuery().execute();
+	 * const users = await qs.hydrate(rows);
+	 * ```
+	 *
+	 * @param input - A single flat row or an iterable of flat rows matching the
+	 *   joined query output shape.
+	 * @returns The hydrated output(s).
+	 */
+	hydrate(input: THydrationInput<T> | Promise<THydrationInput<T>>): Promise<TOutput<T>>;
+	hydrate(
+		input: Iterable<THydrationInput<T>> | Promise<Iterable<THydrationInput<T>>>,
+	): Promise<TOutput<T>[]>;
+	hydrate(
+		input:
+			| THydrationInput<T>
+			| Iterable<THydrationInput<T>>
+			| Promise<THydrationInput<T>>
+			| Promise<Iterable<THydrationInput<T>>>,
+	): Promise<TOutput<T> | TOutput<T>[]>;
 
 	/**
 	 * Executes the query and returns an array of hydrated rows.
@@ -1107,9 +1148,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   the field value from the entire row.
 	 * @returns A new HydratedQueryBuilder with the extras applied.
 	 */
-	extras<E extends Extras<TInput<T>>>(
+	extras<E extends Extras<THydrationInput<T>>>(
 		extras: E,
-	): QuerySet<TWithExtendedOutput<T, InferExtras<TInput<T>, E>>>;
+	): QuerySet<TWithExtendedOutput<T, InferExtras<THydrationInput<T>, E>>>;
 
 	/**
 	 * Adds computed fields to the hydrated output by spreading the return value
@@ -1141,9 +1182,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   computed properties.
 	 * @returns A new HydratedQueryBuilder with the extender applied.
 	 */
-	extend<F extends Extender<TInput<T>>>(
+	extend<F extends Extender<THydrationInput<T>>>(
 		fn: F,
-	): QuerySet<TWithExtendedOutput<T, InferExtender<TInput<T>, F>>>;
+	): QuerySet<TWithExtendedOutput<T, InferExtender<THydrationInput<T>, F>>>;
 
 	/**
 	 * Transforms already-selected field values in the hydrated output.  Fields
@@ -1166,9 +1207,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * functions.
 	 * @returns A new HydratedQueryBuilder with the field transformations applied.
 	 */
-	mapFields<M extends FieldMappings<TInput<T>>>(
+	mapFields<M extends FieldMappings<THydrationInput<T>>>(
 		mappings: M,
-	): QuerySet<TWithExtendedOutput<T, InferFields<TInput<T>, M>>>;
+	): QuerySet<TWithExtendedOutput<T, InferFields<THydrationInput<T>, M>>>;
 
 	/**
 	 * Omits specified fields from the hydrated output.  Useful for excluding
@@ -1191,7 +1232,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param keys - Field names to omit from the output.
 	 * @returns A new HydratedQueryBuilder with the fields omitted.
 	 */
-	omit<K extends keyof TInput<T>>(keys: readonly K[]): QuerySet<TWithOmit<T, K>>;
+	omit<K extends keyof THydrationInput<T>>(keys: readonly K[]): QuerySet<TWithOmit<T, K>>;
 
 	/**
 	 * Extends this query builder's hydration configuration with another Hydrator.
@@ -1224,12 +1265,12 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * @param hydrator - The Hydrator to extend with.
 	 * @returns A new HydratedQueryBuilder with merged hydration configuration.
 	 */
-	with<OtherInput extends StrictSubset<TInput<T>, OtherInput>, OtherOutput>(
+	with<OtherInput extends StrictSubset<THydrationInput<T>, OtherInput>, OtherOutput>(
 		hydrator: FullHydrator<OtherInput, OtherOutput>,
 	): QuerySet<TWithExtendedOutput<T, OtherOutput>>;
 	// If you pass a Hydrator with a map applied, we must return a
 	// MappedHydratedQueryBuilder.
-	with<OtherInput extends StrictSubset<TInput<T>, OtherInput>, OtherOutput>(
+	with<OtherInput extends StrictSubset<THydrationInput<T>, OtherInput>, OtherOutput>(
 		hydrator: MappedHydrator<OtherInput, OtherOutput>,
 	): QuerySet<TWithExtendedOutput<T, OtherOutput>>;
 
@@ -2277,14 +2318,14 @@ interface ModifyCollectionReturnMap<
 ////////////////////////////////////////////////////////////
 
 type ToFetchFn<T extends TQuerySet, FetchFnReturn extends SomeFetchFnReturn> = SomeFetchFn<
-	TInput<T>,
+	THydrationInput<T>,
 	FetchFnReturn
 >;
 
 type ToAttachedKeysArg<
 	T extends TQuerySet,
 	FetchFnReturn extends SomeFetchFnReturn,
-> = AttachedKeysArg<TInput<T>, AttachedOutputFromFetchFnReturn<NoInfer<FetchFnReturn>>>;
+> = AttachedKeysArg<THydrationInput<T>, AttachedOutputFromFetchFnReturn<NoInfer<FetchFnReturn>>>;
 
 interface AttachedOutputMap<in out FetchFnReturn extends SomeFetchFnReturn> {
 	AttachOne: AttachedOutputFromFetchFnReturn<FetchFnReturn> | null;
@@ -2932,10 +2973,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Execution.
 	////////////////////////////////////////////////////////////
 
-	async execute(): Promise<any[]> {
-		const rows = await this.toQuery().execute();
-
-		return this.#props.hydrator.hydrate(rows, {
+	async hydrate(input: any): Promise<any> {
+		return this.#props.hydrator.hydrate(await input, {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.
@@ -2943,6 +2982,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			// Sort nested collections, since their order cannot be guaranteed by SQL.
 			sort: "nested",
 		});
+	}
+
+	async execute(): Promise<any[]> {
+		const rows = await this.toQuery().execute();
+		return this.hydrate(rows);
 	}
 
 	async executeTakeFirst(): Promise<any | undefined> {

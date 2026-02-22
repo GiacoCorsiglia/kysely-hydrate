@@ -130,6 +130,7 @@ type Result = Array<{
   - [Sorting with `.orderBy()`](#sorting-with-orderby)
   - [Pagination and aggregation](#pagination-and-aggregation)
   - [Inspect the SQL](#inspecting-the-sql)
+  - [Hydrating pre-fetched rows with `.hydrate()`](#hydrating-pre-fetched-rows-with-hydrate)
   - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
   - [Computed properties with `.extras()`](#computed-properties-with-extras)
   - [Computed properties with `.extend()`](#computed-properties-with-extend)
@@ -798,6 +799,53 @@ You can inspect the generated SQL using `.toQuery()`, `.toJoinedQuery()`, or `.t
 - `toExistsQuery()` Returns the exact query that `executeExists()` will run.
 - `toJoinedQuery()`: Returns the query with all joins applied (subject to row explosion).
 - `toBaseQuery()`: Returns the base query without any joins (but with modifications).
+
+### Hydrating pre-fetched rows with `.hydrate()`
+
+Sometimes you already have the flat rows—from a separate query, a cache, a
+transaction, or from calling `.toQuery().execute()` directly—and want to hydrate
+them without re-executing the query.
+
+The `.hydrate()` method applies the same hydration logic that `.execute()` uses,
+including nested joins, `mapFields`, `extras`, `omit`, and `map`.
+
+```ts
+const qs = querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.leftJoinMany(
+		"posts",
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
+		"posts.userId",
+		"user.id",
+	);
+
+// Fetch the flat rows yourself
+const rows = await qs.toQuery().execute();
+
+// Hydrate them
+const users = await qs.hydrate(rows);
+// ⬇
+type Result = Array<{
+	id: number;
+	username: string;
+	posts: Array<{ id: number; title: string; userId: number }>;
+}>;
+```
+
+It also accepts a single row and returns a single hydrated result:
+
+```ts
+const [row] = await qs.toQuery().execute();
+const user = await qs.hydrate(row);
+// ⬇ { id: number; username: string; posts: Array<...> }
+```
+
+For convenience, `.hydrate()` accepts a `Promise` as input, so you can skip
+the intermediate `await`:
+
+```ts
+const users = await qs.hydrate(qs.toQuery().execute());
+```
 
 ### Mapped properties with `.mapFields()`
 

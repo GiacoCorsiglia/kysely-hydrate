@@ -3117,3 +3117,164 @@ interface Comment {
 	type MappedUser = InferOutput<typeof mappedQuerySet>;
 	expectTypeOf<MappedUser>().toEqualTypeOf<{ visibleId: number }>();
 }
+
+////////////////////////////////////////////////////////////
+// Section 53: hydrate
+////////////////////////////////////////////////////////////
+
+//
+// hydrate: single row returns single output
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	const row: { id: number; username: string } = { id: 1, username: "alice" };
+	const result = qs.hydrate(row);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }>();
+}
+
+//
+// hydrate: iterable of rows returns array of outputs
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	const rows: { id: number; username: string }[] = [];
+	const result = qs.hydrate(rows);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// hydrate: accepts a Promise of a single row
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	const rowPromise: Promise<{ id: number; username: string }> = Promise.resolve({
+		id: 1,
+		username: "alice",
+	});
+	const result = qs.hydrate(rowPromise);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }>();
+}
+
+//
+// hydrate: accepts a Promise of rows
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	const rowsPromise: Promise<{ id: number; username: string }[]> = Promise.resolve([]);
+	const result = qs.hydrate(rowsPromise);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// hydrate: works with nested joins (input is flat joined shape)
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.innerJoinMany(
+			"posts",
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			"posts.user_id",
+			"user.id",
+		);
+
+	// Input type is the flat joined query shape
+	const rows: {
+		id: number;
+		username: string;
+		posts$$id: number;
+		posts$$title: string;
+		posts$$user_id: number;
+	}[] = [];
+
+	const result = qs.hydrate(rows);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			posts: { id: number; title: string; user_id: number }[];
+		}[]
+	>();
+}
+
+//
+// hydrate: works with extras and mapFields
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.extras({ upper: (row) => row.username.toUpperCase() })
+		.mapFields({ id: (v) => String(v) });
+
+	const rows: { id: number; username: string }[] = [];
+	const result = qs.hydrate(rows);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{ id: string; username: string; upper: string }[]
+	>();
+}
+
+//
+// hydrate: works on MappedQuerySet (after .map())
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.map((user) => ({ userId: user.id, name: user.username }));
+
+	const rows: { id: number; username: string }[] = [];
+	const result = qs.hydrate(rows);
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ userId: number; name: string }[]>();
+}
+
+//
+// hydrate: compatible with toQuery().execute() return type
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	const result = qs.hydrate(qs.toQuery().execute());
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// hydrate: rejects invalid input shape
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	// @ts-expect-error - input shape doesn't match joined query output
+	qs.hydrate({ id: 1, nonExistent: "bad" });
+
+	// @ts-expect-error - wrong field types
+	qs.hydrate({ id: "not a number", username: 123 });
+
+	// @ts-expect-error - promise of wrong shape
+	qs.hydrate(Promise.resolve({ wrong: true }));
+}
