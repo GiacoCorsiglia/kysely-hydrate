@@ -13,7 +13,8 @@
 			"mcp__ide__getDiagnostics",
 			"Bash(npx tsc:*)",
 			"Bash(RUN_POSTGRES_TESTS=true npm test:*)",
-			"Bash(RUN_POSTGRES_TESTS=1 npm test:*)"
+			"Bash(RUN_POSTGRES_TESTS=1 npm test:*)",
+			"Bash(docker exec:*)"
 		],
 		"deny": ["Read(./src/experimental/**)"],
 		"ask": []
