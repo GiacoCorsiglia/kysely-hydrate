@@ -36,7 +36,7 @@ compromising the power or control of SQL. It offers these features:
 - [Application-level joins](#application-level-joins-with-attach)
 - [Mapped fields](#mapped-properties-with-mapfields) in hydrated queries
 - [Computed properties](#computed-properties-with-extras) in hydrated queries
-- [Hydrated writes](#hydrated-writes) (INSERT/UPDATE/DELETE with RETURNING)
+- [Hydrated writes](#hydrated-writes) (INSERT/UPDATE/DELETE with RETURNING, including multi-write CTE orchestration)
 - [Counts, ordering, and limits](#pagination-and-aggregation) accounting for row explosion from nested joins
 
 For example:
@@ -138,6 +138,9 @@ type Result = Array<{
   - [Output transformations with `.map()`](#output-transformations-with-map)
   - [Composable mappings with `.with()`](#composable-mappings-with-with)
   - [Hydrated writes](#hydrated-writes)
+    - [Initializing with writes](#initializing-with-writes-querysetas)
+    - [Reusing query sets for writes](#reusing-query-sets-for-writes)
+    - [Multi-write orchestration with `.writeAs()` and `.write()`](#multi-write-orchestration-with-writeas-and-write)
   - [Type helpers](#type-helpers)
 - [Hydrators](#hydrators)
   - [Creating hydrators with `createHydrator()`](#creating-hydrators-with-createhydrator)
@@ -1168,6 +1171,99 @@ type Result = {
 	gravatarUrl: string;
 };
 ```
+
+#### Multi-write orchestration with `.writeAs()` and `.write()`
+
+Sometimes a single `INSERT`, `UPDATE`, or `DELETE` isn't enough and you need to
+orchestrate multiple writes in one statement. For example, updating a user _and_
+inserting an audit log entry atomically.
+
+In Postgres, this is done with data-modifying CTEs: a `SELECT` whose `WITH`
+clause contains `INSERT`, `UPDATE`, or `DELETE` statements. Kysely supports this
+natively with `.with()`.
+
+`writeAs()` initializes a query set from such a query. Any CTEs on the provided
+`SELECT` are hoisted to the top level of the generated SQL—which is where
+Postgres requires data-modifying CTEs to live.
+
+```ts
+const result = await querySet(db)
+	.writeAs("updated", (db) =>
+		db
+			// Data-modifying CTE: update the user
+			.with("updated", (qb) =>
+				qb
+					.updateTable("users")
+					.set({ email: "new@example.com" })
+					.where("id", "=", userId)
+					.returningAll(),
+			)
+			// Data-modifying CTE: insert an audit log entry
+			.with("audit", (qb) =>
+				qb.insertInto("audit_log").values({ userId, action: "email_changed" }).returning(["id"]),
+			)
+			// Select from the update result
+			.selectFrom("updated")
+			.select(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
+// ⬇
+type Result = { id: number; username: string; email: string };
+```
+
+**Generated SQL:**
+
+```sql
+WITH "updated" AS (
+  UPDATE "users" SET "email" = $1 WHERE "id" = $2 RETURNING *
+),
+"audit" AS (
+  INSERT INTO "audit_log" ("userId", "action") VALUES ($3, $4) RETURNING "id"
+)
+SELECT "updated"."id", "updated"."username", "updated"."email"
+FROM (SELECT "id", "username", "email" FROM "updated") AS "updated"
+```
+
+Like `insertAs` and friends, `writeAs()` supports joins, extras, and all the
+usual query set features.
+
+`.write()` is the instance-method equivalent—it switches the base query of an
+existing query set, just like `.insert()` does for inserts:
+
+```ts
+const usersQuerySet = querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.leftJoinMany("posts" /* ... */)
+	.extras({ gravatarUrl: (u) => getGravatar(u.email) });
+
+// Reuse the canonical query set for a select query with data-modifying CTE.
+const result = await usersQuerySet
+	.write((db) =>
+		db
+			.with("updated", (qb) =>
+				qb
+					.updateTable("users")
+					.set({ email: "new@example.com" })
+					.where("id", "=", userId)
+					.returningAll(),
+			)
+			.selectFrom("updated")
+			.select(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
+// ⬇ Result includes posts and gravatarUrl!
+type Result = {
+	id: number;
+	username: string;
+	email: string;
+	gravatarUrl: string;
+	posts: Array<{ id: number; title: string; user_id: number }>;
+};
+```
+
+> [!NOTE]
+> If the provided `SELECT` has no CTEs, `writeAs()` behaves identically to
+> `selectAs()`.
 
 ### Type Helpers
 

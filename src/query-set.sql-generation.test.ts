@@ -1107,4 +1107,225 @@ describe("query-set: sql-generation", () => {
 		`,
 		);
 	});
+
+	//
+	// Write Operations SQL Generation (.write() / .writeAs())
+	//
+
+	test("SQL: writeAs() - hoists CTEs to top level", async () => {
+		const qs = querySet(db).writeAs("updated", (db) =>
+			db
+				.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", 1)
+						.returningAll(),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		);
+
+		const sql = qs.toQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"updated"."id" as "id",
+				"updated"."username" as "username",
+				"updated"."email" as "email"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "updated"
+			order by "updated"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: writeAs() with multiple data-modifying CTEs", async () => {
+		const qs = querySet(db).writeAs("updated", (db) =>
+			db
+				.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", 1)
+						.returningAll(),
+				)
+				.with("audit", (qb) =>
+					qb
+						.insertInto("posts")
+						.values({ user_id: 1, title: "audit", content: "updated email" })
+						.returning(["id"]),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		);
+
+		const sql = qs.toQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			),
+			"audit" as (
+				insert into "posts" ("user_id", "title", "content")
+				values (?, ?, ?)
+				returning "id"
+			)
+			select
+				"updated"."id" as "id",
+				"updated"."username" as "username",
+				"updated"."email" as "email"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "updated"
+			order by "updated"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: writeAs() with no CTEs works like selectAs()", async () => {
+		const qs = querySet(db).writeAs("user", db.selectFrom("users").select(["id", "username"]));
+
+		const sql = qs.toQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			select
+				"user"."id" as "id",
+				"user"."username" as "username"
+			from (
+				select "id", "username" from "users"
+			) as "user"
+			order by "user"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: writeAs() with join - hoists CTEs and preserves join", async () => {
+		const qs = querySet(db)
+			.writeAs("updated", (db) =>
+				db
+					.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					)
+					.selectFrom("updated")
+					.select(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"updated.id",
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"updated"."id" as "id",
+				"updated"."username" as "username",
+				"updated"."email" as "email",
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "updated"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "updated"."id"
+			order by "updated"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: .write() on existing QuerySet - hoists CTEs and preserves joins", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.write((db) =>
+				db
+					.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					)
+					.selectFrom("updated")
+					.select(["id", "username", "email"]),
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"user"."id" as "id",
+				"user"."username" as "username",
+				"user"."email" as "email",
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "user"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "user"."id"
+			order by "user"."id" asc
+		`,
+		);
+	});
 });

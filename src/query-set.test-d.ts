@@ -3094,6 +3094,148 @@ interface Comment {
 	qs.innerJoinMany;
 }
 
+//
+// writeAs() type tests
+//
+
+{
+	// writeAs() with data-modifying CTE
+	const qs = querySet(db).writeAs("updated", (db) =>
+		db
+			.with("updated", (qb) =>
+				qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+			)
+			.selectFrom("updated")
+			.select(["id", "username", "email"]),
+	);
+
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
+
+	// innerJoinMany is available on QuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// writeAs() with no CTEs works like selectAs()
+	const qs = querySet(db).writeAs("user", db.selectFrom("users").select(["id", "username"]));
+
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+{
+	// writeAs() with custom keyBy
+	const qs = querySet(db).writeAs(
+		"user",
+		(db) =>
+			db
+				.with("updated", (qb) =>
+					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		"username",
+	);
+
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
+}
+
+//
+// .write() on QuerySet vs MappedQuerySet
+//
+
+{
+	// .write() on QuerySet returns QuerySet, so .innerJoinMany IS available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.write((db) =>
+			db
+				.with("updated", (qb) =>
+					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		);
+
+	// Output type IS expanded to include all columns from the write query
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
+		{ id: number; username: string; email: string }[]
+	>();
+
+	// innerJoinMany is available on QuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+{
+	// .write() on MappedQuerySet (after .map()) - .innerJoinMany is NOT available
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.map((row) => ({ visibleId: row.id }))
+		.write((db) =>
+			db
+				.with("updated", (qb) =>
+					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		);
+
+	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ visibleId: number }[]>();
+
+	// @ts-expect-error - cannot call innerJoinMany on MappedQuerySet
+	// oxlint-disable-next-line no-unused-expressions
+	qs.innerJoinMany;
+}
+
+//
+// Omit after selectAs().write()
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.write((db) =>
+			db
+				.with("updated", (qb) =>
+					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		)
+		.omit(["email"]);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
+//
+// Omit before write (omit().write())
+//
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+		.omit(["email"])
+		.write((db) =>
+			db
+				.with("updated", (qb) =>
+					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+				)
+				.selectFrom("updated")
+				.select(["id", "username", "email"]),
+		);
+
+	const result = qs.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
+}
+
 ////////////////////////////////////////////////////////////
 // Section 52: InferOutput
 ////////////////////////////////////////////////////////////

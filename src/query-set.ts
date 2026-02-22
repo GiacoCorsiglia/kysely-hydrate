@@ -18,6 +18,7 @@
 
 import * as k from "kysely";
 
+import { AddCTEsPlugin, StripWithPlugin, extractCTEs } from "./helpers/cte-hoisting.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -1100,6 +1101,28 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	delete<IQB extends k.DeleteQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
 		dqb: DeleteQueryBuilderOrFactory<T["DB"], IQB>,
 	): MaybeMappedQuerySet<TWithBaseQuery<T, InferTDeleteQuery<IQB>>>;
+
+	/**
+	 * Switches the base query to a `SELECT` that may contain data-modifying CTEs.
+	 *
+	 * Any CTEs on the provided query will be hoisted to the top level of the
+	 * generated SQL, which is required by Postgres for data-modifying CTEs.
+	 * The stripped `SELECT` is inlined as a derived table, just like
+	 * {@link selectAs}.
+	 *
+	 * This enables multi-write CTE orchestration patterns like:
+	 * ```sql
+	 * WITH "updated" AS (UPDATE ... RETURNING *),
+	 *      "audit" AS (INSERT INTO audit_log ... RETURNING *)
+	 * SELECT * FROM "updated"
+	 * ```
+	 *
+	 * @param sqb - A select query builder (possibly with CTEs) or factory function.
+	 * @returns A new QuerySet with the write query as the base.
+	 */
+	write<SQB extends k.SelectQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
+		sqb: WriteQueryBuilderOrFactory<T["DB"], SQB>,
+	): MaybeMappedQuerySet<TWithBaseQuery<T, InferTSelectQuery<SQB>>>;
 }
 
 /**
@@ -2584,6 +2607,7 @@ interface QuerySetProps {
 	orderByKeys: boolean;
 	frontModifiers: readonly k.Expression<any>[];
 	endModifiers: readonly k.Expression<any>[];
+	hoistCTEs: boolean;
 }
 
 /**
@@ -2656,10 +2680,27 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
-		const { db, baseQuery, baseAlias } = this.#props;
+		const { db, baseQuery, baseAlias, hoistCTEs } = this.#props;
 
 		// We always inline SELECT queries.
 		if (isSelectQueryBuilder(baseQuery)) {
+			// When hoistCTEs is set, extract CTEs from the base query, strip them,
+			// inline the stripped SELECT as a derived table, and hoist the CTEs to
+			// the outer query level.  This is needed for data-modifying CTEs which
+			// Postgres requires at the top level.
+			if (hoistCTEs) {
+				if (isNested) {
+					throw new InvalidJoinedQuerySetError(baseAlias);
+				}
+				const ctes = extractCTEs(baseQuery);
+				if (ctes?.length) {
+					const stripped = baseQuery.withPlugin(new StripWithPlugin());
+					let qb = db.selectFrom(stripped.as(baseAlias));
+					qb = applyHoistedSelections(qb, baseQuery, baseAlias);
+					return qb.withPlugin(new AddCTEsPlugin(ctes));
+				}
+			}
+
 			const qb = db.selectFrom(baseQuery.as(baseAlias));
 			return applyHoistedSelections(qb, baseQuery, baseAlias);
 		}
@@ -3327,6 +3368,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	delete(iqb: AnyDeleteQueryBuilder | AnyDeleteQueryBuilderFactory) {
 		return this.#asWrite(iqb);
 	}
+
+	write(sqb: AnySelectQueryBuilder | ((db: any) => AnySelectQueryBuilder)): any {
+		return this.#clone({
+			baseQuery: typeof sqb === "function" ? sqb(this.#props.db) : sqb,
+			hoistCTEs: true,
+		});
+	}
 }
 
 ////////////////////////////////////////////////////////////
@@ -3405,6 +3453,14 @@ type DeleteQueryBuilderOrFactory<InitialDB, DQB extends AnyDeleteQueryBuilder> =
 	| DQB
 	| DeleteQueryBuilderFactory<InitialDB, DQB>;
 
+type WriteQueryBuilderFactory<InitialDB, SQB extends AnySelectQueryBuilder> = (
+	db: k.Kysely<InitialDB>,
+) => SQB;
+
+type WriteQueryBuilderOrFactory<InitialDB, SQB extends AnySelectQueryBuilder> =
+	| SQB
+	| WriteQueryBuilderFactory<InitialDB, SQB>;
+
 type AnySelectQueryBuilderFactory = (db: SelectCreator<any>) => AnySelectQueryBuilder;
 type AnyInsertQueryBuilderFactory = (db: InsertCreator<any>) => AnyInsertQueryBuilder;
 type AnyUpdateQueryBuilderFactory = (db: UpdateCreator<any>) => AnyUpdateQueryBuilder;
@@ -3462,6 +3518,7 @@ class QuerySetCreator<in out DB> {
 			orderByKeys: true,
 			frontModifiers: [],
 			endModifiers: [],
+			hoistCTEs: false,
 		}) as any;
 	}
 
@@ -3605,6 +3662,65 @@ class QuerySetCreator<in out DB> {
 	): InitialQuerySet<DB, Alias, InferTDeleteQuery<UQB>>;
 	deleteAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
 		return this.#createQuerySet(alias, query, keyBy);
+	}
+
+	/**
+	 * Initializes a new query set with a base `SELECT` query that may contain
+	 * data-modifying CTEs.
+	 *
+	 * Any CTEs on the provided query will be hoisted to the top level of the
+	 * generated SQL, which is required by Postgres for data-modifying CTEs.
+	 *
+	 * This enables multi-write CTE orchestration patterns like:
+	 * ```ts
+	 * const result = await querySet(db)
+	 *   .writeAs("updated", (db) =>
+	 *     db
+	 *       .with("updated", (qb) =>
+	 *         qb.updateTable("users")
+	 *           .set({ email: "new@example.com" })
+	 *           .where("id", "=", 1)
+	 *           .returningAll()
+	 *       )
+	 *       .selectFrom("updated")
+	 *       .selectAll()
+	 *   )
+	 *   .executeTakeFirst();
+	 * ```
+	 *
+	 * @param alias - The alias for the base query.
+	 * @param query - A Kysely select query builder (possibly with CTEs) or factory function.
+	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
+	 * @returns A new QuerySet.
+	 */
+	writeAs<Alias extends string, SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
+		alias: Alias,
+		query: WriteQueryBuilderOrFactory<DB, SQB>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	writeAs<Alias extends string, SQB extends AnySelectQueryBuilder>(
+		alias: Alias,
+		query: WriteQueryBuilderOrFactory<DB, SQB>,
+		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
+	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
+	writeAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
+		const baseQuery = typeof query === "function" ? query(this.#db) : query;
+
+		return new QuerySetImpl({
+			db: this.#db,
+			baseAlias: alias,
+			baseQuery,
+			keyBy: keyBy,
+			hydrator: createHydrator().orderByKeys(),
+			joinCollections: new Map(),
+			attachCollections: new Map(),
+			limit: null,
+			offset: null,
+			orderBy: [],
+			orderByKeys: true,
+			frontModifiers: [],
+			endModifiers: [],
+			hoistCTEs: true,
+		});
 	}
 }
 
