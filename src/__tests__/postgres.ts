@@ -11,10 +11,10 @@ import { type SeedDB } from "./fixture.ts";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Default to port 5433 for local docker-compose (avoids conflict with local postgres)
+// Default to port 5434 for local docker-compose (avoids conflict with local postgres)
 // CI uses POSTGRES_URL or the default port 5432
 const connectionString =
-	process.env.POSTGRES_URL || "postgres://postgres:postgres@localhost:5433/kysely_hydrate_test";
+	process.env.POSTGRES_URL || "postgres://postgres:postgres@localhost:5434/kysely_hydrate_test";
 
 /**
  * Transforms SQLite SQL to PostgreSQL-compatible SQL.
