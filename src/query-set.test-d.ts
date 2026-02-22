@@ -3127,8 +3127,7 @@ interface Comment {
 //
 
 {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+	const qs = querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
 
 	const row: { id: number; username: string } = { id: 1, username: "alice" };
 	const result = qs.hydrate(row);
@@ -3141,8 +3140,7 @@ interface Comment {
 //
 
 {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+	const qs = querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
 
 	const rows: { id: number; username: string }[] = [];
 	const result = qs.hydrate(rows);
@@ -3155,8 +3153,7 @@ interface Comment {
 //
 
 {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+	const qs = querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
 
 	const rowPromise: Promise<{ id: number; username: string }> = Promise.resolve({
 		id: 1,
@@ -3172,8 +3169,7 @@ interface Comment {
 //
 
 {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+	const qs = querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
 
 	const rowsPromise: Promise<{ id: number; username: string }[]> = Promise.resolve([]);
 	const result = qs.hydrate(rowsPromise);
@@ -3228,9 +3224,7 @@ interface Comment {
 	const rows: { id: number; username: string }[] = [];
 	const result = qs.hydrate(rows);
 
-	expectTypeOf(result).resolves.toEqualTypeOf<
-		{ id: string; username: string; upper: string }[]
-	>();
+	expectTypeOf(result).resolves.toEqualTypeOf<{ id: string; username: string; upper: string }[]>();
 }
 
 //
@@ -3253,8 +3247,7 @@ interface Comment {
 //
 
 {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+	const qs = querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
 
 	const result = qs.hydrate(qs.toQuery().execute());
 
@@ -3266,8 +3259,7 @@ interface Comment {
 //
 
 {
-	const qs = querySet(db)
-		.selectAs("user", db.selectFrom("users").select(["id", "username"]));
+	const qs = querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
 
 	// @ts-expect-error - input shape doesn't match joined query output
 	qs.hydrate({ id: 1, nonExistent: "bad" });
