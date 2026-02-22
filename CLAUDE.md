@@ -14,5 +14,7 @@ After making changes, always run
 
 - `npm run test:all`
 - `npm run typecheck`
+- `npm run lint`
+- `npm run format`
 
 Ignore the `src/experimental` directory.
