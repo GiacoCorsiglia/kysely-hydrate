@@ -20,17 +20,17 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 	test("writeAs() - single data-modifying CTE (UPDATE)", async () => {
 		await testInTransaction(db, async (trx) => {
 			const result = await querySet(trx)
-				.writeAs("updated", (db) =>
-					db
-						.with("updated", (qb) =>
+				.writeAs(
+					"updated",
+					(db) =>
+						db.with("updated", (qb) =>
 							qb
 								.updateTable("users")
 								.set({ email: "write-test@example.com" })
 								.where("id", "=", 1)
 								.returningAll(),
-						)
-						.selectFrom("updated")
-						.select(["id", "username", "email"]),
+						),
+					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 				)
 				.executeTakeFirst();
 
@@ -44,16 +44,16 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 	test("writeAs() - single data-modifying CTE (INSERT)", async () => {
 		await testInTransaction(db, async (trx) => {
 			const result = await querySet(trx)
-				.writeAs("inserted", (db) =>
-					db
-						.with("inserted", (qb) =>
+				.writeAs(
+					"inserted",
+					(db) =>
+						db.with("inserted", (qb) =>
 							qb
 								.insertInto("users")
 								.values({ username: "newuser", email: "new@example.com" })
 								.returningAll(),
-						)
-						.selectFrom("inserted")
-						.select(["id", "username", "email"]),
+						),
+					(qc) => qc.selectFrom("inserted").select(["id", "username", "email"]),
 				)
 				.executeTakeFirst();
 
@@ -71,27 +71,28 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 	test("writeAs() - multiple data-modifying CTEs", async () => {
 		await testInTransaction(db, async (trx) => {
 			const result = await querySet(trx)
-				.writeAs("updated", (db) =>
-					db
-						.with("updated", (qb) =>
-							qb
-								.updateTable("users")
-								.set({ email: "multi-cte@example.com" })
-								.where("id", "=", 1)
-								.returningAll(),
-						)
-						.with("newPost", (qb) =>
-							qb
-								.insertInto("posts")
-								.values({
-									user_id: 1,
-									title: "Audit post",
-									content: "User updated email",
-								})
-								.returning(["id", "user_id", "title"]),
-						)
-						.selectFrom("updated")
-						.select(["id", "username", "email"]),
+				.writeAs(
+					"updated",
+					(db) =>
+						db
+							.with("updated", (qb) =>
+								qb
+									.updateTable("users")
+									.set({ email: "multi-cte@example.com" })
+									.where("id", "=", 1)
+									.returningAll(),
+							)
+							.with("newPost", (qb) =>
+								qb
+									.insertInto("posts")
+									.values({
+										user_id: 1,
+										title: "Audit post",
+										content: "User updated email",
+									})
+									.returning(["id", "user_id", "title"]),
+							),
+					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 				)
 				.executeTakeFirst();
 
@@ -117,17 +118,17 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 	test("writeAs() with leftJoinMany - hydrates joined data", async () => {
 		await testInTransaction(db, async (trx) => {
 			const result = await querySet(trx)
-				.writeAs("updated", (db) =>
-					db
-						.with("updated", (qb) =>
+				.writeAs(
+					"updated",
+					(db) =>
+						db.with("updated", (qb) =>
 							qb
 								.updateTable("users")
 								.set({ email: "joined@example.com" })
 								.where("id", "=", 2)
 								.returningAll(),
-						)
-						.selectFrom("updated")
-						.select(["id", "username", "email"]),
+						),
+					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 				)
 				.leftJoinMany(
 					"posts",
@@ -162,17 +163,16 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 				);
 
 			const result = await usersQs
-				.write((db) =>
-					db
-						.with("updated", (qb) =>
+				.write(
+					(db) =>
+						db.with("updated", (qb) =>
 							qb
 								.updateTable("users")
 								.set({ email: "write-method@example.com" })
 								.where("id", "=", 2)
 								.returningAll(),
-						)
-						.selectFrom("updated")
-						.select(["id", "username", "email"]),
+						),
+					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 				)
 				.executeTakeFirst();
 
@@ -190,17 +190,17 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 	test("writeAs() with extras - computed fields work", async () => {
 		await testInTransaction(db, async (trx) => {
 			const result = await querySet(trx)
-				.writeAs("updated", (db) =>
-					db
-						.with("updated", (qb) =>
+				.writeAs(
+					"updated",
+					(db) =>
+						db.with("updated", (qb) =>
 							qb
 								.updateTable("users")
 								.set({ email: "extras@example.com" })
 								.where("id", "=", 1)
 								.returningAll(),
-						)
-						.selectFrom("updated")
-						.select(["id", "username", "email"]),
+						),
+					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 				)
 				.extras({
 					displayName: (row) => `${row.username} <${row.email}>`,
@@ -219,11 +219,11 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 	test("writeAs() with DELETE CTE", async () => {
 		await testInTransaction(db, async (trx) => {
 			const result = await querySet(trx)
-				.writeAs("deleted", (db) =>
-					db
-						.with("deleted", (qb) => qb.deleteFrom("users").where("id", "=", 1).returningAll())
-						.selectFrom("deleted")
-						.select(["id", "username", "email"]),
+				.writeAs(
+					"deleted",
+					(db) =>
+						db.with("deleted", (qb) => qb.deleteFrom("users").where("id", "=", 1).returningAll()),
+					(qc) => qc.selectFrom("deleted").select(["id", "username", "email"]),
 				)
 				.executeTakeFirst();
 
@@ -239,19 +239,5 @@ describe("query-set: postgres-write", { skip: shouldSkip }, () => {
 				.executeTakeFirst();
 			assert.strictEqual(remaining, undefined);
 		});
-	});
-
-	//
-	// writeAs() with no CTEs works like selectAs()
-	//
-
-	test("writeAs() with no CTEs - works like selectAs()", async () => {
-		const result = await querySet(db)
-			.writeAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 1))
-			.executeTakeFirst();
-
-		assert.ok(result);
-		assert.strictEqual(result.id, 1);
-		assert.strictEqual(result.username, "alice");
 	});
 });

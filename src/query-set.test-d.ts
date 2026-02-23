@@ -3099,14 +3099,14 @@ interface Comment {
 //
 
 {
-	// writeAs() with data-modifying CTE
-	const qs = querySet(db).writeAs("updated", (db) =>
-		db
-			.with("updated", (qb) =>
+	// writeAs() with data-modifying CTE (two-callback form)
+	const qs = querySet(db).writeAs(
+		"updated",
+		(db) =>
+			db.with("updated", (qb) =>
 				qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
-			)
-			.selectFrom("updated")
-			.select(["id", "username", "email"]),
+			),
+		(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 	);
 
 	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<
@@ -3119,23 +3119,14 @@ interface Comment {
 }
 
 {
-	// writeAs() with no CTEs works like selectAs()
-	const qs = querySet(db).writeAs("user", db.selectFrom("users").select(["id", "username"]));
-
-	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ id: number; username: string }[]>();
-}
-
-{
-	// writeAs() with custom keyBy
+	// writeAs() with custom keyBy (two-callback form)
 	const qs = querySet(db).writeAs(
 		"user",
 		(db) =>
-			db
-				.with("updated", (qb) =>
-					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+			db.with("updated", (qb) =>
+				qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
+			),
+		(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		"username",
 	);
 
@@ -3152,13 +3143,12 @@ interface Comment {
 	// .write() on QuerySet returns QuerySet, so .innerJoinMany IS available
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-		.write((db) =>
-			db
-				.with("updated", (qb) =>
+		.write(
+			(db) =>
+				db.with("updated", (qb) =>
 					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		);
 
 	// Output type IS expanded to include all columns from the write query
@@ -3176,13 +3166,12 @@ interface Comment {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 		.map((row) => ({ visibleId: row.id }))
-		.write((db) =>
-			db
-				.with("updated", (qb) =>
+		.write(
+			(db) =>
+				db.with("updated", (qb) =>
 					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		);
 
 	expectTypeOf(qs.execute()).resolves.toEqualTypeOf<{ visibleId: number }[]>();
@@ -3199,13 +3188,12 @@ interface Comment {
 {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-		.write((db) =>
-			db
-				.with("updated", (qb) =>
+		.write(
+			(db) =>
+				db.with("updated", (qb) =>
 					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		)
 		.omit(["email"]);
 
@@ -3222,13 +3210,12 @@ interface Comment {
 	const qs = querySet(db)
 		.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
 		.omit(["email"])
-		.write((db) =>
-			db
-				.with("updated", (qb) =>
+		.write(
+			(db) =>
+				db.with("updated", (qb) =>
 					qb.updateTable("users").set({ email: "new@test.com" }).where("id", "=", 1).returningAll(),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		);
 
 	const result = qs.execute();

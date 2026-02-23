@@ -1113,17 +1113,17 @@ describe("query-set: sql-generation", () => {
 	//
 
 	test("SQL: writeAs() - hoists CTEs to top level", async () => {
-		const qs = querySet(db).writeAs("updated", (db) =>
-			db
-				.with("updated", (qb) =>
+		const qs = querySet(db).writeAs(
+			"updated",
+			(db) =>
+				db.with("updated", (qb) =>
 					qb
 						.updateTable("users")
 						.set({ email: "new@example.com" })
 						.where("id", "=", 1)
 						.returningAll(),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		);
 
 		const sql = qs.toQuery().compile().sql;
@@ -1150,23 +1150,24 @@ describe("query-set: sql-generation", () => {
 	});
 
 	test("SQL: writeAs() with multiple data-modifying CTEs", async () => {
-		const qs = querySet(db).writeAs("updated", (db) =>
-			db
-				.with("updated", (qb) =>
-					qb
-						.updateTable("users")
-						.set({ email: "new@example.com" })
-						.where("id", "=", 1)
-						.returningAll(),
-				)
-				.with("audit", (qb) =>
-					qb
-						.insertInto("posts")
-						.values({ user_id: 1, title: "audit", content: "updated email" })
-						.returning(["id"]),
-				)
-				.selectFrom("updated")
-				.select(["id", "username", "email"]),
+		const qs = querySet(db).writeAs(
+			"updated",
+			(db) =>
+				db
+					.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					)
+					.with("audit", (qb) =>
+						qb
+							.insertInto("posts")
+							.values({ user_id: 1, title: "audit", content: "updated email" })
+							.returning(["id"]),
+					),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 		);
 
 		const sql = qs.toQuery().compile().sql;
@@ -1197,38 +1198,19 @@ describe("query-set: sql-generation", () => {
 		);
 	});
 
-	test("SQL: writeAs() with no CTEs works like selectAs()", async () => {
-		const qs = querySet(db).writeAs("user", db.selectFrom("users").select(["id", "username"]));
-
-		const sql = qs.toQuery().compile().sql;
-
-		assert.strictEqual(
-			sql,
-			snapshot`
-			select
-				"user"."id" as "id",
-				"user"."username" as "username"
-			from (
-				select "id", "username" from "users"
-			) as "user"
-			order by "user"."id" asc
-		`,
-		);
-	});
-
 	test("SQL: writeAs() with join - hoists CTEs and preserves join", async () => {
 		const qs = querySet(db)
-			.writeAs("updated", (db) =>
-				db
-					.with("updated", (qb) =>
+			.writeAs(
+				"updated",
+				(db) =>
+					db.with("updated", (qb) =>
 						qb
 							.updateTable("users")
 							.set({ email: "new@example.com" })
 							.where("id", "=", 1)
 							.returningAll(),
-					)
-					.selectFrom("updated")
-					.select(["id", "username", "email"]),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 			)
 			.leftJoinMany(
 				"posts",
@@ -1281,17 +1263,16 @@ describe("query-set: sql-generation", () => {
 				"posts.user_id",
 				"user.id",
 			)
-			.write((db) =>
-				db
-					.with("updated", (qb) =>
+			.write(
+				(db) =>
+					db.with("updated", (qb) =>
 						qb
 							.updateTable("users")
 							.set({ email: "new@example.com" })
 							.where("id", "=", 1)
 							.returningAll(),
-					)
-					.selectFrom("updated")
-					.select(["id", "username", "email"]),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 			);
 
 		const sql = qs.toQuery().compile().sql;
@@ -1322,6 +1303,104 @@ describe("query-set: sql-generation", () => {
 					"posts"."user_id" as "user_id"
 				from (
 					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "user"."id"
+			order by "user"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: writeAs() with withSchema - CTE names are not schema-qualified", async () => {
+		const sdb = db.withSchema("myapp");
+		const qs = querySet(sdb).writeAs(
+			"updated",
+			(db) =>
+				db.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", 1)
+						.returningAll(),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+		);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// The CTE name "updated" must NOT be schema-qualified as "myapp"."updated"
+		// in the inner SELECT.  Real tables should still be schema-qualified.
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "myapp"."users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"updated"."id" as "id",
+				"updated"."username" as "username",
+				"updated"."email" as "email"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "updated"
+			order by "updated"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: .write() with withSchema - CTE names are not schema-qualified", async () => {
+		const sdb = db.withSchema("myapp");
+		const qs = querySet(sdb)
+			.selectAs("user", sdb.selectFrom("users").select(["id", "username", "email"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.write(
+				(db) =>
+					db.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// "updated" in FROM must not become "myapp"."updated"
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "myapp"."users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"user"."id" as "id",
+				"user"."username" as "username",
+				"user"."email" as "email",
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "user"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "myapp"."posts"
 				) as "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc

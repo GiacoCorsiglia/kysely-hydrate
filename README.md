@@ -1182,29 +1182,32 @@ In Postgres, this is done with data-modifying CTEs: a `SELECT` whose `WITH`
 clause contains `INSERT`, `UPDATE`, or `DELETE` statements. Kysely supports this
 natively with `.with()`.
 
-`writeAs()` initializes a query set from such a query. Any CTEs on the provided
-`SELECT` are hoisted to the top level of the generated SQL—which is where
-Postgres requires data-modifying CTEs to live.
+`writeAs()` takes two callbacks. The first builds CTEs and returns a query
+creator. The second builds the SELECT that references CTE names. The CTEs are
+placed at the top level of the generated SQL—which is where Postgres requires
+data-modifying CTEs to live—while the SELECT becomes a derived table with no
+CTEs to strip.
 
 ```ts
 const result = await querySet(db)
-	.writeAs("updated", (db) =>
-		db
-			// Data-modifying CTE: update the user
-			.with("updated", (qb) =>
-				qb
-					.updateTable("users")
-					.set({ email: "new@example.com" })
-					.where("id", "=", userId)
-					.returningAll(),
-			)
-			// Data-modifying CTE: insert an audit log entry
-			.with("audit", (qb) =>
-				qb.insertInto("audit_log").values({ userId, action: "email_changed" }).returning(["id"]),
-			)
-			// Select from the update result
-			.selectFrom("updated")
-			.select(["id", "username", "email"]),
+	.writeAs(
+		"updated",
+		(db) =>
+			db
+				// Data-modifying CTE: update the user
+				.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", userId)
+						.returningAll(),
+				)
+				// Data-modifying CTE: insert an audit log entry
+				.with("audit", (qb) =>
+					qb.insertInto("audit_log").values({ userId, action: "email_changed" }).returning(["id"]),
+				),
+		// Select from the update result
+		(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 	)
 	.executeTakeFirstOrThrow();
 // ⬇
@@ -1238,17 +1241,16 @@ const usersQuerySet = querySet(db)
 
 // Reuse the canonical query set for a select query with data-modifying CTE.
 const result = await usersQuerySet
-	.write((db) =>
-		db
-			.with("updated", (qb) =>
+	.write(
+		(db) =>
+			db.with("updated", (qb) =>
 				qb
 					.updateTable("users")
 					.set({ email: "new@example.com" })
 					.where("id", "=", userId)
 					.returningAll(),
-			)
-			.selectFrom("updated")
-			.select(["id", "username", "email"]),
+			),
+		(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
 	)
 	.executeTakeFirstOrThrow();
 // ⬇ Result includes posts and gravatarUrl!

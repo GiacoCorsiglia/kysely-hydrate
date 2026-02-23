@@ -18,7 +18,6 @@
 
 import * as k from "kysely";
 
-import { AddCTEsPlugin, StripWithPlugin, extractCTEs } from "./helpers/cte-hoisting.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -73,6 +72,25 @@ import {
 	EnableAutoInclusion,
 } from "./hydrator.ts";
 import { InvalidJoinedQuerySetError } from "./index.ts";
+
+/**
+ * A stateless Kysely plugin that strips the WITH clause from a
+ * SelectQueryNode.  Used to remove CTEs that the query creator
+ * attaches to queries built via `selectFn` in `.write()` / `.writeAs()`.
+ * The CTEs are already captured separately in `writeQueryCreator`.
+ */
+const stripWithPlugin: k.KyselyPlugin = {
+	transformQuery(args) {
+		const node = args.node;
+		if (node.kind === "SelectQueryNode" && node.with) {
+			return { ...node, with: undefined } as unknown as k.SelectQueryNode;
+		}
+		return node;
+	},
+	async transformResult(args) {
+		return args.result;
+	},
+};
 
 ////////////////////////////////////////////////////////////
 // Generics.
@@ -1105,23 +1123,17 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	/**
 	 * Switches the base query to a `SELECT` that may contain data-modifying CTEs.
 	 *
-	 * Any CTEs on the provided query will be hoisted to the top level of the
-	 * generated SQL, which is required by Postgres for data-modifying CTEs.
-	 * The stripped `SELECT` is inlined as a derived table, just like
-	 * {@link selectAs}.
+	 * Callback 1 receives `db`, builds CTEs, and returns a query creator.
+	 * Callback 2 receives a query creator typed with the CTE names and builds
+	 * the SELECT.
 	 *
-	 * This enables multi-write CTE orchestration patterns like:
-	 * ```sql
-	 * WITH "updated" AS (UPDATE ... RETURNING *),
-	 *      "audit" AS (INSERT INTO audit_log ... RETURNING *)
-	 * SELECT * FROM "updated"
-	 * ```
-	 *
-	 * @param sqb - A select query builder (possibly with CTEs) or factory function.
+	 * @param cteFn - Builds CTEs; returns a query creator.
+	 * @param selectFn - Builds the SELECT referencing CTE names.
 	 * @returns A new QuerySet with the write query as the base.
 	 */
-	write<SQB extends k.SelectQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
-		sqb: WriteQueryBuilderOrFactory<T["DB"], SQB>,
+	write<NewDB, SQB extends k.SelectQueryBuilder<any, any, T["BaseQuery"]["O"]>>(
+		cteFn: (db: k.Kysely<T["DB"]>) => k.QueryCreator<NewDB>,
+		selectFn: (qc: k.QueryCreator<NewDB>) => SQB,
 	): MaybeMappedQuerySet<TWithBaseQuery<T, InferTSelectQuery<SQB>>>;
 }
 
@@ -2607,7 +2619,7 @@ interface QuerySetProps {
 	orderByKeys: boolean;
 	frontModifiers: readonly k.Expression<any>[];
 	endModifiers: readonly k.Expression<any>[];
-	hoistCTEs: boolean;
+	writeQueryCreator: k.QueryCreator<any> | null;
 }
 
 /**
@@ -2680,25 +2692,21 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
-		const { db, baseQuery, baseAlias, hoistCTEs } = this.#props;
+		const { db, baseQuery, baseAlias, writeQueryCreator } = this.#props;
 
 		// We always inline SELECT queries.
 		if (isSelectQueryBuilder(baseQuery)) {
-			// When hoistCTEs is set, extract CTEs from the base query, strip them,
-			// inline the stripped SELECT as a derived table, and hoist the CTEs to
-			// the outer query level.  This is needed for data-modifying CTEs which
-			// Postgres requires at the top level.
-			if (hoistCTEs) {
+			// When a writeQueryCreator is available, use it to build the outer
+			// query so CTEs live at the top level.  The base query (which has no
+			// CTEs) becomes a derived table.
+			if (writeQueryCreator) {
 				if (isNested) {
 					throw new InvalidJoinedQuerySetError(baseAlias);
 				}
-				const ctes = extractCTEs(baseQuery);
-				if (ctes?.length) {
-					const stripped = baseQuery.withPlugin(new StripWithPlugin());
-					let qb = db.selectFrom(stripped.as(baseAlias));
-					qb = applyHoistedSelections(qb, baseQuery, baseAlias);
-					return qb.withPlugin(new AddCTEsPlugin(ctes));
-				}
+				const qc = writeQueryCreator;
+				let qb = qc.selectFrom(baseQuery.as(baseAlias));
+				qb = applyHoistedSelections(qb, baseQuery, baseAlias);
+				return qb;
 			}
 
 			const qb = db.selectFrom(baseQuery.as(baseAlias));
@@ -3369,10 +3377,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#asWrite(iqb);
 	}
 
-	write(sqb: AnySelectQueryBuilder | ((db: any) => AnySelectQueryBuilder)): any {
+	write(cteFn: (db: any) => any, selectFn: (qc: any) => AnySelectQueryBuilder): any {
+		const qc = cteFn(this.#props.db);
+		const baseQuery = selectFn(qc).withPlugin(stripWithPlugin);
 		return this.#clone({
-			baseQuery: typeof sqb === "function" ? sqb(this.#props.db) : sqb,
-			hoistCTEs: true,
+			baseQuery,
+			writeQueryCreator: qc,
 		});
 	}
 }
@@ -3453,14 +3463,6 @@ type DeleteQueryBuilderOrFactory<InitialDB, DQB extends AnyDeleteQueryBuilder> =
 	| DQB
 	| DeleteQueryBuilderFactory<InitialDB, DQB>;
 
-type WriteQueryBuilderFactory<InitialDB, SQB extends AnySelectQueryBuilder> = (
-	db: k.Kysely<InitialDB>,
-) => SQB;
-
-type WriteQueryBuilderOrFactory<InitialDB, SQB extends AnySelectQueryBuilder> =
-	| SQB
-	| WriteQueryBuilderFactory<InitialDB, SQB>;
-
 type AnySelectQueryBuilderFactory = (db: SelectCreator<any>) => AnySelectQueryBuilder;
 type AnyInsertQueryBuilderFactory = (db: InsertCreator<any>) => AnyInsertQueryBuilder;
 type AnyUpdateQueryBuilderFactory = (db: UpdateCreator<any>) => AnyUpdateQueryBuilder;
@@ -3518,7 +3520,7 @@ class QuerySetCreator<in out DB> {
 			orderByKeys: true,
 			frontModifiers: [],
 			endModifiers: [],
-			hoistCTEs: false,
+			writeQueryCreator: null,
 		}) as any;
 	}
 
@@ -3674,42 +3676,47 @@ class QuerySetCreator<in out DB> {
 	 * This enables multi-write CTE orchestration patterns like:
 	 * ```ts
 	 * const result = await querySet(db)
-	 *   .writeAs("updated", (db) =>
-	 *     db
-	 *       .with("updated", (qb) =>
-	 *         qb.updateTable("users")
-	 *           .set({ email: "new@example.com" })
-	 *           .where("id", "=", 1)
-	 *           .returningAll()
-	 *       )
-	 *       .selectFrom("updated")
-	 *       .selectAll()
+	 *   .writeAs("updated",
+	 *     (db) => db.with("updated", (qb) =>
+	 *       qb.updateTable("users")
+	 *         .set({ email: "new@example.com" })
+	 *         .where("id", "=", 1)
+	 *         .returningAll()
+	 *     ),
+	 *     (qc) => qc.selectFrom("updated").selectAll()
 	 *   )
 	 *   .executeTakeFirst();
 	 * ```
 	 *
 	 * @param alias - The alias for the base query.
-	 * @param query - A Kysely select query builder (possibly with CTEs) or factory function.
+	 * @param cteFn - A callback that receives `db` and builds the CTEs, returning a query creator.
+	 * @param selectFn - A callback that receives the query creator and builds the SELECT referencing CTE names.
 	 * @param keyBy - The key(s) to uniquely identify rows. Defaults to `"id"`.
 	 * @returns A new QuerySet.
 	 */
-	writeAs<Alias extends string, SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>>(
+	writeAs<
+		Alias extends string,
+		NewDB,
+		SQB extends k.SelectQueryBuilder<any, any, InputWithDefaultKey>,
+	>(
 		alias: Alias,
-		query: WriteQueryBuilderOrFactory<DB, SQB>,
+		cteFn: (db: k.Kysely<DB>) => k.QueryCreator<NewDB>,
+		selectFn: (qc: k.QueryCreator<NewDB>) => SQB,
 	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
-	writeAs<Alias extends string, SQB extends AnySelectQueryBuilder>(
+	writeAs<Alias extends string, NewDB, SQB extends AnySelectQueryBuilder>(
 		alias: Alias,
-		query: WriteQueryBuilderOrFactory<DB, SQB>,
+		cteFn: (db: k.Kysely<DB>) => k.QueryCreator<NewDB>,
+		selectFn: (qc: k.QueryCreator<NewDB>) => SQB,
 		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
 	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
-	writeAs(alias: string, query: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
-		const baseQuery = typeof query === "function" ? query(this.#db) : query;
-
+	writeAs(alias: string, cteFn: any, selectFn: any, keyBy?: KeyBy<any>): any {
+		const qc = cteFn(this.#db);
+		const baseQuery = selectFn(qc).withPlugin(stripWithPlugin);
 		return new QuerySetImpl({
 			db: this.#db,
 			baseAlias: alias,
 			baseQuery,
-			keyBy: keyBy,
+			keyBy: keyBy ?? DEFAULT_KEY_BY,
 			hydrator: createHydrator().orderByKeys(),
 			joinCollections: new Map(),
 			attachCollections: new Map(),
@@ -3719,7 +3726,7 @@ class QuerySetCreator<in out DB> {
 			orderByKeys: true,
 			frontModifiers: [],
 			endModifiers: [],
-			hoistCTEs: true,
+			writeQueryCreator: qc,
 		});
 	}
 }
