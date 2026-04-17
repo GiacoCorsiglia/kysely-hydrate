@@ -2799,21 +2799,29 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#applyOrderBy(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
+	#applyOrderBy(qb: AnySelectQueryBuilder, isOuter: boolean = false): AnySelectQueryBuilder {
 		const { baseAlias, keyBy, orderBy } = this.#props;
+		const eb = k.expressionBuilder<any, any>(qb);
 
 		let keyByArray: readonly string[] = typeof keyBy === "string" ? [keyBy] : keyBy;
 
 		// Apply custom orderBy expressions
 		for (const { expr, modifiers } of orderBy) {
-			// Convert $$ to . for SQL column references (e.g., "profile$$bio" -> "profile.bio")
-			// If there's no $$, it's a base column, so add the baseAlias prefix
-			const sqlExpr = expr.includes(SEP)
-				? // Intentionally only replace first occurrence.
-					expr.replace(SEP, ".")
-				: `${baseAlias}.${expr}`;
+			let orderExpr: string | k.Expression<any>;
+			if (expr.includes(SEP)) {
+				if (isOuter) {
+					// For outer queries with pagination + many-joins, use hoisted column reference
+					orderExpr = eb.ref(`${baseAlias}.${expr}`);
+				} else {
+					// For inner queries, convert $$ to .
+					orderExpr = expr.replace(SEP, ".");
+				}
+			} else {
+				// No $$, it's a base column
+				orderExpr = `${baseAlias}.${expr}`;
+			}
 
-			qb = qb.orderBy(sqlExpr, modifiers);
+			qb = qb.orderBy(orderExpr, modifiers);
 
 			// Remove expr from keyByArray if present
 			keyByArray = keyByArray.filter((k) => k !== expr);
@@ -2895,7 +2903,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// LIMIT or OFFSET.
 		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
-			qb = this.#applyOrderBy(qb);
+			qb = this.#applyOrderBy(qb, false);
 		}
 
 		return qb;
@@ -2954,7 +2962,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
 		if (limit || offset) {
-			cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery);
+			cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery, false);
 		}
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
@@ -2976,7 +2984,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// we're in a subquery already.
 		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
-			qb = this.#applyOrderBy(qb);
+			qb = this.#applyOrderBy(qb, true);
 		}
 
 		for (const modifier of this.#props.frontModifiers) {

@@ -1407,4 +1407,76 @@ describe("query-set: sql-generation", () => {
 		`,
 		);
 	});
+
+	test("SQL: pagination with leftJoinMany and orderBy nested column - outer ORDER BY uses hoisted column", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.orderBy("profile$$bio", "asc")
+			.limit(10)
+			.offset(0);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// The outer ORDER BY should reference the hoisted column "user"."profile$$bio"
+		// not "profile"."bio" which doesn't exist in the outer scope
+		assert.strictEqual(
+			sql,
+			snapshot`
+			select
+				"user"."id" as "id",
+				"user"."username" as "username",
+				"user"."profile$$id" as "profile$$id",
+				"user"."profile$$bio" as "profile$$bio",
+				"user"."profile$$user_id" as "profile$$user_id",
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from (
+				select
+					"user"."id" as "id",
+					"user"."username" as "username",
+					"profile"."id" as "profile$$id",
+					"profile"."bio" as "profile$$bio",
+					"profile"."user_id" as "profile$$user_id"
+				from (
+					select "id", "username" from "users"
+				) as "user"
+				inner join (
+					select
+						"profile"."id" as "id",
+						"profile"."bio" as "bio",
+						"profile"."user_id" as "user_id"
+					from (
+						select "id", "bio", "user_id" from "profiles"
+					) as "profile"
+				) as "profile" on "profile"."user_id" = "user"."id"
+				order by "profile"."bio" asc, "user"."id" asc
+				limit ?
+				offset ?
+			) as "user"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "user"."id"
+			order by "user"."profile$$bio" asc, "user"."id" asc
+		`,
+		);
+	});
 });

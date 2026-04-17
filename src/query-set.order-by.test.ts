@@ -1026,4 +1026,82 @@ describe("query-set: order-by", () => {
 			{ id: 5, user_id: 9, title: "Post Epsilon" },
 		]);
 	});
+
+	//
+	// Pagination with many-joins and nested orderBy
+	//
+
+	test("orderBy: orders by joined column with pagination and leftJoinMany", async () => {
+		// This test verifies the fix for the bug where orderBy on nested columns
+		// with pagination + many-joins would fail with "missing FROM-clause entry"
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.orderBy("profile$$bio", "asc")
+			.limit(5)
+			.offset(0)
+			.execute();
+
+		// Should be ordered by profile.bio asc, then by id asc
+		// Users with profiles: alice(2), bob(6), carol(5), dave(9), eve(4), frank(8), grace(1), heidi(10), ivan(3), judy(7)
+		// First 5: alice, bob, carol, dave, eve
+		assert.strictEqual(users.length, 5);
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "alice",
+				profile: { id: 2, bio: "Bio for alice", user_id: 2 },
+				posts: [], // alice has no posts
+			},
+			{
+				id: 6,
+				username: "bob",
+				profile: { id: 6, bio: "Bio for bob", user_id: 6 },
+				posts: [
+					{ id: 3, title: "Post Gamma", user_id: 6 },
+					{ id: 6, title: "Post Zeta", user_id: 6 },
+					{ id: 8, title: "Post Theta", user_id: 6 },
+					{ id: 10, title: "Post Kappa", user_id: 6 },
+				],
+			},
+			{
+				id: 5,
+				username: "carol",
+				profile: { id: 9, bio: "Bio for carol", user_id: 5 },
+				posts: [
+					{ id: 1, title: "Post Alpha", user_id: 5 },
+					{ id: 4, title: "Post Delta", user_id: 5 },
+				],
+			},
+			{
+				id: 9,
+				username: "dave",
+				profile: { id: 3, bio: "Bio for dave", user_id: 9 },
+				posts: [
+					{ id: 2, title: "Post Beta", user_id: 9 },
+					{ id: 5, title: "Post Epsilon", user_id: 9 },
+				],
+			},
+			{
+				id: 4,
+				username: "eve",
+				profile: { id: 4, bio: "Bio for eve", user_id: 4 },
+				posts: [
+					{ id: 7, title: "Post Eta", user_id: 4 },
+					{ id: 9, title: "Post Iota", user_id: 4 },
+				],
+			},
+		]);
+	});
 });
