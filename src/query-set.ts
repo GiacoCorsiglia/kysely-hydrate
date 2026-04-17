@@ -2620,6 +2620,7 @@ interface QuerySetProps {
 	frontModifiers: readonly k.Expression<any>[];
 	endModifiers: readonly k.Expression<any>[];
 	writeQueryCreator: k.QueryCreator<any> | null;
+	options: QuerySetOptions;
 }
 
 /**
@@ -2775,15 +2776,43 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		key: string,
 		collection: JoinCollection,
 	): AnySelectQueryBuilder {
-		// Add the join to the parent query.
 		const nestedQuery = collection.querySet.#toQuery(true, true);
-		const from = nestedQuery.as(key);
-		// This cast to a single method helps TypeScript follow the overloads.
-		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
-		// Add the (prefixed) selections from the subquery to the parent query.
-		const prefix = makePrefix("", key);
-		qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
+		// When the lateral join optimizer is enabled and the join uses the 2-arg
+		// ref form (k1, k2), convert to a lateral join by pushing the ON predicate
+		// inside the subquery as a WHERE clause.
+		const lateralMethodMap: Partial<Record<JoinMethod, JoinMethod>> = {
+			innerJoin: "innerJoinLateral",
+			leftJoin: "leftJoinLateral",
+			crossJoin: "crossJoinLateral",
+		};
+		const lateralMethod = lateralMethodMap[collection.method];
+		const [arg1, arg2] = collection.args;
+		const canConvertToLateral =
+			this.#props.options.optimizer === "lateralJoin" &&
+			lateralMethod !== undefined &&
+			typeof arg1 === "string" &&
+			typeof arg2 === "string";
+
+		if (canConvertToLateral) {
+			// The ON args reference the join key (e.g., "posts.user_id"), but inside
+			// the subquery the alias is baseAlias (e.g., "post"). Remap refs that
+			// use the join key to the internal alias so the WHERE resolves correctly.
+			const innerAlias = collection.querySet.#props.baseAlias;
+			const remapRef = (ref: string) =>
+				ref.startsWith(`${key}.`) ? `${innerAlias}.${ref.slice(key.length + 1)}` : ref;
+			const lateralQuery = nestedQuery.whereRef(remapRef(arg1), "=", remapRef(arg2));
+			const from = lateralQuery.as(key);
+			qb = qb[lateralMethod as "innerJoinLateral"](from, (join: any) => join.onTrue());
+			// Hoist from the original nestedQuery (same selections, no WHERE change).
+			const prefix = makePrefix("", key);
+			qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
+		} else {
+			const from = nestedQuery.as(key);
+			qb = qb[collection.method as "innerJoin"](from, ...collection.args);
+			const prefix = makePrefix("", key);
+			qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
+		}
 
 		return qb;
 	}
@@ -3156,7 +3185,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		if (typeof nestedQuerySet === "function") {
 			const qs = ((query: AnySelectQueryBuilder, keyBy?: KeyBy<any>) => {
-				const creator = querySet(this.#props.db);
+				const creator = querySet(this.#props.db, this.#props.options);
 				return creator.selectAs(key, query, keyBy as any);
 			}) as any;
 
@@ -3494,9 +3523,11 @@ type InferO<X> = X extends k.SelectQueryBuilder<any, any, infer O> ? O : never;
  */
 class QuerySetCreator<in out DB> {
 	#db: k.Kysely<DB>;
+	#options: QuerySetOptions;
 
-	constructor(db: k.Kysely<DB>) {
+	constructor(db: k.Kysely<DB>, options: QuerySetOptions = {}) {
 		this.#db = db;
+		this.#options = options;
 	}
 
 	#createQuerySet(
@@ -3521,6 +3552,7 @@ class QuerySetCreator<in out DB> {
 			frontModifiers: [],
 			endModifiers: [],
 			writeQueryCreator: null,
+			options: this.#options,
 		}) as any;
 	}
 
@@ -3727,6 +3759,7 @@ class QuerySetCreator<in out DB> {
 			frontModifiers: [],
 			endModifiers: [],
 			writeQueryCreator: qc,
+			options: this.#options,
 		});
 	}
 }
@@ -3758,8 +3791,19 @@ class QuerySetCreator<in out DB> {
  * ```
  *
  * @param db - A Kysely database instance.
+ * @param options - Optional configuration for query optimization.
  * @returns A QuerySetCreator for building query sets.
  */
-export function querySet<DB>(db: k.Kysely<DB>): QuerySetCreator<DB> {
-	return new QuerySetCreator(db);
+export function querySet<DB>(db: k.Kysely<DB>, options?: QuerySetOptions): QuerySetCreator<DB> {
+	return new QuerySetCreator(db, { ...defaultOptions, ...options });
 }
+
+export interface QuerySetOptions {
+	optimizer?: "default" | "lateralJoin";
+}
+
+let defaultOptions: QuerySetOptions = {};
+
+querySet.setDefaultOptions = (options: QuerySetOptions): void => {
+	defaultOptions = options;
+};

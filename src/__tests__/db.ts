@@ -5,10 +5,14 @@
  * Usage:
  *   HYDRATE_TEST_DB=postgres npm test
  *   HYDRATE_TEST_DB=sqlite npm test (default)
+ *
+ * Set HYDRATE_OPTIMIZER_MODE=lateralJoin to run all tests with the lateral
+ * join optimizer (Postgres only).
  */
 
 import { type Kysely } from "kysely";
 
+import { querySet, type QuerySetOptions } from "../query-set.ts";
 import { type SeedDB } from "./fixture.ts";
 import { type DbTestOptions, getDbForTest as getPostgresDb } from "./postgres.ts";
 import { getDbForTest as getSqliteDb } from "./sqlite.ts";
@@ -23,6 +27,15 @@ if (!["postgres", "sqlite"].includes(testDb)) {
 }
 
 export const dialect = testDb as "postgres" | "sqlite";
+
+// Apply optimizer mode if set via environment variable (Postgres only, since
+// LATERAL is a Postgres feature).
+const optimizerMode = process.env.HYDRATE_OPTIMIZER_MODE as
+	| QuerySetOptions["optimizer"]
+	| undefined;
+if (optimizerMode && dialect === "postgres") {
+	querySet.setDefaultOptions({ optimizer: optimizerMode });
+}
 
 export function getDbForTest(options?: DbTestOptions): Kysely<SeedDB> {
 	if (dialect === "postgres") {
