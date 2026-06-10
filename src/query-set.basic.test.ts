@@ -153,6 +153,34 @@ describe("query-set: basic", () => {
 		]);
 	});
 
+	test("init: keyBy collapsing duplicate base rows hydrates cardinality-one joins", async () => {
+		// Regression test: same as above but WITHOUT distinct, so the base query
+		// returns several rows per user_id.  The hydrator must group them into
+		// one entity and deduplicate the joined author rather than throwing a
+		// CardinalityViolationError.
+		const postAuthors = await querySet(db)
+			.selectAs("post", db.selectFrom("posts").select(["user_id"]), "user_id")
+			.innerJoinOne(
+				"author",
+				({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
+				"author.id",
+				"post.user_id",
+			)
+			.execute();
+
+		assert.deepStrictEqual(postAuthors, [
+			{ user_id: 2, author: { id: 2, username: "bob" } },
+			{ user_id: 3, author: { id: 3, username: "carol" } },
+			{ user_id: 4, author: { id: 4, username: "dave" } },
+			{ user_id: 5, author: { id: 5, username: "eve" } },
+			{ user_id: 6, author: { id: 6, username: "frank" } },
+			{ user_id: 7, author: { id: 7, username: "grace" } },
+			{ user_id: 8, author: { id: 8, username: "heidi" } },
+			{ user_id: 9, author: { id: 9, username: "ivan" } },
+			{ user_id: 10, author: { id: 10, username: "judy" } },
+		]);
+	});
+
 	test("init: writeAs passes explicit keyBy to the hydrator", async () => {
 		// Same regression as above, via the writeAs() creation path.
 		const users = await querySet(db)

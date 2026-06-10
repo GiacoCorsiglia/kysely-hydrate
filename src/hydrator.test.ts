@@ -227,6 +227,73 @@ test("omit: works at nested level", async () => {
 	assert.strictEqual("content" in result[0]!.posts[0]!, false);
 });
 
+//
+// Grouping and deduplication
+//
+
+test("grouping: deduplicates by keyBy even without nested collections", async () => {
+	// Regression test: hydrators without nested collections skipped grouping
+	// entirely, so duplicate rows produced duplicate entities (inconsistent
+	// with hydrators that have collections, which always group by keyBy).
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const hydrator = createHydrator<User>("id").fields(["id", "name"]);
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	]);
+});
+
+test("grouping: hasOne tolerates duplicated parent rows", async () => {
+	// Regression test: when the parent's keyBy groups several identical rows
+	// (e.g. a base query with duplicate keys), a collection-less child hydrator
+	// skipped grouping and saw one child per row, throwing a spurious
+	// CardinalityViolationError for "one" collections.
+	interface UserWithProfile extends User {
+		profile$$id: number | null;
+	}
+
+	const rows: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: 5 },
+		{ id: 1, name: "Alice", profile$$id: 5 },
+	];
+
+	const hydrator = createHydrator<UserWithProfile>("id")
+		.fields(["id", "name"])
+		.hasOne("profile", "profile$$", (h) => h("id").fields(["id"]));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, name: "Alice", profile: { id: 5 } }]);
+});
+
+test("grouping: hasMany deduplicates children under duplicated parent rows", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10 },
+		{ id: 1, name: "Alice", posts$$id: 10 },
+		{ id: 1, name: "Alice", posts$$id: 11 },
+	];
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields(["id", "name"])
+		.hasMany("posts", "posts$$", (h) => h("id").fields(["id"]));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, name: "Alice", posts: [{ id: 10 }, { id: 11 }] }]);
+});
+
 test("composite keys: groups by multiple fields", async () => {
 	interface CompositeRow {
 		key1: string;
