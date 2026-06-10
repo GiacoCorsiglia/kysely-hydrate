@@ -778,8 +778,9 @@ interface HydrationContext {
 	/**
 	 * Map of attached collection data, keyed by prefixed collection key.
 	 * Populated during the initial fetch phase and used during hydration.
+	 * The inner maps hold grouped rows (see groupByKey).
 	 */
-	readonly attachedDataMap: Map<string, Map<unknown, any[]>>;
+	readonly attachedDataMap: Map<string, Grouped<any>>;
 
 	/**
 	 * Cache for auto-include field names keyed by prefix.
@@ -1089,7 +1090,14 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates a single entity. All attach collections are already fetched and provided in attachedDataMap.
 	 */
-	#hydrateOne(ctx: HydrationContext, prefix: string, input: Input, inputRows: Input[]): Output {
+	#hydrateOne(
+		ctx: HydrationContext,
+		prefix: string,
+		input: Input,
+		// Null means the group consists of just `input`; the array is only
+		// materialized when nested collections actually need it.
+		inputRows: Input[] | null,
+	): Output {
 		const { fields, extras, extenders, collections, attachedCollections } = this.#props;
 
 		const entity: any = {};
@@ -1129,11 +1137,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		if (collections) {
+			const rows = inputRows ?? [input];
+
 			for (const [key, collection] of collections) {
 				const childPrefix = applyPrefix(prefix, collection.prefix);
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, inputRows);
+				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, rows);
 
 				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
@@ -1150,9 +1160,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 				// Look up attached rows with matching key (already hydrated)
 				const groupedData = ctx.attachedDataMap.get(mapKey);
-				const attachedRows = groupedData?.get(inputKey);
+				const attached = groupedData?.get(inputKey);
 
-				entity[key] = applyCollectionMode(attachedRows, collection.mode, key);
+				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
 			}
 		}
 
@@ -1198,11 +1208,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// products inherited from an ancestor's sibling many-collections).
 		// groupByKey also skips rows with null keys (non-existent entities).
 		const grouped = groupByKey(prefix, sortedInputs, keyBy);
-		for (const groupRows of grouped.values()) {
+		for (const group of grouped.values()) {
 			// We assume the first row is representative of the group, at least for
 			// the top-level entity (not nested collections).
-			const firstRow = groupRows[0]!;
-			const entity = this.#hydrateOne(ctx, prefix, firstRow, groupRows);
+			const entity =
+				group instanceof RowGroup
+					? this.#hydrateOne(ctx, prefix, group.rows[0]!, group.rows)
+					: this.#hydrateOne(ctx, prefix, group, null);
 			result.push(entity);
 		}
 
@@ -1293,7 +1305,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				return this.#hydrateMany(ctx, "", input);
 			}
 
-			return this.#hydrateOne(ctx, "", input, [input]);
+			return this.#hydrateOne(ctx, "", input, null);
 		};
 
 		return fetchPromises.length > 0
@@ -1383,6 +1395,29 @@ function applyCollectionMode<T>(
 }
 
 /**
+ * Applies collection mode logic to data in the grouped form produced by
+ * {@link groupByKey} (a single row, or a RowGroup for 2+ rows).  This only
+ * normalizes the representation; the mode/cardinality semantics live in
+ * {@link applyCollectionMode}.  The single-row case is handled inline so that
+ * "one"/"oneOrThrow" lookups don't allocate a temporary array.
+ */
+function applyGroupedCollectionMode<T>(
+	grouped: T | RowGroup<T> | undefined,
+	mode: CollectionMode,
+	key: string,
+): T[] | T | null {
+	if (grouped instanceof RowGroup) {
+		return applyCollectionMode(grouped.rows, mode, key);
+	}
+
+	if (grouped === undefined) {
+		return applyCollectionMode(undefined, mode, key);
+	}
+
+	return mode === "many" ? [grouped] : grouped;
+}
+
+/**
  * Determines if a key is nil, meaning the corresponding object does not exist.
  */
 function isKeyNil(key: unknown): key is null | undefined {
@@ -1415,14 +1450,37 @@ function getKey(prefix: string, input: unknown, keyBy: string | readonly string[
 }
 
 /**
+ * A group of 2+ rows sharing the same key.  Groups of one row are stored as
+ * the row itself (see {@link groupByKey}); this wrapper class disambiguates
+ * multi-row groups from rows without restricting what a row can be.
+ */
+class RowGroup<T> {
+	readonly rows: T[];
+
+	constructor(first: T, second: T) {
+		this.rows = [first, second];
+	}
+}
+
+/**
+ * The result of grouping rows by key: a single row, or a RowGroup for 2+ rows.
+ */
+type Grouped<T> = Map<unknown, T | RowGroup<T>>;
+
+/**
  * Groups rows by the entity's key.
+ *
+ * Most groups contain exactly one row, so the row is stored directly and a
+ * RowGroup (with its backing array) is only allocated once a second row with
+ * the same key shows up.  This keeps grouping allocation-free for the common
+ * duplicate-free case.
  */
 function groupByKey<T>(
 	prefix: string,
 	inputs: Iterable<T>,
 	keyBy: string | readonly string[],
-): Map<unknown, T[]> {
-	const map = new Map<unknown, T[]>();
+): Grouped<T> {
+	const map: Grouped<T> = new Map();
 
 	for (const input of inputs) {
 		const key = getKey(prefix, input, keyBy);
@@ -1430,12 +1488,16 @@ function groupByKey<T>(
 		if (isKeyNil(key)) {
 			continue;
 		}
-		let arr = map.get(key);
-		if (!arr) {
-			arr = [];
-			map.set(key, arr);
+		// Rows are never undefined (reading a key from an undefined row would
+		// have thrown above), so undefined reliably means "absent".
+		const existing = map.get(key);
+		if (existing === undefined) {
+			map.set(key, input);
+		} else if (existing instanceof RowGroup) {
+			existing.rows.push(input);
+		} else {
+			map.set(key, new RowGroup(existing, input));
 		}
-		arr.push(input);
 	}
 
 	return map;

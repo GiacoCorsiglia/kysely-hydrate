@@ -1,7 +1,11 @@
 import assert from "node:assert";
 import { test } from "node:test";
 
-import { ExpectedOneItemError, KeyByMismatchError } from "./helpers/errors.ts";
+import {
+	CardinalityViolationError,
+	ExpectedOneItemError,
+	KeyByMismatchError,
+} from "./helpers/errors.ts";
 import { createHydrator, hydrate } from "./hydrator.ts";
 
 // Test data types
@@ -292,6 +296,42 @@ test("grouping: hasMany deduplicates children under duplicated parent rows", asy
 	const result = await hydrate(rows, hydrator);
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "Alice", posts: [{ id: 10 }, { id: 11 }] }]);
+});
+
+test("grouping: hasOne throws CardinalityViolationError for multiple distinct children", async () => {
+	interface UserWithProfile extends User {
+		profile$$id: number | null;
+	}
+
+	const rows: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: 5 },
+		{ id: 1, name: "Alice", profile$$id: 6 },
+	];
+
+	const hydrator = createHydrator<UserWithProfile>("id")
+		.fields(["id", "name"])
+		.hasOne("profile", "profile$$", (h) => h("id").fields(["id"]));
+
+	// Note: the async wrapper also catches the error when hydrate() throws
+	// synchronously (it only rejects when attach fetches are involved).
+	await assert.rejects(async () => hydrate(rows, hydrator), CardinalityViolationError);
+});
+
+test("grouping: attachOne throws CardinalityViolationError for multiple matching children", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields(["id", "name"])
+		.attachOne(
+			"profile",
+			() => [
+				{ userId: 1, bio: "first" },
+				{ userId: 1, bio: "second" },
+			],
+			{ matchChild: "userId", toParent: "id" },
+		);
+
+	await assert.rejects(async () => hydrate(users, hydrator), CardinalityViolationError);
 });
 
 test("composite keys: groups by multiple fields", async () => {
