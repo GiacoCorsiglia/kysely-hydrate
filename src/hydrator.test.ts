@@ -335,6 +335,32 @@ test("composite keys: skips rows where any key part is null", async () => {
 	assert.deepStrictEqual(result[0], { key1: "a", key2: 1, value: "valid" });
 });
 
+test("composite keys: values containing the separator do not collide", async () => {
+	interface CompositeRow {
+		key1: string;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// Regression test: composite keys were built by joining the parts with
+	// "::", so these two distinct entities produced the same key ("x::y::z")
+	// and were merged into one.
+	const rows: CompositeRow[] = [
+		{ key1: "x::y", key2: "z", nested$$id: 1 },
+		{ key1: "x", key2: "y::z", nested$$id: 2 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.deepStrictEqual(result[0], { key1: "x::y", key2: "z", items: [{ id: 1 }] });
+	assert.deepStrictEqual(result[1], { key1: "x", key2: "y::z", items: [{ id: 2 }] });
+});
+
 //
 // Nested Collections (has/hasMany/hasOne/hasOneOrThrow)
 //

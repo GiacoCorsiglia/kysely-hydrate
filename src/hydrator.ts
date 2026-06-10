@@ -1463,8 +1463,6 @@ function isKeyNil(key: unknown): key is null | undefined {
 	return key === null || key === undefined;
 }
 
-const KEY_SEPARATOR = "::";
-
 /**
  * Gets the key for an entity from the input.
  *
@@ -1484,7 +1482,10 @@ function getKey(prefix: string, input: unknown, keyBy: string | readonly string[
 		}
 		values.push(value);
 	}
-	return values.join(KEY_SEPARATOR);
+	// JSON-encode the parts (rather than joining them with a separator) so that
+	// values containing the separator cannot collide across part boundaries.
+	// Bigints are not JSON-serializable, so stringify them explicitly.
+	return JSON.stringify(values, (_key, value) => (typeof value === "bigint" ? `${value}n` : value));
 }
 
 /**
