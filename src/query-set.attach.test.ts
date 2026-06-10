@@ -511,4 +511,39 @@ describe("query-set: attach", () => {
 			},
 		]);
 	});
+
+	test("attachMany: toParent defaults to the query set's explicit keyBy", async () => {
+		// Regression test: when keys.toParent is omitted, matching must fall back
+		// to the keyBy passed to selectAs.  Previously it fell back to the
+		// hydrator's default ("id") regardless of the explicit keyBy.
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]), "username")
+			.where("users.id", "in", [1, 2])
+			.attachMany(
+				"badges",
+				() => [
+					{ awardedTo: "alice", badge: "founder" },
+					{ awardedTo: "bob", badge: "early-adopter" },
+					{ awardedTo: "bob", badge: "contributor" },
+				],
+				{ matchChild: "awardedTo" },
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 1,
+				username: "alice",
+				badges: [{ awardedTo: "alice", badge: "founder" }],
+			},
+			{
+				id: 2,
+				username: "bob",
+				badges: [
+					{ awardedTo: "bob", badge: "early-adopter" },
+					{ awardedTo: "bob", badge: "contributor" },
+				],
+			},
+		]);
+	});
 });

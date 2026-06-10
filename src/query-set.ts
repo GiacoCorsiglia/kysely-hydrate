@@ -3518,8 +3518,8 @@ class QuerySetCreator<in out DB> {
 			db: this.#db,
 			baseAlias: alias,
 			baseQuery,
-			keyBy: keyBy,
-			hydrator: createHydrator().orderByKeys(),
+			keyBy,
+			hydrator: createHydrator<any>(keyBy).orderByKeys(),
 			joinCollections: new Map(),
 			attachCollections: new Map(),
 			limit: null,
@@ -3717,15 +3717,15 @@ class QuerySetCreator<in out DB> {
 		selectFn: (qc: k.QueryCreator<NewDB>) => SQB,
 		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
 	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
-	writeAs(alias: string, cteFn: any, selectFn: any, keyBy?: KeyBy<any>): any {
+	writeAs(alias: string, cteFn: any, selectFn: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
 		const qc = cteFn(this.#db);
 		const baseQuery = selectFn(qc).withPlugin(stripWithPlugin);
 		return new QuerySetImpl({
 			db: this.#db,
 			baseAlias: alias,
 			baseQuery,
-			keyBy: keyBy ?? DEFAULT_KEY_BY,
-			hydrator: createHydrator().orderByKeys(),
+			keyBy,
+			hydrator: createHydrator<any>(keyBy).orderByKeys(),
 			joinCollections: new Map(),
 			attachCollections: new Map(),
 			limit: null,
