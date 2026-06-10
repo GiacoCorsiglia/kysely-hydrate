@@ -23,13 +23,6 @@ export function makePrefix<ParentPrefix extends string, Prefix extends string>(
 	return `${prefix}${key}${SEP}`;
 }
 
-/**
- * Indicates whether a string has any prefixes from `makePrefix`applied to it.
- */
-export function hasAnyPrefix(string: string): boolean {
-	return string.includes(SEP);
-}
-
 export type ApplyPrefix<Prefix extends string, Key extends string = ""> = `${Prefix}${Key}`;
 
 export type ApplyPrefixWithSep<

@@ -102,11 +102,6 @@ export function addObjectToMap<K extends string, V>(
 	return clone;
 }
 
-export function capitalize<K extends string>(str: K): Capitalize<K> {
-	if (!str) return "" as Capitalize<K>;
-	return (str.charAt(0).toUpperCase() + str.slice(1)) as Capitalize<K>;
-}
-
 /**
  * Creates a new Map with the given key deleted.  If the key does not exist,
  * returns the original Map.
