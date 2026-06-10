@@ -301,7 +301,7 @@ const users = await querySet(db)
 	.leftJoinMany(
 		"posts",
 		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "authorId"])),
-		"post.authorId",
+		"posts.authorId",
 		"user.id",
 	)
 	.execute();
@@ -346,8 +346,8 @@ const query = querySet(db)
 	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	.innerJoinMany(
 		"posts",
-		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title"])),
-		"post.userId",
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
+		"posts.userId",
 		"user.id",
 	)
 	.execute();
@@ -487,7 +487,7 @@ const users = await querySet(db)
 	.leftJoinMany(
 		"posts",
 		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-		"post.userId",
+		"posts.userId",
 		"user.id",
 	)
 	// Modify the query set for the "posts" collection
@@ -996,10 +996,10 @@ const users = await querySet(db)
 	.leftJoinMany(
 		"posts",
 		({ eb, qs }) =>
-			qs(eb.selectFrom("posts").select(["id", "title"]))
+			qs(eb.selectFrom("posts").select(["id", "title", "userId"]))
 				// Transform child:
 				.map((post) => ({ postId: post.id, postTitle: post.title })),
-		"post.userId",
+		"posts.userId",
 		"user.id",
 	)
 	// Transform parent:

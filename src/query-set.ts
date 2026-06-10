@@ -612,8 +612,8 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * const users = await querySet(db)
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .leftJoinMany("posts", ({ eb, qs }) =>
-	 *     qs(eb.selectFrom("posts").select(["id", "title"])),
-	 *     "post.userId",
+	 *     qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
+	 *     "posts.userId",
 	 *     "user.id",
 	 *   )
 	 *   .execute();
@@ -621,7 +621,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * type Result = Array<{
 	 *   id: number;
 	 *   username: string;
-	 *   posts: Array<{ id: number; title: string }>;
+	 *   posts: Array<{ id: number; title: string; userId: number }>;
 	 * }>;
 	 * ```
 	 *
@@ -1499,7 +1499,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .innerJoinOne(
 	 *     "author",  // Key (alias) - extra argument compared to Kysely
 	 *     ({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
-	 *     "user.id",    // Same as Kysely's k1
+	 *     "author.id",   // Same as Kysely's k1 (the joined query is aliased by the key)
 	 *     "post.userId", // Same as Kysely's k2
 	 *   )
 	 *   .execute();
@@ -1519,7 +1519,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .innerJoinOne(
 	 *     "author",
 	 *     ({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
-	 *     (join) => join.onRef("user.id", "=", "post.userId"),  // Same as Kysely's callback
+	 *     (join) => join.onRef("author.id", "=", "post.userId"),  // Same as Kysely's callback
 	 *   )
 	 *   .execute();
 	 * ```
@@ -1531,7 +1531,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * const posts = await querySet(db)
 	 *   .selectAs("post", db.selectFrom("posts").select(["id", "title", "userId"]))
-	 *   .innerJoinOne("author", authorQuery, "user.id", "post.userId")
+	 *   .innerJoinOne("author", authorQuery, "author.id", "post.userId")
 	 *   .execute();
 	 * ```
 	 *
@@ -1575,7 +1575,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .innerJoinMany(
 	 *     "posts",
 	 *     ({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-	 *     "post.userId",
+	 *     "posts.userId",
 	 *     "user.id",
 	 *   )
 	 *   .execute();
@@ -1594,14 +1594,14 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .innerJoinMany(
 	 *     "publishedPosts",
-	 *     ({ select }) =>
-	 *       select(qb =>
-	 *         qb
+	 *     ({ eb, qs }) =>
+	 *       qs(
+	 *         eb
 	 *           .selectFrom("posts")
 	 *           .select(["id", "title", "userId"])
 	 *           .where("status", "=", "published")
 	 *       ),
-	 *     "post.userId",
+	 *     "publishedPosts.userId",
 	 *     "user.id",
 	 *   )
 	 *   .execute();
@@ -1705,7 +1705,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .leftJoinOneOrThrow(
 	 *     "author",
 	 *     ({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
-	 *     "user.id",
+	 *     "author.id",
 	 *     "post.userId",
 	 *   )
 	 *   .execute();
@@ -1759,7 +1759,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *   .leftJoinMany(
 	 *     "posts",
 	 *     ({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-	 *     "post.userId",
+	 *     "posts.userId",
 	 *     "user.id",
 	 *   )
 	 *   .execute();
@@ -1784,10 +1784,11 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *           "comments",
 	 *           ({ eb, qs }) =>
 	 *             qs(eb.selectFrom("comments").select(["id", "content", "postId"])),
-	 *           "comment.postId",
-	 *           "post.id",
+	 *           "comments.postId",
+	 *           // The nested query set's base alias is the outer join's key.
+	 *           "posts.id",
 	 *         ),
-	 *     "post.userId",
+	 *     "posts.userId",
 	 *     "user.id",
 	 *   )
 	 *   .execute();
@@ -2154,7 +2155,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *     "posts",
 	 *     ({ eb, qs }) =>
 	 *       qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-	 *     "post.userId",
+	 *     "posts.userId",
 	 *     "user.id",
 	 *   )
 	 *   // Add a WHERE clause to the posts subquery
@@ -2173,7 +2174,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *     "posts",
 	 *     ({ eb, qs }) =>
 	 *       qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-	 *     "post.userId",
+	 *     "posts.userId",
 	 *     "user.id",
 	 *   )
 	 *   // Enhance the posts collection by attaching additional data
@@ -3762,7 +3763,7 @@ class QuerySetCreator<in out DB> {
  *   .selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
  *   .leftJoinMany("posts", ({ eb, qs }) =>
  *     qs(eb.selectFrom("posts").select(["id", "userId", "title"])),
- *     "post.userId",
+ *     "posts.userId",
  *     "user.id",
  *   )
  *   .execute();
