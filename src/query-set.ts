@@ -2921,12 +2921,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
 			this.#props;
 
+		// Strict null checks: an explicit limit/offset of 0 must still be applied.
+		const hasPagination = limit !== null || offset !== null;
+
 		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
 		// baseAlias) we can do less nesting.
 		if (!joinCollections.size && !orderBy.length && !orderByKeys) {
 			// No limit and offset and no joins means we can return as is for any type of query builder.
 			// No CTE, no subqueries, no nothing.
-			if (!limit && !offset) {
+			if (!hasPagination) {
 				if (isNested && !isSelectQueryBuilder(baseQuery)) {
 					throw new InvalidJoinedQuerySetError(baseAlias);
 				}
@@ -2947,7 +2950,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		// If no pagination, just return the joined query, even if it has row explosion.
-		if (!limit && !offset) {
+		if (!hasPagination) {
 			return this.#toJoinedQuery(isNested, isLocalSubquery);
 		}
 
@@ -2961,9 +2964,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
-		if (limit || offset) {
-			cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery, false);
-		}
+		// (We only reach this point with pagination set, so this always applies.)
+		cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery, false);
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
 		let qb = db.selectFrom(aliasedCardinalityOneQuery);

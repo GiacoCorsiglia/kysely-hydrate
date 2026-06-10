@@ -57,6 +57,59 @@ describe("query-set: pagination", () => {
 		assert.deepStrictEqual(users, allUsers.slice(2, 5));
 	});
 
+	test("pagination: limit(0) returns no rows without joins", async () => {
+		// Regression test: limit(0) was treated as "no limit" and returned all rows.
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.limit(0)
+			.execute();
+
+		assert.deepStrictEqual(users, []);
+	});
+
+	test("pagination: limit(0) returns no rows with a cardinality-one join", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.limit(0)
+			.execute();
+
+		assert.deepStrictEqual(users, []);
+	});
+
+	test("pagination: limit(0) returns no rows with a many-join", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.limit(0)
+			.execute();
+
+		assert.deepStrictEqual(users, []);
+	});
+
+	test("pagination: offset(0) behaves like no offset", async () => {
+		const query = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.limit(3)
+			.offset(0);
+
+		const users = await query.execute();
+		const usersWithoutOffset = await query.clearOffset().execute();
+
+		assert.strictEqual(users.length, 3);
+		assert.deepStrictEqual(users, usersWithoutOffset);
+	});
+
 	// Pagination with cardinality-one joins
 
 	test("pagination: limit with innerJoinOne", async () => {
