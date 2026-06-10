@@ -169,6 +169,54 @@ describe("query-set: basic", () => {
 		assert.deepStrictEqual(users[0], { username: "alice", email: "alice@example.com" });
 	});
 
+	test("init: writeAs preserves CTEs with orderByKeys(false)", async () => {
+		// Regression test: with no joins, no ordering, and no pagination, the
+		// executed query took a fast path that returned the base query directly.
+		// For write query sets the CTEs live on the query creator, not the base
+		// query, so they were silently dropped ("no such table" errors).
+		const query = querySet(db)
+			.writeAs(
+				"u",
+				(db) => db.with("named_users", (qb) => qb.selectFrom("users").select(["id", "username"])),
+				(qc) => qc.selectFrom("named_users").select(["id", "username"]),
+			)
+			.orderByKeys(false);
+
+		const { sql } = query.toQuery().compile();
+		assert.ok(sql.startsWith('with "named_users"'), sql);
+
+		const users = await query.execute();
+		assert.strictEqual(users.length, 10);
+	});
+
+	test("init: writeAs preserves CTEs with orderByKeys(false) and a limit", async () => {
+		const users = await querySet(db)
+			.writeAs(
+				"u",
+				(db) => db.with("named_users", (qb) => qb.selectFrom("users").select(["id", "username"])),
+				(qc) => qc.selectFrom("named_users").select(["id", "username"]),
+			)
+			.orderByKeys(false)
+			.limit(3)
+			.execute();
+
+		assert.strictEqual(users.length, 3);
+	});
+
+	test("init: write() preserves CTEs with orderByKeys(false)", async () => {
+		// Same regression via the .write() method on an existing query set.
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.write(
+				(db) => db.with("named_users", (qb) => qb.selectFrom("users").select(["id", "username"])),
+				(qc) => qc.selectFrom("named_users").select(["id", "username"]),
+			)
+			.orderByKeys(false)
+			.execute();
+
+		assert.strictEqual(users.length, 10);
+	});
+
 	test("init: accepts factory function", async () => {
 		const users = await querySet(db)
 			.selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
