@@ -1295,11 +1295,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			autoFieldsCache: new Map(),
 		};
 
-		// Fetch all attach collections upfront (this is the only async operation).
-		// Start with empty prefix for top-level collections.
-		const fetchPromises: Promise<void>[] = [];
-		this.#fetchAllAttachedCollections(ctx, "", isIterable(input) ? input : [input], fetchPromises);
-
 		const hydrateWithData = () => {
 			if (isIterable(input)) {
 				return this.#hydrateMany(ctx, "", input);
@@ -1308,9 +1303,25 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			return this.#hydrateOne(ctx, "", input, null);
 		};
 
-		return fetchPromises.length > 0
-			? Promise.all(fetchPromises).then(hydrateWithData)
-			: Promise.resolve(hydrateWithData());
+		// Most of the work below runs synchronously; catch synchronous errors and
+		// turn them into rejections so this method never throws.
+		try {
+			// Fetch all attach collections upfront (this is the only async operation).
+			// Start with empty prefix for top-level collections.
+			const fetchPromises: Promise<void>[] = [];
+			this.#fetchAllAttachedCollections(
+				ctx,
+				"",
+				isIterable(input) ? input : [input],
+				fetchPromises,
+			);
+
+			return fetchPromises.length > 0
+				? Promise.all(fetchPromises).then(hydrateWithData)
+				: Promise.resolve(hydrateWithData());
+		} catch (error) {
+			return Promise.reject(error);
+		}
 	}
 }
 
@@ -1358,7 +1369,13 @@ export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
-	hydrator = typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator;
+	// The factory is user code; catch synchronous errors and turn them into
+	// rejections so this function never throws.
+	try {
+		hydrator = typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator;
+	} catch (error) {
+		return Promise.reject(error);
+	}
 
 	return hydrator.hydrate(input);
 }

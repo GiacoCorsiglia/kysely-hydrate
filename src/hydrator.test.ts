@@ -312,9 +312,43 @@ test("grouping: hasOne throws CardinalityViolationError for multiple distinct ch
 		.fields(["id", "name"])
 		.hasOne("profile", "profile$$", (h) => h("id").fields(["id"]));
 
-	// Note: the async wrapper also catches the error when hydrate() throws
-	// synchronously (it only rejects when attach fetches are involved).
-	await assert.rejects(async () => hydrate(rows, hydrator), CardinalityViolationError);
+	await assert.rejects(hydrate(rows, hydrator), CardinalityViolationError);
+});
+
+test("hydrate: rejects instead of throwing synchronously", async () => {
+	// Regression test: when there were no attach fetches, hydrate() ran
+	// synchronously and threw instead of rejecting, so callers using
+	// `hydrate(...).catch(...)` without an immediate await missed the error.
+	interface UserWithProfile extends User {
+		profile$$id: number | null;
+	}
+
+	const rows: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: 5 },
+		{ id: 1, name: "Alice", profile$$id: 6 },
+	];
+
+	const hydrator = createHydrator<UserWithProfile>("id")
+		.fields(["id", "name"])
+		.hasOne("profile", "profile$$", (h) => h("id").fields(["id"]));
+
+	let promise: Promise<unknown> | undefined;
+	assert.doesNotThrow(() => {
+		promise = hydrator.hydrate(rows);
+	});
+	await assert.rejects(promise!, CardinalityViolationError);
+});
+
+test("hydrate: rejects when the hydrator factory throws", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	let promise: Promise<unknown> | undefined;
+	assert.doesNotThrow(() => {
+		promise = hydrate(users, () => {
+			throw new Error("factory failed");
+		});
+	});
+	await assert.rejects(promise!, /factory failed/);
 });
 
 test("grouping: attachOne throws CardinalityViolationError for multiple matching children", async () => {
