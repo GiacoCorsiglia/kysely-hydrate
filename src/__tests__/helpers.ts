@@ -1,6 +1,18 @@
+import { describe } from "node:test";
+
 import * as k from "kysely";
 
+import { dialect } from "./db.ts";
 import { type SeedDB } from "./fixture.ts";
+
+/**
+ * Like `describe`, but the suite only runs against Postgres
+ * (HYDRATE_TEST_DB=postgres) and is skipped otherwise. Use for tests of
+ * Postgres-only features (lateral joins, writes with RETURNING, etc.).
+ */
+export function describePg(name: string, fn: () => void): void {
+	describe(name, { skip: dialect !== "postgres" }, fn);
+}
 
 /**
  * RollbackError is thrown to trigger transaction rollback in tests.

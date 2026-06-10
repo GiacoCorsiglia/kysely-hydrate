@@ -10,15 +10,13 @@
  */
 
 import assert from "node:assert";
-import { describe, test } from "node:test";
+import { test } from "node:test";
 
-import { dialect, getDbForTest } from "./__tests__/db.ts";
+import { getDbForTest } from "./__tests__/db.ts";
+import { describePg } from "./__tests__/helpers.ts";
 import { querySet } from "./query-set.ts";
 
-// Skip all tests if not running against postgres
-const shouldSkip = dialect !== "postgres";
-
-describe("query-set: postgres-kitchen-sink", { skip: shouldSkip }, () => {
+describePg("query-set: postgres-kitchen-sink", () => {
 	const db = getDbForTest();
 
 	//

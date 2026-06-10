@@ -39,6 +39,10 @@ export function getDbForTest(options: DbTestOptions = {}) {
 	const pool = new pg.Pool({
 		connectionString,
 		max: 10,
+		// Apply the schema at connection startup so every connection the pool
+		// opens uses it. (`SET search_path` would only configure the single
+		// connection that happened to run it.)
+		options: `-c search_path=${testSchema}`,
 	});
 
 	const dialect = new k.PostgresDialect({
@@ -55,13 +59,6 @@ export function getDbForTest(options: DbTestOptions = {}) {
 	 */
 	async function setupDatabase(): Promise<void> {
 		await pool.query(`CREATE SCHEMA IF NOT EXISTS ${testSchema};`);
-		await pool.query(`SET search_path TO ${testSchema};`);
-
-		// Drop tables if they exist (in reverse order of dependencies)
-		await db.schema.dropTable("comments").ifExists().execute();
-		await db.schema.dropTable("profiles").ifExists().execute();
-		await db.schema.dropTable("posts").ifExists().execute();
-		await db.schema.dropTable("users").ifExists().execute();
 
 		// Read and transform the fixture SQL
 		const sqlPath = join(__dirname, `${fixture}.sql`);
@@ -90,6 +87,14 @@ export function getDbForTest(options: DbTestOptions = {}) {
 		await pool.query(`DROP SCHEMA IF EXISTS ${testSchema} CASCADE;`);
 
 		await db.destroy();
+
+		// Kysely initializes its driver lazily, so `db.destroy()` only ends the
+		// pool if a Kysely query was actually executed. In files that only
+		// compile queries (e.g. the SQL-generation tests), the pool would
+		// otherwise stay open and stall the process for pg's 10s idle timeout.
+		if (!pool.ended) {
+			await pool.end();
+		}
 	}
 
 	//

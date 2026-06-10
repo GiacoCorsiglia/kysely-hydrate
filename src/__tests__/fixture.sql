@@ -58,10 +58,11 @@ INSERT INTO profiles (user_id, bio, avatar_url) VALUES
   (9, 'Bio for user 9', 'https://example.com/avatars/9.png'),
   (10, 'Bio for user 10', 'https://example.com/avatars/10.png');
 
+-- Insert sample replies
 INSERT INTO replies (comment_id, user_id, content) VALUES
-  (3, 6, 'Reply to zeta comment by bob'),      -- id 1
-  (1, 9, 'Reply to gamma comment by dave'),    -- id 2
-  (5, 4, 'Reply to theta comment by eve'),     -- id 3
-  (1, 4, 'Another reply to gamma by eve'),     -- id 4
-  (3, 5, 'Reply to zeta comment by carol'),    -- id 5
-  (6, 6, 'Reply to delta comment by bob');     -- id 6
+  (3, 6, 'Reply 1 to comment 3'),
+  (1, 9, 'Reply 2 to comment 1'),
+  (5, 4, 'Reply 3 to comment 5'),
+  (1, 4, 'Reply 4 to comment 1'),
+  (3, 5, 'Reply 5 to comment 3'),
+  (6, 6, 'Reply 6 to comment 6');

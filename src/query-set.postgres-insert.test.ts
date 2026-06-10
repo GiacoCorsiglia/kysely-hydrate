@@ -1,20 +1,19 @@
 import assert from "node:assert";
-import { describe, test } from "node:test";
+import { test } from "node:test";
 
 import * as k from "kysely";
 
-import { dialect, getDbForTest } from "./__tests__/db.ts";
-import { testInTransaction } from "./__tests__/helpers.ts";
+import { getDbForTest } from "./__tests__/db.ts";
+import { describePg, testInTransaction } from "./__tests__/helpers.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
-const shouldSkip = dialect !== "postgres";
 
 //
 // Tests
 //
 
-describe("query-set: postgres-insert", { skip: shouldSkip }, () => {
+describePg("query-set: postgres-insert", () => {
 	//
 	// Test 1: Simple insert with returningAll()
 	//

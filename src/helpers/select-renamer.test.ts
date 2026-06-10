@@ -3,10 +3,20 @@ import { test } from "node:test";
 
 import * as k from "kysely";
 
-import { getDbForTest } from "../__tests__/db.ts";
+import { type SeedDB } from "../__tests__/fixture.ts";
 import { type AnySelectArg, hoistAndPrefixSelections, prefixSelectArg } from "./select-renamer.ts";
 
-const db = getDbForTest();
+// These tests only build and inspect query ASTs — they never execute SQL — so
+// use a no-op driver instead of spinning up a real database (which, under
+// HYDRATE_TEST_DB=postgres, would create and seed a whole schema for nothing).
+const db = new k.Kysely<SeedDB>({
+	dialect: {
+		createAdapter: () => new k.SqliteAdapter(),
+		createDriver: () => new k.DummyDriver(),
+		createIntrospector: (innerDb) => new k.SqliteIntrospector(innerDb),
+		createQueryCompiler: () => new k.SqliteQueryCompiler(),
+	},
+});
 
 /**
  * Validates that prefixSelectArg correctly prefixes aliases while preserving
