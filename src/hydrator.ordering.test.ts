@@ -249,6 +249,60 @@ describe("Hydrator ordering", () => {
 		assert.equal(result[0]!.posts[2]!.id, 3);
 	});
 
+	it("orderByKeys should be preserved through .with() when the other hydrator never set it", async () => {
+		// Regression test: .with() always took the other hydrator's orderByKeys,
+		// even when the other hydrator never called .orderByKeys() and just had
+		// the default.  An unset value on the other side must not override an
+		// explicit setting on this side.
+		const rows: User[] = [
+			{ id: 1, username: "alice", posts$$id: 3, posts$$title: "Same", posts$$user_id: 1 },
+			{ id: 1, username: "alice", posts$$id: 1, posts$$title: "Same", posts$$user_id: 1 },
+			{ id: 1, username: "alice", posts$$id: 2, posts$$title: "Same", posts$$user_id: 1 },
+		];
+
+		const baseHydrator = createHydrator<Post>().fields(["id", "title", "user_id"]).orderByKeys();
+		const otherHydrator = createHydrator<Post>().fields(["title"]); // No orderByKeys call.
+		const combined = baseHydrator.with(otherHydrator);
+
+		const hydrator = createHydrator<User>()
+			.fields(["id", "username"])
+			.hasMany("posts", "posts$$", combined);
+
+		const result = await hydrator.hydrate(rows);
+
+		assert.equal(result.length, 1);
+		assert.equal(result[0]!.posts.length, 3);
+		// Should be sorted by id (the keyBy) from the base hydrator's orderByKeys
+		assert.equal(result[0]!.posts[0]!.id, 1);
+		assert.equal(result[0]!.posts[1]!.id, 2);
+		assert.equal(result[0]!.posts[2]!.id, 3);
+	});
+
+	it("with(): the other hydrator's explicit orderByKeys(false) takes precedence", async () => {
+		const rows: User[] = [
+			{ id: 1, username: "alice", posts$$id: 3, posts$$title: "Same", posts$$user_id: 1 },
+			{ id: 1, username: "alice", posts$$id: 1, posts$$title: "Same", posts$$user_id: 1 },
+			{ id: 1, username: "alice", posts$$id: 2, posts$$title: "Same", posts$$user_id: 1 },
+		];
+
+		const baseHydrator = createHydrator<Post>().fields(["id", "title", "user_id"]).orderByKeys();
+		const otherHydrator = createHydrator<Post>().orderByKeys(false); // Explicitly disabled.
+		const combined = baseHydrator.with(otherHydrator);
+
+		const hydrator = createHydrator<User>()
+			.fields(["id", "username"])
+			.hasMany("posts", "posts$$", combined);
+
+		const result = await hydrator.hydrate(rows);
+
+		assert.equal(result.length, 1);
+		assert.equal(result[0]!.posts.length, 3);
+		// No ordering: posts keep their input order
+		assert.equal(result[0]!.posts[0]!.id, 3);
+		assert.equal(result[0]!.posts[1]!.id, 1);
+		assert.equal(result[0]!.posts[2]!.id, 2);
+	});
+
 	it("should handle nulls correctly with nulls first", async () => {
 		interface UserWithNullablePosts {
 			id: number;

@@ -283,8 +283,12 @@ interface HydratorProps<Input> {
 
 	/**
 	 * Whether to append keyBy columns as the final ordering (tie-breaker).
+	 * Undefined means it was never explicitly set (treated as false), which
+	 * matters when composing hydrators via .with(): an explicit setting on
+	 * either side survives composition, with the other hydrator's explicit
+	 * setting taking precedence.
 	 */
-	readonly orderByKeys: boolean;
+	readonly orderByKeys?: boolean | undefined;
 
 	/**
 	 * Cached flag indicating whether this hydrator has 2+ many-collections.
@@ -1386,7 +1390,8 @@ export function createHydrator<T extends InputWithDefaultKey>(): FullHydrator<T,
 export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<T, {}> {
 	return new HydratorImpl({
 		keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string),
-		orderByKeys: false,
+		// orderByKeys is left unset (not false) so .with() can tell whether it
+		// was ever explicitly configured.
 		hasMultipleManyCollections: false, // No collections yet
 	});
 }
