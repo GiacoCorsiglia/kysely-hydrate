@@ -2756,9 +2756,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	/**
 	 * Checks if a collection is cardinality-one, including checking its query set recursively.
+	 * Both "one" and "oneOrThrow" collections are cardinality-one (consistent with
+	 * #isCardinalityOne); only "many" collections cause row explosion.
 	 */
 	#isCollectionCardinalityOne(collection: JoinCollection): boolean {
-		return collection.mode === "one" && collection.querySet.#isCardinalityOne();
+		return collection.mode !== "many" && collection.querySet.#isCardinalityOne();
 	}
 
 	/**

@@ -157,4 +157,54 @@ describe("query-set: left-join-one-or-throw", () => {
 			{ id: 3, username: "carol" },
 		]);
 	});
+
+	test("leftJoinOneOrThrow: pagination with a sibling many-join", async () => {
+		// Regression test: "oneOrThrow" joins were misclassified as
+		// cardinality-many, so they were excluded from the paginated inner
+		// subquery and re-joined outside the limit.  They are cardinality-one and
+		// belong inside it (like leftJoinOne).
+		const query = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOneOrThrow(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.limit(2);
+
+		// The oneOrThrow join must live inside the paginated subquery, so its
+		// columns are hoisted through the subquery alias (not selected from a
+		// join applied outside the limit).
+		const { sql } = query.toQuery().compile();
+		assert.ok(sql.includes('"user"."profile$$bio"'), sql);
+
+		const users = await query.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 1,
+				username: "alice",
+				profile: { id: 1, bio: "Bio for user 1", user_id: 1 },
+				posts: [],
+			},
+			{
+				id: 2,
+				username: "bob",
+				profile: { id: 2, bio: "Bio for user 2", user_id: 2 },
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2 },
+					{ id: 2, title: "Post 2", user_id: 2 },
+					{ id: 5, title: "Post 5", user_id: 2 },
+					{ id: 12, title: "Post 12", user_id: 2 },
+				],
+			},
+		]);
+	});
 });
