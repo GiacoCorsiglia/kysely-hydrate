@@ -211,13 +211,15 @@ describe("query-set: edge-cases", () => {
 		const joinedRows = await qs.toJoinedQuery().execute();
 		const queryRows = await qs.toQuery().execute();
 
-		// toJoinedQuery applies limit to raw rows (row explosion)
-		// toQuery uses nested subquery, applies limit to base records
-		// So row counts should differ
-		assert.ok(joinedRows.length !== queryRows.length || joinedRows.length === queryRows.length);
-		// We just verify both execute without error and return data
-		assert.ok(Array.isArray(joinedRows));
-		assert.ok(Array.isArray(queryRows));
+		// toJoinedQuery does not apply pagination at all: it returns every
+		// exploded row for both users (user 2 has 4 posts, user 3 has 2).
+		assert.strictEqual(joinedRows.length, 6);
+
+		// toQuery applies the limit to unique base records via a nested
+		// subquery: 1 user (user 2, the lowest id), with all 4 of their
+		// exploded post rows.
+		assert.strictEqual(queryRows.length, 4);
+		assert.ok(queryRows.every((row) => row.id === 2));
 	});
 
 	test("edge case: executeCount ignores limit and offset", async () => {
