@@ -54,34 +54,35 @@ describePg("query-set: postgres-mixed-writes", () => {
 	// Test 39: Write operations with .modify()
 	//
 
-	test("Write operations with .modify() - modifications preserved", async () => {
+	test("insert() replaces the base query: prior .modify() filters are discarded", async () => {
 		await testInTransaction(db, async (trx) => {
 			const query = querySet(trx)
 				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
-				.modify((qb) => qb.where("user_id", "=", 2)) // Add a WHERE to base query
+				// A read filter on the base query is intentionally discarded when
+				// switching to a write (see the insert() docs): the write query is
+				// used as-is; only joins/attaches and hydration config carry over.
+				.modify((qb) => qb.where("user_id", "=", 2))
 				.insert(
 					trx
 						.insertInto("posts")
 						.values({
-							user_id: 2,
-							title: "Modified Insert",
+							user_id: 3, // Deliberately does NOT match the discarded filter.
+							title: "Not by user 2",
 							content: "Content",
 						})
 						.returning(["id", "user_id", "title"]),
 				);
 
-			const result = await query.executeTakeFirst();
+			// No trace of the discarded filter in the compiled SQL.
+			const { sql } = query.compile();
+			assert.ok(!sql.toLowerCase().includes("where"), sql);
 
+			// The inserted row is returned even though it fails the discarded filter.
+			const result = await query.executeTakeFirst();
 			assert.ok(result);
 			assert.ok(typeof result.id === "number");
-			delete (result as any).id;
-			assert.deepStrictEqual(result, {
-				user_id: 2,
-				title: "Modified Insert",
-			});
-
-			// Verify that the WHERE clause is still in effect by checking we can filter
-			// This demonstrates that .modify() is preserved through the .insert() call
+			assert.strictEqual(result.user_id, 3);
+			assert.strictEqual(result.title, "Not by user 2");
 		});
 	});
 

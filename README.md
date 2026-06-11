@@ -1191,6 +1191,12 @@ of an existing query set to a write operation.
 
 The write query must return columns compatible with the original base query.
 
+> [!NOTE]
+> These methods **replace the base query entirely**. Joins, attaches, and
+> hydration configuration (`extras`, `mapFields`, `omit`, `keyBy`, …) carry
+> over, but any `.where()` or `.modify()` previously applied to the base query
+> is discarded — your write query is used exactly as you provide it.
+
 ```ts
 // 1. Define the canonical way to fetch a user
 const usersQuerySet = querySet(db)

@@ -1081,6 +1081,17 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * It MUST include a `RETURNING` clause that returns columns compatible with
 	 * the QuerySet's existing base selection to ensure correct hydration.
 	 *
+	 * **The base query is replaced entirely**: any `.where()` or `.modify()`
+	 * previously applied to the base query is discarded — the write query you
+	 * provide is used as-is. (There is no general way to transfer a `SELECT`'s
+	 * conditions onto a write statement; `INSERT` doesn't even have a `WHERE`.)
+	 * Joins, attaches, and hydration configuration (`extras`, `mapFields`,
+	 * `omit`, `keyBy`, …) are all preserved. This is deliberate: a reusable
+	 * query set may carry default read filters (e.g.
+	 * `.where("deletedAt", "is", null)`) that simply don't apply to writes. Any
+	 * conditions the write itself needs must be part of the write query; a
+	 * `.modify()` called *after* this method applies to the new write query.
+	 *
 	 * **Note:** Data-modifying CTEs and `RETURNING` clauses are only supported by
 	 * some dialects (e.g. PostgreSQL).
 	 *
@@ -1131,6 +1142,10 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * Callback 1 receives `db`, builds CTEs, and returns a query creator.
 	 * Callback 2 receives a query creator typed with the CTE names and builds
 	 * the SELECT.
+	 *
+	 * Like {@link insert}, this **replaces the base query entirely**: prior
+	 * `.where()`/`.modify()` calls on the base query are discarded, while joins,
+	 * attaches, and hydration configuration are preserved.
 	 *
 	 * @param cteFn - Builds CTEs; returns a query creator.
 	 * @param selectFn - Builds the SELECT referencing CTE names.
