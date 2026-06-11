@@ -546,7 +546,10 @@ avoid complex SQL joins or to fetch data from non-SQL sources.
 
 Kysely Hydrate handles the "N+1" problem by batching the fetch for all parent
 rows: The fetch function you provide to `attach*()` will be called exactly once
-per execution, no matter how deeply it is nested.
+per execution, no matter how deeply it is nested. It receives **one input per
+parent entity**: even when SQL joins multiply or pad the underlying rows, the
+inputs are deduplicated (by the parent's `keyBy`), and phantom all-null rows
+(from matchless left joins) are excluded.
 
 ```ts
 const posts = await querySet(db)
