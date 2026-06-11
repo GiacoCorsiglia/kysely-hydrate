@@ -1169,3 +1169,46 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 		}[]
 	>();
 }
+
+//
+// hydrate: single input vs. iterable input return types
+//
+
+{
+	interface User {
+		id: number;
+		name: string;
+	}
+
+	const hydrator = createHydrator<User>("id").fields({ id: true, name: true });
+
+	// Iterable input hydrates to an array.
+	expectTypeOf(hydrator.hydrate([] as User[])).resolves.toEqualTypeOf<
+		{ id: number; name: string }[]
+	>();
+
+	// A single input hydrates to a single output, NOT `Output | Output[]`.
+	expectTypeOf(hydrator.hydrate({ id: 1, name: "alice" })).resolves.toEqualTypeOf<{
+		id: number;
+		name: string;
+	}>();
+
+	// A value only known to be `Input | Iterable<Input>` falls back to the union.
+	expectTypeOf(hydrator.hydrate({} as User | User[])).resolves.toEqualTypeOf<
+		{ id: number; name: string } | { id: number; name: string }[]
+	>();
+
+	// Same contract for the standalone hydrate() function.
+	expectTypeOf(hydrate([] as User[], hydrator)).resolves.toEqualTypeOf<
+		{ id: number; name: string }[]
+	>();
+
+	expectTypeOf(hydrate({ id: 1, name: "alice" }, hydrator)).resolves.toEqualTypeOf<{
+		id: number;
+		name: string;
+	}>();
+
+	expectTypeOf(hydrate({} as User | User[], hydrator)).resolves.toEqualTypeOf<
+		{ id: number; name: string } | { id: number; name: string }[]
+	>();
+}

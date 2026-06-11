@@ -456,8 +456,11 @@ export interface MappedHydrator<Input, Output> {
 	 * @returns A Promise that resolves to the hydrated output(s)
 	 */
 	hydrate(input: Iterable<Input>, options?: HydrateOptions): Promise<Output[]>;
-	hydrate(input: Input | Iterable<Input>, options?: HydrateOptions): Promise<Output | Output[]>;
 	hydrate(input: Input, options?: HydrateOptions): Promise<Output>;
+	// The union overload must come last: overloads are tried in order, so if it
+	// preceded the single-input overload, `hydrate(one)` would resolve to it and
+	// be typed `Promise<Output | Output[]>`.
+	hydrate(input: Input | Iterable<Input>, options?: HydrateOptions): Promise<Output | Output[]>;
 }
 
 /**
@@ -1357,14 +1360,18 @@ export function hydrate<Input, Output>(
 	input: readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output[]>;
+// `Input` must be inferred from the hydrator here, NOT from the input argument:
+// otherwise this overload would swallow a `User | User[]` argument by inferring
+// `Input = User | User[]` and mistype the result as a single output.
+export function hydrate<Input, Output>(
+	input: NoInfer<Input>,
+	hydrator: HydratorArg<Input, Output>,
+): Promise<Output>;
+// The union overload must come last; see the note on Hydrator["hydrate"].
 export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]>;
-export function hydrate<Input, Output>(
-	input: Input,
-	hydrator: HydratorArg<NoInfer<Input>, Output>,
-): Promise<Output>;
 export function hydrate<Input, Output>(
 	input: Input | readonly Input[],
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
