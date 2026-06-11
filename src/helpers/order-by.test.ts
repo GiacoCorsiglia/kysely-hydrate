@@ -67,6 +67,20 @@ describe("sqlCompare", () => {
 		assert.ok(sqlCompare(1, "2") !== 0);
 		assert.ok(sqlCompare({}, []) !== 0);
 	});
+
+	it("should be a total order on the mixed-type fallback", () => {
+		// Mixed-type values with equal string forms must compare equal — NOT
+		// return 1 for both argument orders, which violates the comparator
+		// contract (sign(cmp(a, b)) === -sign(cmp(b, a))) and makes Array.sort
+		// behavior implementation-defined.
+		assert.equal(sqlCompare(1, "1"), 0);
+		assert.equal(sqlCompare("1", 1), 0);
+		assert.equal(sqlCompare(1, 1n), 0);
+
+		// Antisymmetry holds when the string forms differ.
+		assert.equal(sqlCompare(1, "2"), -1);
+		assert.equal(sqlCompare("2", 1), 1);
+	});
 });
 
 describe("makeOrderByComparator", () => {

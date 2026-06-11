@@ -119,7 +119,15 @@ export function sqlCompare(a: unknown, b: unknown): number {
 	}
 
 	// fallback (SQL would error; JS must total-order)
-	return String(a) < String(b) ? -1 : 1;
+	const aStr = String(a);
+	const bStr = String(b);
+	// Equal string forms must compare equal (e.g. 1 vs "1"): returning 1
+	// unconditionally here would do so for both argument orders, breaking the
+	// comparator contract.
+	if (aStr === bStr) {
+		return 0;
+	}
+	return aStr < bStr ? -1 : 1;
 }
 
 const defaultGetter = <T>(obj: T, key: keyof T | ((input: T) => unknown)) => {
