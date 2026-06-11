@@ -960,7 +960,8 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * ORDER BY clause in the position of your call, with any remaining keyBy
 	 * columns appended to the end of the query.
 	 *
-	 * To completely disable the keyBy behavior, you may call `.noKeyOrdering()`.
+	 * To completely disable the keyBy ordering behavior, you may call
+	 * `.orderByKeys(false)`.
 	 *
 	 * **Example:**
 	 * ```ts

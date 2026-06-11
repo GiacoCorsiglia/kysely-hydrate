@@ -411,9 +411,10 @@ export interface MappedHydrator<Input, Output> {
 	/**
 	 * Adds an ordering to apply during hydration. Can be chained to add multiple orderings.
 	 *
-	 * Orderings are applied when sorting nested collections (hasMany, etc.) during hydration.
-	 * By default, ordering is only applied to nested arrays (depth > 0), not the top-level array.
-	 * Use the `sort` option in `hydrate()` to control this behavior.
+	 * By default orderings are applied everywhere: to nested collections
+	 * (hasMany, etc.) and to the top-level array (the default `sort` mode is
+	 * `"all"`).  Pass `sort: "nested"` or `sort: "none"` to `hydrate()` to
+	 * restrict or disable sorting — see {@link HydrateOptions}.
 	 *
 	 * @param key - The field name to order by, or a function that extracts the value to sort by
 	 * @param direction - Sort direction: "asc" or "desc" (default: "asc")
