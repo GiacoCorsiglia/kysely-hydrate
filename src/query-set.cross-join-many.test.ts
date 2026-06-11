@@ -88,6 +88,29 @@ describe("query-set: cross-join-many", () => {
 		]);
 	});
 
+	test("crossJoinMany: parents sharing the same children receive independent arrays", async () => {
+		// A cross join gives every parent the same child set.  Each parent must
+		// still receive its own array (and its own child objects), so mutating one
+		// parent's collection cannot corrupt a sibling's.  Pins the ownership
+		// contract regardless of how hydration is implemented internally (e.g. a
+		// future optimization caching identical child groups).
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.crossJoinMany("posts", ({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
+			)
+			.where("users.id", "<=", 2)
+			.execute();
+
+		assert.strictEqual(users.length, 2);
+		assert.deepStrictEqual(users[0]!.posts, users[1]!.posts);
+		assert.notStrictEqual(users[0]!.posts, users[1]!.posts);
+
+		users[0]!.posts.pop();
+		assert.strictEqual(users[0]!.posts.length, 1);
+		assert.strictEqual(users[1]!.posts.length, 2);
+	});
+
 	test("crossJoinMany: executeTakeFirst returns first user with all crossed posts", async () => {
 		const user = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))

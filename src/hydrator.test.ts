@@ -836,6 +836,63 @@ test("attachMany: calls fetchFn once", async () => {
 	assert.strictEqual(result[1]?.posts[0]?.comments.length, 0);
 });
 
+test("attachMany: parents sharing a match value receive independent arrays", async () => {
+	// Both posts attach the same two tags (same categoryId).  Each parent must
+	// get its own array: the grouped rows are internal storage, and handing the
+	// same instance to both parents would let one parent's mutation (e.g. a
+	// .sort() in a map function) corrupt its sibling's collection.
+	const posts = [
+		{ id: 1, categoryId: 7, title: "A" },
+		{ id: 2, categoryId: 7, title: "B" },
+	];
+
+	const fetchTags = async () => [
+		{ id: 100, categoryId: 7, tag: "x" },
+		{ id: 101, categoryId: 7, tag: "y" },
+	];
+
+	const hydrator = createHydrator<(typeof posts)[number]>("id")
+		.fields({ id: true, title: true })
+		.attachMany("tags", fetchTags, { matchChild: "categoryId", toParent: "categoryId" });
+
+	const result = await hydrator.hydrate(posts);
+
+	assert.deepStrictEqual(result[0]?.tags, result[1]?.tags);
+	assert.notStrictEqual(result[0]?.tags, result[1]?.tags);
+
+	// Mutating one parent's collection must not affect the sibling's.
+	result[0]!.tags.pop();
+	assert.strictEqual(result[0]!.tags.length, 1);
+	assert.strictEqual(result[1]!.tags.length, 2);
+});
+
+test("hasMany: parents with identical child content receive independent arrays", async () => {
+	// Same ownership contract as the attachMany test above, but for joined
+	// collections: even when two parents' hydrated children are identical in
+	// content, each parent must get its own array, so mutation cannot leak
+	// between siblings (pins the contract against future implementation changes
+	// such as caching identical child groups).
+	const rows = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "shared" },
+		{ id: 1, name: "Alice", posts$$id: 11, posts$$title: "shared too" },
+		{ id: 2, name: "Bob", posts$$id: 10, posts$$title: "shared" },
+		{ id: 2, name: "Bob", posts$$id: 11, posts$$title: "shared too" },
+	];
+
+	const hydrator = createHydrator<(typeof rows)[number]>("id")
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result[0]?.posts, result[1]?.posts);
+	assert.notStrictEqual(result[0]!.posts, result[1]!.posts);
+
+	result[0]!.posts.pop();
+	assert.strictEqual(result[0]!.posts.length, 1);
+	assert.strictEqual(result[1]!.posts.length, 2);
+});
+
 test("attachMany: returns empty array when no matches", async () => {
 	const users: User[] = [{ id: 999, name: "NoMatch" }];
 

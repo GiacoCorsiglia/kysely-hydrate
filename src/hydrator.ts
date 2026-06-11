@@ -1402,6 +1402,10 @@ export function hydrate<Input, Output>(
 
 /**
  * Applies collection mode logic (many/one/oneOrThrow) to collection outputs.
+ *
+ * In "many" mode, `outputs` is returned as-is, so the caller must transfer
+ * ownership: pass an array that nothing else references (or copy first, as the
+ * RowGroup path in {@link applyGroupedCollectionMode} does).
  */
 function applyCollectionMode<T>(
 	outputs: T[] | undefined,
@@ -1444,6 +1448,15 @@ function applyGroupedCollectionMode<T>(
 	key: string,
 ): T[] | T | null {
 	if (grouped instanceof RowGroup) {
+		// "many" returns the rows to the caller, so copy them: `rows` is the
+		// grouping map's internal storage, shared by every parent with the same
+		// match value.  Returned by reference, one parent mutating its collection
+		// would corrupt its siblings' (and single-match parents get fresh arrays
+		// below, so mutation would be safe or corrupting depending on match
+		// count).  The other modes only read from the array.
+		if (mode === "many") {
+			return grouped.rows.slice();
+		}
 		return applyCollectionMode(grouped.rows, mode, key);
 	}
 
