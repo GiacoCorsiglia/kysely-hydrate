@@ -3193,8 +3193,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		fetchFn: SomeFetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
-		return this.#clone({
-			hydrator: asFullHydrator(this.#props.hydrator).attach(mode, key, fetchFn, keys),
+		return this.#addCollection(key, {
+			type: "attach",
+			mode,
+			fetchFn,
+			keys,
 		});
 	}
 
