@@ -45,53 +45,53 @@ For example:
 import { querySet } from "kysely-hydrate";
 
 const categoriesQuerySet = querySet(db)
-  .selectAs("category", db.selectFrom("categories").select(["id", "name"]))
-  // Add computed fields and other application-level transformations.
-  .extras({
-    upperName: (row) => row.name.toUpperCase(),
-  });
+	.selectAs("category", db.selectFrom("categories").select(["id", "name"]))
+	// Add computed fields and other application-level transformations.
+	.extras({
+		upperName: (row) => row.name.toUpperCase(),
+	});
 
 const postsQuerySet = querySet(db).selectAs(
-  "posts",
-  db.selectFrom("posts").select((eb) => [
-    "id",
-    "title",
-    "categoryId",
-    // Embed whatever SQL you want:
-    eb
-      .selectFrom("comments")
-      .select(eb.fn.countAll().as("count"))
-      .whereRef("comments.postId", "=", "posts.id")
-      .as("commentsCount"),
-  ]),
+	"posts",
+	db.selectFrom("posts").select((eb) => [
+		"id",
+		"title",
+		"categoryId",
+		// Embed whatever SQL you want:
+		eb
+			.selectFrom("comments")
+			.select(eb.fn.countAll().as("count"))
+			.whereRef("comments.postId", "=", "posts.id")
+			.as("commentsCount"),
+	]),
 );
 
 const userQuerySet = await querySet(db)
-  // Initialize with a base select query and an alias ("user")
-  .selectAs("user", db.selectFrom("users").select(["id", "email"]))
-  // Add a database-level LEFT JOIN that hydrates into a "posts" array
-  .leftJoinMany(
-    "posts",
-    // Compose query sets to create a nested collection.
-    postsQuerySet,
-    // Join conditions (referencing the aliases "post" and "user")
-    "posts.user_id",
-    "user.id",
-  )
-  // Modify collections after they've been added to the query set.
-  .modify("posts", (posts) =>
-    // Application-level join: Attach category to posts
-    posts.attachOneOrThrow(
-      "category",
-      async (posts) =>
-        categoriesQuerySet.where(
-          "id",
-          "in",
-          posts.map((p) => p.categoryId),
-        ),
-      { matchChild: "id", toParent: "categoryId" },
-    ),
-  );
+	// Initialize with a base select query and an alias ("user")
+	.selectAs("user", db.selectFrom("users").select(["id", "email"]))
+	// Add a database-level LEFT JOIN that hydrates into a "posts" array
+	.leftJoinMany(
+		"posts",
+		// Compose query sets to create a nested collection.
+		postsQuerySet,
+		// Join conditions (referencing the aliases "post" and "user")
+		"posts.user_id",
+		"user.id",
+	)
+	// Modify collections after they've been added to the query set.
+	.modify("posts", (posts) =>
+		// Application-level join: Attach category to posts
+		posts.attachOneOrThrow(
+			"category",
+			async (posts) =>
+				categoriesQuerySet.where(
+					"id",
+					"in",
+					posts.map((p) => p.categoryId),
+				),
+			{ matchChild: "id", toParent: "categoryId" },
+		),
+	);
 
 // Count with deduplication.
 const count = await userQuerySet.executeCount();
@@ -100,22 +100,22 @@ const count = await userQuerySet.executeCount();
 const users = await userQuerySet.execute();
 // ⬇ Result:
 type Result = Array<{
-  id: number;
-  email: string;
+	id: number;
+	email: string;
 
-  posts: Array<{
-    id: number;
-    title: string;
-    commentsCount: number;
-    categoryId: number;
+	posts: Array<{
+		id: number;
+		title: string;
+		commentsCount: number;
+		categoryId: number;
 
-    category: {
-      id: number;
-      name: string;
-      // Includes computed field:
-      upperName: string;
-    };
-  }>;
+		category: {
+			id: number;
+			name: string;
+			// Includes computed field:
+			upperName: string;
+		};
+	}>;
 }>;
 ```
 
@@ -216,8 +216,8 @@ import { querySet } from "kysely-hydrate";
 
 // Select users and give the base row the alias "user"
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.execute();
 // ⬇
 type Result = Array<{ id: number; username: string }>;
 ```
@@ -253,17 +253,13 @@ them (row explosion) and group nested collections correctly.
 querySet(db).selectAs("user", db.selectFrom("users").select(["id", "name"]));
 
 // Explicit: use a specific unique column
-querySet(db).selectAs(
-  "product",
-  db.selectFrom("products").select(["sku", "name"]),
-  "sku",
-);
+querySet(db).selectAs("product", db.selectFrom("products").select(["sku", "name"]), "sku");
 
 // Composite: use multiple columns
 querySet(db).selectAs(
-  "item",
-  db.selectFrom("order_items").select(["orderId", "productId", "quantity"]),
-  ["orderId", "productId"],
+	"item",
+	db.selectFrom("order_items").select(["orderId", "productId", "quantity"]),
+	["orderId", "productId"],
 );
 ```
 
@@ -285,25 +281,25 @@ To add a join, pass a query set to one of the join methods:
 
 ```ts
 const profileQuerySet = querySet(db).selectAs(
-  "profile",
-  db.selectFrom("profiles").select(["id", "bio", "userId"]),
+	"profile",
+	db.selectFrom("profiles").select(["id", "bio", "userId"]),
 );
 
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .innerJoinOne(
-    "userProfile", // The key for the nested object on the parent.
-    profileQuerySet,
-    // Join condition (referenced by alias).
-    "userProfile.userId",
-    "user.id",
-  )
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.innerJoinOne(
+		"userProfile", // The key for the nested object on the parent.
+		profileQuerySet,
+		// Join condition (referenced by alias).
+		"userProfile.userId",
+		"user.id",
+	)
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  username: string;
-  userProfile: { id: number; bio: string; userId: number };
+	id: number;
+	username: string;
+	userProfile: { id: number; bio: string; userId: number };
 }>;
 ```
 
@@ -312,15 +308,14 @@ is identical to the above.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .innerJoinOne(
-    "profile", // The key for the nested object on the parent.
-    ({ eb, qs }) =>
-      qs((eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
-    // Join condition (referenced by alias)
-    "profile.userId",
-    "user.id",
-  );
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.innerJoinOne(
+		"profile", // The key for the nested object on the parent.
+		({ eb, qs }) => qs((eb) => eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+		// Join condition (referenced by alias)
+		"profile.userId",
+		"user.id",
+	);
 ```
 
 There is also `leftJoinOneOrThrow`, which performs a SQL Left Join but throws an
@@ -342,20 +337,19 @@ Use `innerJoinMany` or `leftJoinMany` to hydrate a nested array of objects.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .leftJoinMany(
-    "posts",
-    ({ eb, qs }) =>
-      qs(eb.selectFrom("posts").select(["id", "title", "authorId"])),
-    "posts.authorId",
-    "user.id",
-  )
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.leftJoinMany(
+		"posts",
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "authorId"])),
+		"posts.authorId",
+		"user.id",
+	)
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  username: string;
-  posts: Array<{ id: number; title: string; authorId: number }>;
+	id: number;
+	username: string;
+	posts: Array<{ id: number; title: string; authorId: number }>;
 }>;
 ```
 
@@ -389,15 +383,14 @@ inner joins).
 
 ```ts
 const query = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .innerJoinMany(
-    "posts",
-    ({ eb, qs }) =>
-      qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-    "posts.userId",
-    "user.id",
-  )
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.innerJoinMany(
+		"posts",
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
+		"posts.userId",
+		"user.id",
+	)
+	.execute();
 ```
 
 **Generated SQL:**
@@ -481,20 +474,20 @@ subqueries while still getting hydrated output.
 ```ts
 // Get users and their LATEST 3 posts
 const query = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id"]))
-  .leftJoinLateralMany(
-    "latestPosts",
-    ({ eb, qs }) =>
-      qs(
-        eb
-          .selectFrom("posts")
-          .select(["id", "title"])
-          .whereRef("posts.userId", "=", "user.id") // Correlated reference
-          .orderBy("createdAt", "desc")
-          .limit(3),
-      ),
-    (join) => join.onTrue(),
-  );
+	.selectAs("user", db.selectFrom("users").select(["id"]))
+	.leftJoinLateralMany(
+		"latestPosts",
+		({ eb, qs }) =>
+			qs(
+				eb
+					.selectFrom("posts")
+					.select(["id", "title"])
+					.whereRef("posts.userId", "=", "user.id") // Correlated reference
+					.orderBy("createdAt", "desc")
+					.limit(3),
+			),
+		(join) => join.onTrue(),
+	);
 ```
 
 This compiles to a standard `LEFT JOIN LATERAL`, hoisting the columns
@@ -512,16 +505,16 @@ Provide a callback as the only argument to `.modify()` to modify the base query.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .modify((qb) => qb.where("isActive", "=", true)); // Add a WHERE clause
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.modify((qb) => qb.where("isActive", "=", true)); // Add a WHERE clause
 ```
 
 Because adding where clauses is so common, the above is equivalent to:
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .where("isActive", "=", true); // Add a WHERE clause to the base query
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.where("isActive", "=", true); // Add a WHERE clause to the base query
 ```
 
 #### Modifying a nested collection
@@ -530,17 +523,16 @@ Pass the key of the collection to modify it.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select("id"))
-  .leftJoinMany(
-    "posts",
-    ({ eb, qs }) =>
-      qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-    "posts.userId",
-    "user.id",
-  )
-  // Modify the query set for the "posts" collection
-  .modify("posts", (postsQuery) => postsQuery.where("isPublished", "=", true))
-  .execute();
+	.selectAs("user", db.selectFrom("users").select("id"))
+	.leftJoinMany(
+		"posts",
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
+		"posts.userId",
+		"user.id",
+	)
+	// Modify the query set for the "posts" collection
+	.modify("posts", (postsQuery) => postsQuery.where("isPublished", "=", true))
+	.execute();
 ```
 
 ### Application-level joins with `.attach*()`
@@ -558,29 +550,25 @@ per execution, no matter how deeply it is nested.
 
 ```ts
 const posts = await querySet(db)
-  .selectAs("post", db.selectFrom("posts").select(["id", "title", "authorId"]))
-  .attachOne(
-    "author",
-    // 1. Receive all parent rows
-    async (posts) => {
-      const authorIds = posts.map((p) => p.authorId);
-      // 2. Return matching rows
-      return db
-        .selectFrom("users")
-        .selectAll()
-        .where("id", "in", authorIds)
-        .execute();
-    },
-    // 3. Define how to match child rows back to parents
-    { matchChild: "id", toParent: "authorId" },
-  )
-  .execute();
+	.selectAs("post", db.selectFrom("posts").select(["id", "title", "authorId"]))
+	.attachOne(
+		"author",
+		// 1. Receive all parent rows
+		async (posts) => {
+			const authorIds = posts.map((p) => p.authorId);
+			// 2. Return matching rows
+			return db.selectFrom("users").selectAll().where("id", "in", authorIds).execute();
+		},
+		// 3. Define how to match child rows back to parents
+		{ matchChild: "id", toParent: "authorId" },
+	)
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  title: string;
-  authorId: number;
-  author: { id: number; name: string } | null;
+	id: number;
+	title: string;
+	authorId: number;
+	author: { id: number; name: string } | null;
 }>;
 ```
 
@@ -629,33 +617,28 @@ by matching `authors.id` to `posts.authorId`:
 
 ```ts
 const posts = await querySet(db)
-  .selectAs(
-    "posts",
-    db
-      .selectFrom("posts")
-      .select(["posts.id", "posts.title", "posts.authorId"]),
-  )
-  .attachOne(
-    "author",
-    async (posts) =>
-      db
-        .selectFrom("authors")
-        .select(["authors.id", "authors.name"])
-        .where(
-          "authors.id",
-          "in",
-          posts.map((p) => p.authorId),
-        )
-        .execute(),
-    { matchChild: "id", toParent: "authorId" },
-  )
-  .execute();
+	.selectAs("posts", db.selectFrom("posts").select(["posts.id", "posts.title", "posts.authorId"]))
+	.attachOne(
+		"author",
+		async (posts) =>
+			db
+				.selectFrom("authors")
+				.select(["authors.id", "authors.name"])
+				.where(
+					"authors.id",
+					"in",
+					posts.map((p) => p.authorId),
+				)
+				.execute(),
+		{ matchChild: "id", toParent: "authorId" },
+	)
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  title: string;
-  authorId: number;
-  author: { id: number; name: string } | null;
+	id: number;
+	title: string;
+	authorId: number;
+	author: { id: number; name: string } | null;
 }>;
 ```
 
@@ -665,21 +648,21 @@ for things that _aren't_ database rows: HTTP calls, caches, etc.
 ```ts
 // Example: Attach feature flags from a cached HTTP endpoint
 const users = await querySet(db)
-  .selectAs("users", db.selectFrom("users").select(["users.id", "users.email"]))
-  .attachMany(
-    "flags",
-    async (users) => {
-      const userIds = users.map((u) => u.id);
+	.selectAs("users", db.selectFrom("users").select(["users.id", "users.email"]))
+	.attachMany(
+		"flags",
+		async (users) => {
+			const userIds = users.map((u) => u.id);
 
-      // This could be backed by a CDN, an in-memory cache, Redis, etc.
-      const result = await flagsClient.getFlagsForUsers(userIds);
+			// This could be backed by a CDN, an in-memory cache, Redis, etc.
+			const result = await flagsClient.getFlagsForUsers(userIds);
 
-      // Must return an array/iterable of rows with a key that matches back to the parent
-      return result.flags.map((f) => ({ userId: f.userId, name: f.name }));
-    },
-    { matchChild: "userId" },
-  )
-  .execute();
+			// Must return an array/iterable of rows with a key that matches back to the parent
+			return result.flags.map((f) => ({ userId: f.userId, name: f.name }));
+		},
+		{ matchChild: "userId" },
+	)
+	.execute();
 ```
 
 #### Modifying attached collections
@@ -736,10 +719,10 @@ still appends the unique key(s) at the end as a tie-breaker.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-  // Sort by username descending
-  .orderBy("username", "desc")
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	// Sort by username descending
+	.orderBy("username", "desc")
+	.execute();
 // SQL: ... ORDER BY "user"."username" DESC, "user"."id" ASC
 ```
 
@@ -759,17 +742,16 @@ especially if these columns are not indexed.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .innerJoinOne(
-    "profile",
-    ({ eb, qs }) =>
-      qs(eb.selectFrom("profiles").select(["id", "bio", "userId"])),
-    "profile.userId",
-    "user.id",
-  )
-  // Sort by the joined profile's bio
-  .orderBy("profile$$bio", "asc")
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.innerJoinOne(
+		"profile",
+		({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "userId"])),
+		"profile.userId",
+		"user.id",
+	)
+	// Sort by the joined profile's bio
+	.orderBy("profile$$bio", "asc")
+	.execute();
 ```
 
 > [!NOTE]
@@ -784,23 +766,23 @@ Consider the following example:
 
 ```ts
 const usersQuerySet = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  // Order users by username.
-  .orderBy("username")
-  .leftJoinMany(
-    "posts",
-    // Order users.posts by title, per user
-    postQuerySet.orderBy("title"),
-    "posts.user_id",
-    "user.id",
-  )
-  .leftJoinMany(
-    "visits",
-    // Order users.visits by title, per user
-    postQuerySet.orderBy("visitDate"),
-    "visits.user_id",
-    "user.id",
-  );
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	// Order users by username.
+	.orderBy("username")
+	.leftJoinMany(
+		"posts",
+		// Order users.posts by title, per user
+		postQuerySet.orderBy("title"),
+		"posts.user_id",
+		"user.id",
+	)
+	.leftJoinMany(
+		"visits",
+		// Order users.visits by title, per user
+		postQuerySet.orderBy("visitDate"),
+		"visits.user_id",
+		"user.id",
+	);
 ```
 
 In general, SQL does not guarantee ordering of subqueries, and specifically it
@@ -875,14 +857,13 @@ including nested joins, `mapFields`, `extras`, `omit`, and `map`.
 
 ```ts
 const qs = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username"]))
-  .leftJoinMany(
-    "posts",
-    ({ eb, qs }) =>
-      qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
-    "posts.userId",
-    "user.id",
-  );
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.leftJoinMany(
+		"posts",
+		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "userId"])),
+		"posts.userId",
+		"user.id",
+	);
 
 // Fetch the flat rows yourself
 const rows = await qs.toQuery().execute();
@@ -891,9 +872,9 @@ const rows = await qs.toQuery().execute();
 const users = await qs.hydrate(rows);
 // ⬇
 type Result = Array<{
-  id: number;
-  username: string;
-  posts: Array<{ id: number; title: string; userId: number }>;
+	id: number;
+	username: string;
+	posts: Array<{ id: number; title: string; userId: number }>;
 }>;
 ```
 
@@ -920,19 +901,19 @@ JavaScript after the query.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "email", "metadata"]))
-  .mapFields({
-    // email: string -> string
-    email: (email) => email.toLowerCase(),
-    // metadata: string -> { plan: string }
-    metadata: (json) => JSON.parse(json) as { plan: string },
-  })
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "email", "metadata"]))
+	.mapFields({
+		// email: string -> string
+		email: (email) => email.toLowerCase(),
+		// metadata: string -> { plan: string }
+		metadata: (json) => JSON.parse(json) as { plan: string },
+	})
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  email: string;
-  metadata: { plan: string };
+	id: number;
+	email: string;
+	metadata: { plan: string };
 }>;
 ```
 
@@ -943,20 +924,17 @@ JavaScript after the query runs.
 
 ```ts
 const users = await querySet(db)
-  .selectAs(
-    "user",
-    db.selectFrom("users").select(["id", "firstName", "lastName"]),
-  )
-  .extras({
-    fullName: (row) => `${row.firstName} ${row.lastName}`,
-  })
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "firstName", "lastName"]))
+	.extras({
+		fullName: (row) => `${row.firstName} ${row.lastName}`,
+	})
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  firstName: string;
-  lastName: string;
-  fullName: string;
+	id: number;
+	firstName: string;
+	lastName: string;
+	fullName: string;
 }>;
 ```
 
@@ -968,26 +946,23 @@ fields share intermediate work.
 
 ```ts
 const users = await querySet(db)
-  .selectAs(
-    "user",
-    db.selectFrom("users").select(["id", "firstName", "lastName", "birthDate"]),
-  )
-  .extend((row) => {
-    const names = [row.firstName, row.lastName];
-    return {
-      fullName: names.join(" "),
-      initials: names.map((n) => n[0]).join(""),
-    };
-  })
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "firstName", "lastName", "birthDate"]))
+	.extend((row) => {
+		const names = [row.firstName, row.lastName];
+		return {
+			fullName: names.join(" "),
+			initials: names.map((n) => n[0]).join(""),
+		};
+	})
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  firstName: string;
-  lastName: string;
-  birthDate: Date;
-  fullName: string;
-  initials: string;
+	id: number;
+	firstName: string;
+	lastName: string;
+	birthDate: Date;
+	fullName: string;
+	initials: string;
 }>;
 ```
 
@@ -998,16 +973,13 @@ fields used for computed properties.
 
 ```ts
 const users = await querySet(db)
-  .selectAs(
-    "user",
-    db.selectFrom("users").select(["id", "firstName", "lastName"]),
-  )
-  .extras({
-    fullName: (row) => `${row.firstName} ${row.lastName}`,
-  })
-  // Hide intermediate fields
-  .omit(["firstName", "lastName"])
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "firstName", "lastName"]))
+	.extras({
+		fullName: (row) => `${row.firstName} ${row.lastName}`,
+	})
+	// Hide intermediate fields
+	.omit(["firstName", "lastName"])
+	.execute();
 // ⬇
 type Result = Array<{ id: number; fullName: string }>;
 ```
@@ -1026,16 +998,16 @@ Unlike `.mapFields()` and `.extras()`, which operate on individual fields,
 
 ```ts
 class UserModel {
-  constructor(
-    public id: number,
-    public name: string,
-  ) {}
+	constructor(
+		public id: number,
+		public name: string,
+	) {}
 }
 
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "name"]))
-  .map((user) => new UserModel(user.id, user.name))
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.map((user) => new UserModel(user.id, user.name))
+	.execute();
 // ⬇
 type Result = UserModel[];
 ```
@@ -1047,10 +1019,10 @@ previous transformation.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "name"]))
-  .map((user) => ({ ...user, nameUpper: user.name.toUpperCase() }))
-  .map((user) => ({ id: user.id, display: user.nameUpper }))
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.map((user) => ({ ...user, nameUpper: user.name.toUpperCase() }))
+	.map((user) => ({ id: user.id, display: user.nameUpper }))
+	.execute();
 // ⬇
 type Result = Array<{ id: number; display: string }>;
 ```
@@ -1063,28 +1035,28 @@ to parents:
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id"]))
-  .leftJoinMany(
-    "posts",
-    ({ eb, qs }) =>
-      qs(eb.selectFrom("posts").select(["id", "title", "userId"]))
-        // Transform child:
-        .map((post) => ({ postId: post.id, postTitle: post.title })),
-    "posts.userId",
-    "user.id",
-  )
-  // Transform parent:
-  .map((user) => ({
-    userId: user.id,
-    postCount: user.posts.length,
-    posts: user.posts,
-  }))
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id"]))
+	.leftJoinMany(
+		"posts",
+		({ eb, qs }) =>
+			qs(eb.selectFrom("posts").select(["id", "title", "userId"]))
+				// Transform child:
+				.map((post) => ({ postId: post.id, postTitle: post.title })),
+		"posts.userId",
+		"user.id",
+	)
+	// Transform parent:
+	.map((user) => ({
+		userId: user.id,
+		postCount: user.posts.length,
+		posts: user.posts,
+	}))
+	.execute();
 // ⬇
 type Result = Array<{
-  userId: number;
-  postCount: number;
-  posts: { postId: number; postTitle: string };
+	userId: number;
+	postCount: number;
+	posts: { postId: number; postTitle: string };
 }>;
 ```
 
@@ -1121,38 +1093,36 @@ import { createHydrator, querySet } from "kysely-hydrate";
 
 // Define once:
 const userHydrator = createHydrator<{
-  id: number;
-  username: string;
-  email: string;
+	id: number;
+	username: string;
+	email: string;
 }>("id")
-  .extras({
-    displayName: (u) => `${u.username} <${u.email}>`,
-  })
-  .omit(["email"]);
+	.extras({
+		displayName: (u) => `${u.username} <${u.email}>`,
+	})
+	.omit(["email"]);
 
 // Reuse in query #1:
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-  .with(userHydrator)
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.with(userHydrator)
+	.execute();
 // ⬇
 type Result1 = Array<{ id: number; username: string; displayName: string }>;
 
 // Reuse in query #2 (different root query, same hydration rules):
 const author = await querySet(db)
-  .selectAs("user", (eb) =>
-    eb
-      .selectFrom("posts")
-      .innerJoin("users", "users.id", "posts.authorId")
-      .select(["users.id", "users.username", "users.email"])
-      .where("posts.id", "=", 123),
-  )
-  .with(userHydrator)
-  .executeTakeFirst();
+	.selectAs("user", (eb) =>
+		eb
+			.selectFrom("posts")
+			.innerJoin("users", "users.id", "posts.authorId")
+			.select(["users.id", "users.username", "users.email"])
+			.where("posts.id", "=", 123),
+	)
+	.with(userHydrator)
+	.executeTakeFirst();
 // ⬇
-type Result2 =
-  | { id: number; username: string; displayName: string }
-  | undefined;
+type Result2 = { id: number; username: string; displayName: string } | undefined;
 ```
 
 #### `.map()` vs `.mapFields()` and `.extras()`
@@ -1193,19 +1163,16 @@ like a normal `SELECT` query.
 
 ```ts
 const newUser = await querySet(db)
-  .insertAs(
-    "user",
-    db.insertInto("users").values(newUserData).returning(["id", "username"]),
-  )
-  .extras({
-    upperName: (u) => u.username.toUpperCase(),
-  })
-  .executeTakeFirstOrThrow();
+	.insertAs("user", db.insertInto("users").values(newUserData).returning(["id", "username"]))
+	.extras({
+		upperName: (u) => u.username.toUpperCase(),
+	})
+	.executeTakeFirstOrThrow();
 // ⬇
 type Result = {
-  id: number;
-  username: string;
-  upperName: string;
+	id: number;
+	username: string;
+	upperName: string;
 };
 ```
 
@@ -1224,27 +1191,27 @@ The write query must return columns compatible with the original base query.
 ```ts
 // 1. Define the canonical way to fetch a user
 const usersQuerySet = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-  .extras({
-    gravatarUrl: (u) => getGravatar(u.email),
-  });
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.extras({
+		gravatarUrl: (u) => getGravatar(u.email),
+	});
 
 // 2. Reuse it for an insert
 const newUser = await usersQuerySet
-  .insert((db) =>
-    db
-      .insertInto("users")
-      .values(newUserData)
-      // Must return columns matching the base query
-      .returning(["id", "username", "email"]),
-  )
-  .executeTakeFirstOrThrow();
+	.insert((db) =>
+		db
+			.insertInto("users")
+			.values(newUserData)
+			// Must return columns matching the base query
+			.returning(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
 // ⬇ Result has gravatarUrl computed automatically!
 type Result = {
-  id: number;
-  username: string;
-  email: string;
-  gravatarUrl: string;
+	id: number;
+	username: string;
+	email: string;
+	gravatarUrl: string;
 };
 ```
 
@@ -1266,29 +1233,26 @@ CTEs to strip.
 
 ```ts
 const result = await querySet(db)
-  .writeAs(
-    "updated",
-    (db) =>
-      db
-        // Data-modifying CTE: update the user
-        .with("updated", (qb) =>
-          qb
-            .updateTable("users")
-            .set({ email: "new@example.com" })
-            .where("id", "=", userId)
-            .returningAll(),
-        )
-        // Data-modifying CTE: insert an audit log entry
-        .with("audit", (qb) =>
-          qb
-            .insertInto("audit_log")
-            .values({ userId, action: "email_changed" })
-            .returning(["id"]),
-        ),
-    // Select from the update result
-    (qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
-  )
-  .executeTakeFirstOrThrow();
+	.writeAs(
+		"updated",
+		(db) =>
+			db
+				// Data-modifying CTE: update the user
+				.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", userId)
+						.returningAll(),
+				)
+				// Data-modifying CTE: insert an audit log entry
+				.with("audit", (qb) =>
+					qb.insertInto("audit_log").values({ userId, action: "email_changed" }).returning(["id"]),
+				),
+		// Select from the update result
+		(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
 // ⬇
 type Result = { id: number; username: string; email: string };
 ```
@@ -1314,31 +1278,31 @@ existing query set, just like `.insert()` does for inserts:
 
 ```ts
 const usersQuerySet = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-  .leftJoinMany("posts" /* ... */)
-  .extras({ gravatarUrl: (u) => getGravatar(u.email) });
+	.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
+	.leftJoinMany("posts" /* ... */)
+	.extras({ gravatarUrl: (u) => getGravatar(u.email) });
 
 // Reuse the canonical query set for a select query with data-modifying CTE.
 const result = await usersQuerySet
-  .write(
-    (db) =>
-      db.with("updated", (qb) =>
-        qb
-          .updateTable("users")
-          .set({ email: "new@example.com" })
-          .where("id", "=", userId)
-          .returningAll(),
-      ),
-    (qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
-  )
-  .executeTakeFirstOrThrow();
+	.write(
+		(db) =>
+			db.with("updated", (qb) =>
+				qb
+					.updateTable("users")
+					.set({ email: "new@example.com" })
+					.where("id", "=", userId)
+					.returningAll(),
+			),
+		(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+	)
+	.executeTakeFirstOrThrow();
 // ⬇ Result includes posts and gravatarUrl!
 type Result = {
-  id: number;
-  username: string;
-  email: string;
-  gravatarUrl: string;
-  posts: Array<{ id: number; title: string; user_id: number }>;
+	id: number;
+	username: string;
+	email: string;
+	gravatarUrl: string;
+	posts: Array<{ id: number; title: string; user_id: number }>;
 };
 ```
 
@@ -1355,14 +1319,14 @@ TypeScript can infer. This is unsafe! You can change the type to anything.
 
 ```ts
 const users = await querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "name"]))
-  .$castTo<{ id: number; name: string; extra: boolean }>()
-  .execute();
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.$castTo<{ id: number; name: string; extra: boolean }>()
+	.execute();
 // ⬇
 type Result = Array<{
-  id: number;
-  name: string;
-  extra: boolean; // You better be sure this is there!
+	id: number;
+	name: string;
+	extra: boolean; // You better be sure this is there!
 }>;
 ```
 
@@ -1431,8 +1395,8 @@ A type-level helper to extract the output type of a query set.
 import type { InferOutput } from "kysely-hydrate";
 
 const usersQuery = querySet(db)
-  .selectAs("user", db.selectFrom("users").select(["id", "name"]))
-  .extras({ upperName: (u) => u.name.toUpperCase() });
+	.selectAs("user", db.selectFrom("users").select(["id", "name"]))
+	.extras({ upperName: (u) => u.name.toUpperCase() });
 
 type User = InferOutput<typeof usersQuery>;
 // type User = { id: number; name: string; upperName: string }
@@ -1477,16 +1441,16 @@ Hydrates an array of flat objects using a configured hydrator.
 
 ```ts
 const flatRows = await db
-  .selectFrom("users")
-  .leftJoin("posts", "posts.userId", "users.id")
-  .select([
-    "users.id",
-    "users.username",
-    // Manual prefixing to match the hydrator's expectation:
-    "posts.id as posts$$id",
-    "posts.title as posts$$title",
-  ])
-  .execute();
+	.selectFrom("users")
+	.leftJoin("posts", "posts.userId", "users.id")
+	.select([
+		"users.id",
+		"users.username",
+		// Manual prefixing to match the hydrator's expectation:
+		"posts.id as posts$$id",
+		"posts.title as posts$$title",
+	])
+	.execute();
 
 const nestedUsers = await hydrate(flatRows, hydrator);
 ```
@@ -1499,22 +1463,22 @@ hydration logic right next to the query that produces the flat rows:
 
 ```ts
 type FlatRow = {
-  id: number;
-  username: string;
-  posts$$id: number | null;
-  posts$$title: string | null;
+	id: number;
+	username: string;
+	posts$$id: number | null;
+	posts$$title: string | null;
 };
 
 const nestedUsers = await hydrate(flatRows, (h) =>
-  h()
-    .fields({ id: true, username: true })
-    .hasMany("posts", "posts$$", (h) => h().fields({ id: true, title: true })),
+	h()
+		.fields({ id: true, username: true })
+		.hasMany("posts", "posts$$", (h) => h().fields({ id: true, title: true })),
 );
 // ⬇
 type Result = Array<{
-  id: number;
-  username: string;
-  posts: Array<{ id: number | null; title: string | null }>;
+	id: number;
+	username: string;
+	posts: Array<{ id: number | null; title: string | null }>;
 }>;
 ```
 
@@ -1540,8 +1504,8 @@ any field you don't explicitly include is omitted from the output.
 type UserRow = { id: number; username: string };
 
 const hydrator = createHydrator<UserRow>().fields({
-  id: true,
-  username: true,
+	id: true,
+	username: true,
 });
 // ⬇
 type Result = Array<{ id: number; username: string }>;
@@ -1555,7 +1519,7 @@ Computes new fields from the input row.
 type UserRow = { id: number; username: string; email: string };
 
 const hydrator = createHydrator<UserRow>().extras({
-  displayName: (u) => `${u.username} <${u.email}>`,
+	displayName: (u) => `${u.username} <${u.email}>`,
 });
 // ⬇
 type Result = Array<{ displayName: string }>;
@@ -1569,8 +1533,8 @@ Excludes fields from the output that were already included.
 type UserRow = { id: number; passwordHash: string };
 
 const hydrator = createHydrator<UserRow>()
-  .fields({ id: true, passwordHash: true })
-  .omit(["passwordHash"]);
+	.fields({ id: true, passwordHash: true })
+	.omit(["passwordHash"]);
 // ⬇
 type Result = Array<{ id: number }>;
 ```
@@ -1588,15 +1552,15 @@ into a different shape, such as class instances or discriminated union types.
 
 ```ts
 class UserModel {
-  constructor(
-    public id: number,
-    public name: string,
-  ) {}
+	constructor(
+		public id: number,
+		public name: string,
+	) {}
 }
 
 const hydrator = createHydrator<{ id: number; name: string }>()
-  .fields({ id: true, name: true })
-  .map((user) => new UserModel(user.id, user.name));
+	.fields({ id: true, name: true })
+	.map((user) => new UserModel(user.id, user.name));
 
 const users = await hydrate(rows, hydrator);
 // ⬇
@@ -1634,36 +1598,34 @@ when you have a flat join result (possibly written manually) and want to hydrate
 
 ```ts
 type FlatRow = {
-  id: number;
-  username: string;
+	id: number;
+	username: string;
 
-  // Left-joined posts:
-  posts$$id: number | null;
-  posts$$title: string | null;
+	// Left-joined posts:
+	posts$$id: number | null;
+	posts$$title: string | null;
 
-  // Left-joined comments on posts:
-  posts$$comments$$id: number | null;
-  posts$$comments$$content: string | null;
+	// Left-joined comments on posts:
+	posts$$comments$$id: number | null;
+	posts$$comments$$content: string | null;
 };
 
 const hydrator = createHydrator<FlatRow>()
-  .fields({ id: true, username: true })
-  .hasMany("posts", "posts$$", (h) =>
-    h()
-      .fields({ id: true, title: true })
-      .hasMany("comments", "comments$$", (h) =>
-        h().fields({ id: true, content: true }),
-      ),
-  );
+	.fields({ id: true, username: true })
+	.hasMany("posts", "posts$$", (h) =>
+		h()
+			.fields({ id: true, title: true })
+			.hasMany("comments", "comments$$", (h) => h().fields({ id: true, content: true })),
+	);
 // ⬇
 type Result = Array<{
-  id: number;
-  username: string;
-  posts: Array<{
-    id: number | null;
-    title: string | null;
-    comments: Array<{ id: number | null; content: string | null }>;
-  }>;
+	id: number;
+	username: string;
+	posts: Array<{
+		id: number | null;
+		title: string | null;
+		comments: Array<{ id: number | null; content: string | null }>;
+	}>;
 }>;
 ```
 
@@ -1691,15 +1653,12 @@ type UserRow = { id: number; username: string; email: string };
 const base = createHydrator<UserRow>().fields({ id: true, username: true });
 
 const withDisplayName = createHydrator<UserRow>().extras({
-  displayName: (u) => `${u.username} <${u.email}>`,
+	displayName: (u) => `${u.username} <${u.email}>`,
 });
 
 const combined = base.with(withDisplayName);
 // ⬇
-type Result = Hydrator<
-  UserRow,
-  { id: number; username: string; displayName: string }
->;
+type Result = Hydrator<UserRow, { id: number; username: string; displayName: string }>;
 ```
 
 ## FAQ
