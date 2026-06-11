@@ -975,27 +975,21 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	#fetchAllAttachedCollections(
 		ctx: HydrationContext,
 		prefix: string,
-		inputs: Iterable<Input>,
+		// Must be an array (not a lazily-consumed iterable): this method runs once
+		// per nesting level, and hydration iterates the same inputs afterward.
+		inputs: Input[],
 		fetchPromises: Promise<void>[],
 	): void {
 		const { attachedCollections, collections } = this.#props;
 
 		// Fetch attach collections at this level
 		if (attachedCollections) {
-			// We have to convert to an array because that's what the fetchFn expects.
-			// We also need to map and convert the input to prefixed accessors if we
-			// are nested, because the fetchFn expects unprefixed inputs.
-			let inputArray: any[];
-			if (prefix !== "") {
-				inputArray = [];
-				for (const input of inputs) {
-					inputArray.push(createdPrefixedAccessor(prefix, input as object));
-				}
-			} else if (Array.isArray(inputs)) {
-				inputArray = inputs;
-			} else {
-				inputArray = Array.from(inputs);
-			}
+			// We need to map and convert the input to prefixed accessors if we are
+			// nested, because the fetchFn expects unprefixed inputs.
+			const inputArray: any[] =
+				prefix !== ""
+					? inputs.map((input) => createdPrefixedAccessor(prefix, input as object))
+					: inputs;
 
 			for (const [key, attachedCollection] of attachedCollections) {
 				// Use prefixed key for the map
@@ -1298,26 +1292,30 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			autoFieldsCache: new Map(),
 		};
 
-		const hydrateWithData = () => {
-			if (isIterable(input)) {
-				return this.#hydrateMany(ctx, "", input);
-			}
-
-			return this.#hydrateOne(ctx, "", input, null);
-		};
-
 		// Most of the work below runs synchronously; catch synchronous errors and
 		// turn them into rejections so this method never throws.
 		try {
+			// Materialize the input once: attach-fetching and hydration each iterate
+			// it, which would silently exhaust a one-shot iterable (e.g. a
+			// generator) and hydrate zero rows.
+			const inputs: Input[] | null = isIterable(input)
+				? Array.isArray(input)
+					? input
+					: Array.from(input)
+				: null;
+
+			const hydrateWithData = () => {
+				if (inputs) {
+					return this.#hydrateMany(ctx, "", inputs);
+				}
+
+				return this.#hydrateOne(ctx, "", input as Input, null);
+			};
+
 			// Fetch all attach collections upfront (this is the only async operation).
 			// Start with empty prefix for top-level collections.
 			const fetchPromises: Promise<void>[] = [];
-			this.#fetchAllAttachedCollections(
-				ctx,
-				"",
-				isIterable(input) ? input : [input],
-				fetchPromises,
-			);
+			this.#fetchAllAttachedCollections(ctx, "", inputs ?? [input as Input], fetchPromises);
 
 			return fetchPromises.length > 0
 				? Promise.all(fetchPromises).then(hydrateWithData)

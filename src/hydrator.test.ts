@@ -687,6 +687,49 @@ test("attachMany: fetches and matches related entities", async () => {
 	assert.strictEqual(result[1]?.posts.length, 1);
 });
 
+test("attachMany: accepts a one-shot iterable (generator) input", async () => {
+	// Attach-fetching and hydration both consume the input; the hydrator must
+	// materialize a one-shot iterable once rather than iterating it twice
+	// (which would silently hydrate zero rows).
+	function* generateUsers(): Generator<User> {
+		yield { id: 1, name: "Alice" };
+		yield { id: 2, name: "Bob" };
+	}
+
+	const fetchPosts = async (inputs: User[]) =>
+		[
+			{ id: 10, userId: 1, title: "Alice Post 1" },
+			{ id: 12, userId: 2, title: "Bob Post 1" },
+		].filter((p) => inputs.some((u) => u.id === p.userId));
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const result = await hydrator.hydrate(generateUsers());
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, userId: 1, title: "Alice Post 1" }] },
+		{ id: 2, name: "Bob", posts: [{ id: 12, userId: 2, title: "Bob Post 1" }] },
+	]);
+});
+
+test("hydrate: accepts a one-shot iterable (generator) input without attaches", async () => {
+	function* generateUsers(): Generator<User> {
+		yield { id: 1, name: "Alice" };
+		yield { id: 2, name: "Bob" };
+	}
+
+	const hydrator = createHydrator<User>("id").fields({ id: true, name: true });
+
+	const result = await hydrator.hydrate(generateUsers());
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	]);
+});
+
 test("attachMany: calls fetchFn once", async () => {
 	let userPostsFetchCount = 0;
 	let postCommentsFetchCount = 0;
