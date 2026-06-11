@@ -139,8 +139,11 @@ function isExecutable<Output>(value: unknown): value is Executable<Output> {
 }
 
 /**
- * Async function that fetches and hydrates data to attach. Called exactly once with
- * all parent inputs to avoid N+1 queries. Should return already-hydrated data.
+ * Async function that fetches and hydrates data to attach. Called exactly once
+ * with one input per parent entity, to avoid N+1 queries.  Parent inputs are
+ * deduplicated by the parent's `keyBy`, and rows with nil keys (e.g. phantom
+ * all-null rows produced by matchless left joins) are excluded.  Should return
+ * already-hydrated data.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
@@ -984,12 +987,24 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		// Fetch attach collections at this level
 		if (attachedCollections) {
-			// We need to map and convert the input to prefixed accessors if we are
-			// nested, because the fetchFn expects unprefixed inputs.
-			const inputArray: any[] =
-				prefix !== ""
-					? inputs.map((input) => createdPrefixedAccessor(prefix, input as object))
-					: inputs;
+			// The fetchFn contract is one input per parent entity, but raw joined
+			// rows can repeat a parent (row explosion from sibling many-joins) and
+			// can be all-null phantoms (left joins with no match).  Apply the same
+			// rules hydration itself uses (see groupByKey): dedupe by this level's
+			// keyBy and drop rows with nil keys.  We also need to convert the input
+			// to prefixed accessors if we are nested, because the fetchFn expects
+			// unprefixed inputs.
+			const { keyBy } = this.#props;
+			const seen = new Set<unknown>();
+			const inputArray: any[] = [];
+			for (const input of inputs) {
+				const key = getKey(prefix, input, keyBy);
+				if (isKeyNil(key) || seen.has(key)) {
+					continue;
+				}
+				seen.add(key);
+				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
+			}
 
 			for (const [key, attachedCollection] of attachedCollections) {
 				// Use prefixed key for the map

@@ -730,6 +730,44 @@ test("hydrate: accepts a one-shot iterable (generator) input without attaches", 
 	]);
 });
 
+test("attach: fetchFn receives deduplicated inputs with null-key rows dropped", async () => {
+	// Inputs that look like raw joined rows: Alice appears twice (row explosion)
+	// and one row has a null key (a left join phantom).  The fetchFn must
+	// receive one input per actual entity — the same rules hydration applies.
+	const rows = [
+		{ id: 1, name: "Alice" },
+		{ id: 1, name: "Alice" },
+		{ id: null as unknown as number, name: null as unknown as string },
+		{ id: 2, name: "Bob" },
+	];
+
+	const received: User[][] = [];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			(inputs: User[]) => {
+				received.push(inputs);
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [] },
+		{ id: 2, name: "Bob", posts: [] },
+	]);
+	assert.deepStrictEqual(received, [
+		[
+			{ id: 1, name: "Alice" },
+			{ id: 2, name: "Bob" },
+		],
+	]);
+});
+
 test("attachMany: calls fetchFn once", async () => {
 	let userPostsFetchCount = 0;
 	let postCommentsFetchCount = 0;

@@ -546,4 +546,96 @@ describe("query-set: attach", () => {
 			},
 		]);
 	});
+
+	//
+	// The fetchFn input contract: one input per parent entity.  Raw joined rows
+	// repeat parents (row explosion from sibling many-joins) and contain
+	// all-null phantom rows (left joins with no match); fetchFns must see
+	// neither.
+	//
+
+	test("attach: fetchFn receives each parent entity once despite many-join row explosion", async () => {
+		const received: { id: number; username: string }[][] = [];
+
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "in", [1, 2, 3])
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.attachMany(
+				"badges",
+				(parents) => {
+					received.push(parents.map((p) => ({ id: p.id, username: p.username })));
+					return [];
+				},
+				{ matchChild: "ownerId" },
+			)
+			.execute();
+
+		assert.strictEqual(users.length, 3);
+		// Called exactly once, with one input per user — even though bob has 4
+		// posts and carol has 2, so the raw joined rows repeat them.
+		assert.deepStrictEqual(received, [
+			[
+				{ id: 1, username: "alice" },
+				{ id: 2, username: "bob" },
+				{ id: 3, username: "carol" },
+			],
+		]);
+	});
+
+	test("attach: nested fetchFn receives deduplicated parents without phantom null rows", async () => {
+		const received: { id: number | null; title: string | null }[][] = [];
+
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			// User 1 (alice) has no posts: her joined row has all-null post columns.
+			.where("users.id", "in", [1, 2, 3])
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
+						"comments",
+						({ eb: eb2, qs: qs2 }) =>
+							qs2(eb2.selectFrom("comments").select(["id", "post_id", "content"])),
+						"comments.post_id",
+						"posts.id",
+					),
+				"posts.user_id",
+				"user.id",
+			)
+			.modify("posts", (posts) =>
+				posts.attachMany(
+					"tags",
+					(parents) => {
+						received.push(parents.map((p) => ({ id: p.id, title: p.title })));
+						return [];
+					},
+					{ matchChild: "postId" },
+				),
+			)
+			.execute();
+
+		assert.strictEqual(users.length, 3);
+		assert.strictEqual(received.length, 1); // Called exactly once.
+
+		const parents = received[0]!;
+		// No phantom row from alice's matchless left join.
+		assert.ok(
+			parents.every((p) => p.id !== null),
+			`expected no null-key parents, got ${JSON.stringify(parents)}`,
+		);
+		// No duplicates from the comments sibling join exploding post rows.
+		const ids = parents.map((p) => p.id);
+		assert.deepStrictEqual(ids, [...new Set(ids)]);
+		// And every real post is present exactly once.
+		assert.deepStrictEqual(
+			ids.toSorted((a, b) => a! - b!),
+			[1, 2, 3, 5, 12, 15],
+		);
+	});
 });
