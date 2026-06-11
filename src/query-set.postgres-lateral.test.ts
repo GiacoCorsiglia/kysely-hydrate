@@ -915,4 +915,75 @@ describePg("query-set: postgres-lateral", () => {
 			},
 		]);
 	});
+
+	//
+	// Ordering + limit ("top N per group").  The query set's orderBy must be
+	// applied INSIDE the lateral subquery (it determines which rows the limit
+	// keeps) AND to the hydrated output order.
+	//
+
+	test("orderBy + limit on the nested query set: correct rows in correct order", async () => {
+		const qs0 = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "in", [2, 3])
+			.innerJoinLateralMany(
+				"topPosts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id"),
+					)
+						.orderBy("id", "desc")
+						.limit(2),
+				(join) => join.onTrue(),
+			);
+
+		// The ordering must appear inside the lateral subquery, before the limit.
+		const { sql } = qs0.compile();
+		assert.match(sql, /order by "topPosts"\."id" desc limit/);
+
+		const users = await qs0.execute();
+
+		// Bob's posts are 1, 2, 5, 12; Carol's are 3, 15.  Top-2 descending —
+		// both the selected rows and their order.
+		assert.deepStrictEqual(
+			users.map((u) => ({ id: u.id, topPosts: u.topPosts.map((p) => p.id) })),
+			[
+				{ id: 2, topPosts: [12, 5] },
+				{ id: 3, topPosts: [15, 3] },
+			],
+		);
+	});
+
+	test("orderBy on the raw inner subquery: selects the right rows but hydrates in key order", async () => {
+		// Documented behavior (see the lateral JSDoc): an ORDER BY written
+		// directly on the inner Kysely query controls which rows the LIMIT keeps,
+		// but the hydrator cannot see it, so the hydrated array is re-sorted by
+		// the nested query set's own orderings (by default, the keys, ascending).
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"topPosts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("id", "desc")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		// The top-2 posts by id desc (5, 12) were selected, but hydrate ascending.
+		assert.deepStrictEqual(
+			users.map((u) => ({ id: u.id, topPosts: u.topPosts.map((p) => p.id) })),
+			[{ id: 2, topPosts: [5, 12] }],
+		);
+	});
 });

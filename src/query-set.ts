@@ -1894,6 +1894,14 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * using the `eb` (expression builder) parameter.
 	 * Works like {@link innerJoinOne} but with `INNER JOIN LATERAL` in SQL.
 	 *
+	 * **Ordering and limits:** apply `.orderBy()` and `.limit()` to the nested
+	 * *query set* (as below), not to the raw subquery.  The query set's ordering
+	 * is applied both inside the lateral SQL (so the limit keeps the right rows)
+	 * and when sorting the hydrated output.  An ORDER BY written directly on the
+	 * inner Kysely query still controls which rows a LIMIT keeps, but not the
+	 * order of the hydrated output (the hydrator re-sorts by its own orderings —
+	 * by default, the keys).
+	 *
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
@@ -1905,9 +1913,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *         eb.selectFrom("posts")
 	 *           .select(["id", "title", "createdAt"])
 	 *           .where("userId", "=", eb.ref("user.id"))
-	 *           .orderBy("createdAt", "desc")
-	 *           .limit(1)
-	 *       ),
+	 *       )
+	 *         .orderBy("createdAt", "desc")
+	 *         .limit(1),
 	 *     (join) => join.onTrue(),
 	 *   )
 	 *   .execute();
@@ -1943,6 +1951,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * using the `eb` (expression builder) parameter.
 	 * Works like {@link innerJoinMany} but with `INNER JOIN LATERAL` in SQL.
 	 *
+	 * **Ordering and limits:** apply `.orderBy()` and `.limit()` to the nested
+	 * *query set* (as below), not to the raw subquery — see
+	 * {@link innerJoinLateralOne}.
+	 *
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
@@ -1954,9 +1966,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *         eb.selectFrom("posts")
 	 *           .select(["id", "title", "views"])
 	 *           .where("userId", "=", eb.ref("user.id"))
-	 *           .orderBy("views", "desc")
-	 *           .limit(5)
-	 *       ),
+	 *       )
+	 *         .orderBy("views", "desc")
+	 *         .limit(5),
 	 *     (join) => join.onTrue(),
 	 *   )
 	 *   .execute();
@@ -1996,6 +2008,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * using the `eb` (expression builder) parameter.
 	 * Works like {@link leftJoinOne} but with `LEFT JOIN LATERAL` in SQL.
 	 *
+	 * **Ordering and limits:** apply `.orderBy()` and `.limit()` to the nested
+	 * *query set* (as below), not to the raw subquery — see
+	 * {@link innerJoinLateralOne}.
+	 *
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
@@ -2007,9 +2023,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *         eb.selectFrom("posts")
 	 *           .select(["id", "title", "createdAt"])
 	 *           .where("userId", "=", eb.ref("user.id"))
-	 *           .orderBy("createdAt", "desc")
-	 *           .limit(1)
-	 *       ),
+	 *       )
+	 *         .orderBy("createdAt", "desc")
+	 *         .limit(1),
 	 *     (join) => join.onTrue(),
 	 *   )
 	 *   .execute();
@@ -2077,6 +2093,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *
 	 * Works like {@link leftJoinMany} but with `LEFT JOIN LATERAL` in SQL.
 	 *
+	 * **Ordering and limits:** apply `.orderBy()` and `.limit()` to the nested
+	 * *query set* (as below), not to the raw subquery — see
+	 * {@link innerJoinLateralOne}.
+	 *
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
@@ -2088,9 +2108,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 *         eb.selectFrom("posts")
 	 *           .select(["id", "title", "createdAt"])
 	 *           .where("userId", "=", eb.ref("user.id"))
-	 *           .orderBy("createdAt", "desc")
-	 *           .limit(3)
-	 *       ),
+	 *       )
+	 *         .orderBy("createdAt", "desc")
+	 *         .limit(3),
 	 *     (join) => join.onTrue(),
 	 *   )
 	 *   .execute();
@@ -2986,7 +3006,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// If only cardinality-one joins, we can safely apply limit/offset to the
 		// joined query.
 		if (this.#isCardinalityOne()) {
-			return this.#applyLimitAndOffset(this.#toJoinedQuery(isNested, isLocalSubquery));
+			let qb = this.#toJoinedQuery(isNested, isLocalSubquery);
+			// #toJoinedQuery skips ORDER BY inside subqueries (where it would be
+			// meaningless on its own), but with pagination the ordering determines
+			// WHICH rows the limit keeps — e.g. a lateral "top N per group" — so it
+			// must be applied here.  (The non-cardinality-one path below does the
+			// same; without pagination we never reach this point.)
+			if (isNested || isLocalSubquery) {
+				qb = this.#applyOrderBy(qb, false);
+			}
+			return this.#applyLimitAndOffset(qb);
 		}
 
 		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery);

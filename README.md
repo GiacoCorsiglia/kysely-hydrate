@@ -481,17 +481,27 @@ const query = querySet(db)
 			qs(
 				eb
 					.selectFrom("posts")
-					.select(["id", "title"])
-					.whereRef("posts.userId", "=", "user.id") // Correlated reference
-					.orderBy("createdAt", "desc")
-					.limit(3),
-			),
+					.select(["id", "title", "createdAt"])
+					.whereRef("posts.userId", "=", "user.id"), // Correlated reference
+			)
+				// Apply ordering and the limit to the query set, not the raw subquery.
+				.orderBy("createdAt", "desc")
+				.limit(3),
 		(join) => join.onTrue(),
 	);
 ```
 
 This compiles to a standard `LEFT JOIN LATERAL`, hoisting the columns
 `latestPosts$$id` and `latestPosts$$title` just like any other join.
+
+> [!IMPORTANT]
+> Apply `.orderBy()` and `.limit()` to the nested **query set** (as above), not
+> inside the raw subquery. The query set's ordering is used twice: inside the
+> lateral SQL, where it determines _which_ rows the limit keeps, and during
+> hydration, where it sorts the nested array. An `ORDER BY` written directly on
+> the inner Kysely query still controls which rows a `LIMIT` keeps, but the
+> hydrated array is re-sorted by the query set's own orderings (by default, the
+> keys) — so your top-3-by-date would come back date-filtered but id-ordered.
 
 ### Modifying queries with `.modify()`
 
