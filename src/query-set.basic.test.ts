@@ -181,6 +181,22 @@ describe("query-set: basic", () => {
 		]);
 	});
 
+	test("init: executeCount counts base rows, not entities, when keyBy is not unique", async () => {
+		// keyBy is required to be a unique key of the base query.  Hydration
+		// defensively collapses duplicate keys (see test above), but counting is a
+		// plain COUNT(*) with no DISTINCT, so a non-unique keyBy overcounts
+		// relative to execute().  This is intentional: adding DISTINCT would slow
+		// down every well-formed count to accommodate a contract violation.
+		const qs = () =>
+			querySet(db).selectAs("post", db.selectFrom("posts").select(["user_id"]), "user_id");
+
+		const count = await qs().executeCount(Number);
+		const entities = await qs().execute();
+
+		assert.strictEqual(entities.length, 9); // Distinct post authors.
+		assert.strictEqual(count, 15); // Total post rows.
+	});
+
 	test("init: writeAs passes explicit keyBy to the hydrator", async () => {
 		// Same regression as above, via the writeAs() creation path.
 		const users = await querySet(db)

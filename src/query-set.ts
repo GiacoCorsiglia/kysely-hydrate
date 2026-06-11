@@ -505,11 +505,17 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	toQuery(): OpaqueSelectQueryBuilder<T["JoinedQuery"]["O"]>;
 
 	/**
-	 * Returns a query that counts unique base records when executed.
+	 * Returns a query that counts base records when executed.
 	 *
-	 * This correctly handles filtering many-joins (like `innerJoinMany`) by
-	 * converting them to `WHERE EXISTS` clauses. Pagination (limit/offset) is
+	 * This correctly handles filtering many-joins (like `innerJoinMany`) by converting them to `WHERE
+	 * EXISTS` clauses, so the count is never inflated by row explosion. Pagination (limit/offset) is
 	 * ignored.
+	 *
+	 * The count is a plain `COUNT(*)` over the base query's rows. It equals the number of entities
+	 * `execute()` would return because the base query must produce at most one row per `keyBy` value
+	 * (`keyBy` must be a unique key; see {@link QuerySetCreator.selectAs}). If the base query
+	 * violates that requirement, the count includes the duplicate rows even though `execute()`
+	 * deduplicates them.
 	 *
 	 * **Example:**
 	 * ```ts
@@ -526,11 +532,8 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * **Example SQL structure (may vary):**
 	 * ```sql
 	 * SELECT COUNT(*) AS count
-	 * FROM (
-	 *   SELECT DISTINCT user.id
-	 *   FROM (...) AS user
-	 *   WHERE EXISTS (SELECT 1 FROM (...) AS posts WHERE ...)
-	 * )
+	 * FROM (...) AS user
+	 * WHERE EXISTS (SELECT 1 FROM (...) AS posts WHERE ...)
 	 * ```
 	 */
 	toCountQuery(): OpaqueCountQueryBuilder;
@@ -683,8 +686,10 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	): Promise<TOutput<T>>;
 
 	/**
-	 * Executes the count query (via {@link toCountQuery}) and returns the count of
-	 * unique base records.
+	 * Executes the count query (via {@link toCountQuery}) and returns the count
+	 * of base records.  This matches the number of entities `execute()` would
+	 * return, provided the base query respects the `keyBy` uniqueness
+	 * requirement (see {@link toCountQuery} and {@link QuerySetCreator.selectAs}).
 	 *
 	 * By default, Kysely's count function returns `string | number | bigint`. You
 	 * can provide a transformation function to convert the count to your preferred
@@ -3554,6 +3559,15 @@ class QuerySetCreator<in out DB> {
 	 * By default, the query set will use `"id"` as the key to uniquely identify
 	 * rows.  You can override this by passing a `keyBy` parameter (and must do so
 	 * if your selected row does not have an `id` column).
+	 *
+	 * The `keyBy` column(s) **must uniquely identify the rows of the base
+	 * query** — use the primary key or another unique key.  Counting and
+	 * pagination (`limit`/`offset`) operate on base rows and rely on this:
+	 * if the base query returns multiple rows with the same key, hydration
+	 * defensively keeps only the first, but `executeCount()` will overcount
+	 * and `limit`/`offset` will measure pages in rows rather than entities
+	 * (an entity's rows can even straddle a page boundary).  To group
+	 * non-unique rows, use a many-join instead.
 	 *
 	 * **Example with query builder:**
 	 * ```ts
