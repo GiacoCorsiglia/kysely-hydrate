@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, test } from "node:test";
 
 import { getDbForTest } from "./__tests__/db.ts";
+import { describePg } from "./__tests__/helpers.ts";
 import { CardinalityViolationError, ExpectedOneItemError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
@@ -11,8 +12,9 @@ const db = getDbForTest();
 // Join Tests
 //
 // Consolidates the per-join-type suites (innerJoinMany, leftJoinMany,
-// innerJoinOne, leftJoinOne, leftJoinOneOrThrow, crossJoinMany) and the
-// mixed-join suite.
+// innerJoinOne, leftJoinOne, leftJoinOneOrThrow, crossJoinMany), the
+// mixed-join suite, and the lateral join types (in a PostgreSQL-only
+// describePg suite at the bottom — SQLite has no LATERAL support).
 //
 // - The join-type-INDEPENDENT contract (execution methods, toBaseQuery,
 //   flat-row $$ hoisting) runs table-driven over every join type. Each
@@ -232,57 +234,65 @@ const JOIN_TYPES: JoinTypeCase[] = [
 	},
 ];
 
+/**
+ * Defines the six join-type-independent contract tests for one join type.
+ * Used by both the plain-join table and the (pg-only) lateral-join table.
+ */
+function defineContractTests(joinCase: JoinTypeCase) {
+	const { name, build, hydrated } = joinCase;
+
+	test(`${name}: execute hydrates matched and unmatched base records`, async () => {
+		const users = await build(3).execute();
+
+		assert.deepStrictEqual(users, hydrated);
+	});
+
+	test(`${name}: executeTakeFirst returns the first hydrated entity`, async () => {
+		const user = await build(3).executeTakeFirst();
+
+		assert.deepStrictEqual(user, hydrated[0]);
+	});
+
+	test(`${name}: executeCount counts base records, not exploded rows`, async () => {
+		const count = await build(3).executeCount(Number);
+
+		assert.strictEqual(count, joinCase.count);
+	});
+
+	test(`${name}: toJoinedQuery returns flat rows with $$-prefixed child columns`, async () => {
+		const rows = await build(2)
+			.toJoinedQuery()
+			// The compiled SQL orders only by the base key; child-row order is
+			// engine-dependent, so pin it for the comparison.
+			.orderBy(joinCase.joinedOrderBy)
+			.execute();
+
+		assert.deepStrictEqual(rows, joinCase.joinedRows);
+	});
+
+	test(`${name}: executeExists is true when matching base records exist`, async () => {
+		const exists = await build(5).executeExists();
+
+		assert.strictEqual(exists, true);
+	});
+
+	test(`${name}: toBaseQuery returns the base query without joins`, async () => {
+		const rows = await build(2).toBaseQuery().execute();
+
+		assert.deepStrictEqual(rows, [
+			{ id: 1, username: "alice" },
+			{ id: 2, username: "bob" },
+		]);
+	});
+}
+
 describe("query-set: joins", () => {
 	//
 	// Shared contract, table-driven over every join type
 	//
 
 	for (const joinCase of JOIN_TYPES) {
-		const { name, build, hydrated } = joinCase;
-
-		test(`${name}: execute hydrates matched and unmatched base records`, async () => {
-			const users = await build(3).execute();
-
-			assert.deepStrictEqual(users, hydrated);
-		});
-
-		test(`${name}: executeTakeFirst returns the first hydrated entity`, async () => {
-			const user = await build(3).executeTakeFirst();
-
-			assert.deepStrictEqual(user, hydrated[0]);
-		});
-
-		test(`${name}: executeCount counts base records, not exploded rows`, async () => {
-			const count = await build(3).executeCount(Number);
-
-			assert.strictEqual(count, joinCase.count);
-		});
-
-		test(`${name}: toJoinedQuery returns flat rows with $$-prefixed child columns`, async () => {
-			const rows = await build(2)
-				.toJoinedQuery()
-				// The compiled SQL orders only by the base key; child-row order is
-				// engine-dependent, so pin it for the comparison.
-				.orderBy(joinCase.joinedOrderBy)
-				.execute();
-
-			assert.deepStrictEqual(rows, joinCase.joinedRows);
-		});
-
-		test(`${name}: executeExists is true when matching base records exist`, async () => {
-			const exists = await build(5).executeExists();
-
-			assert.strictEqual(exists, true);
-		});
-
-		test(`${name}: toBaseQuery returns the base query without joins`, async () => {
-			const rows = await build(2).toBaseQuery().execute();
-
-			assert.deepStrictEqual(rows, [
-				{ id: 1, username: "alice" },
-				{ id: 2, username: "bob" },
-			]);
-		});
+		defineContractTests(joinCase);
 	}
 
 	//
@@ -963,5 +973,1002 @@ describe("query-set: joins", () => {
 
 		assert.strictEqual(queryCompiled.sql, joinedCompiled.sql);
 		assert.deepStrictEqual(queryCompiled.parameters, joinedCompiled.parameters);
+	});
+});
+
+//
+// Lateral join types (PostgreSQL only)
+//
+// Laterals are the same join family with correlated subqueries, so they run
+// through the same table-driven contract as the plain joins above, plus
+// hand-written tests for the lateral-specific semantics (correlated
+// references, ordering + limit inside the subquery, nesting). SQLite has no
+// LATERAL support, so this whole suite runs only under
+// HYDRATE_TEST_DB=postgres.
+//
+
+// The lateral subqueries below select only ["id", "title"] and keep each
+// user's top-2 posts by id.
+const BOB_TOP2_POSTS = [
+	{ id: 1, title: "Post 1" },
+	{ id: 2, title: "Post 2" },
+];
+
+const CAROL_TOP2_POSTS = [
+	{ id: 3, title: "Post 3" },
+	{ id: 15, title: "Post 15" },
+];
+
+const FLAT_LATERAL_BOB_POST_ROWS = [
+	{ id: 2, username: "bob", posts$$id: 1, posts$$title: "Post 1" },
+	{ id: 2, username: "bob", posts$$id: 2, posts$$title: "Post 2" },
+];
+
+const FLAT_LATERAL_ALICE_NULL_POST_ROW = {
+	id: 1,
+	username: "alice",
+	posts$$id: null,
+	posts$$title: null,
+};
+
+const LATERAL_JOIN_TYPES: JoinTypeCase[] = [
+	{
+		name: "innerJoinLateralMany",
+		build: (maxUserId) =>
+			userBase(maxUserId).innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			),
+		// alice's correlated subquery yields no rows; the inner join drops her.
+		hydrated: [
+			{ id: 2, username: "bob", posts: BOB_TOP2_POSTS },
+			{ id: 3, username: "carol", posts: CAROL_TOP2_POSTS },
+		],
+		count: 2,
+		joinedOrderBy: "posts$$id",
+		joinedRows: FLAT_LATERAL_BOB_POST_ROWS,
+	},
+	{
+		name: "leftJoinLateralMany",
+		build: (maxUserId) =>
+			userBase(maxUserId).leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			),
+		// alice is kept, with an empty collection.
+		hydrated: [
+			{ id: 1, username: "alice", posts: [] },
+			{ id: 2, username: "bob", posts: BOB_TOP2_POSTS },
+			{ id: 3, username: "carol", posts: CAROL_TOP2_POSTS },
+		],
+		count: 3,
+		joinedOrderBy: "posts$$id",
+		joinedRows: [FLAT_LATERAL_ALICE_NULL_POST_ROW, ...FLAT_LATERAL_BOB_POST_ROWS],
+	},
+	{
+		name: "crossJoinLateralMany",
+		build: (maxUserId) =>
+			userBase(maxUserId).crossJoinLateralMany("posts", ({ eb, qs }) =>
+				qs(
+					eb
+						.selectFrom("posts")
+						.select(["id", "title"])
+						.whereRef("posts.user_id", "=", "user.id")
+						.orderBy("posts.id")
+						.limit(2),
+				),
+			),
+		// Not a cartesian product: the subquery is correlated via whereRef, so a
+		// cross lateral join behaves like an inner lateral join (alice's empty
+		// subquery result removes her).
+		hydrated: [
+			{ id: 2, username: "bob", posts: BOB_TOP2_POSTS },
+			{ id: 3, username: "carol", posts: CAROL_TOP2_POSTS },
+		],
+		count: 2,
+		joinedOrderBy: "posts$$id",
+		joinedRows: FLAT_LATERAL_BOB_POST_ROWS,
+	},
+	{
+		name: "innerJoinLateralOne",
+		build: (maxUserId) =>
+			userBase(maxUserId).innerJoinLateralOne(
+				"latestPost",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id", "desc")
+							.limit(1),
+					),
+				(join) => join.onTrue(),
+			),
+		// alice has no posts and is dropped by the inner join.
+		hydrated: [
+			{ id: 2, username: "bob", latestPost: { id: 12, title: "Post 12" } },
+			{ id: 3, username: "carol", latestPost: { id: 15, title: "Post 15" } },
+		],
+		count: 2,
+		joinedOrderBy: "latestPost$$id",
+		joinedRows: [{ id: 2, username: "bob", latestPost$$id: 12, latestPost$$title: "Post 12" }],
+	},
+	{
+		name: "leftJoinLateralOne",
+		build: (maxUserId) =>
+			userBase(maxUserId).leftJoinLateralOne(
+				"latestPost",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id", "desc")
+							.limit(1),
+					),
+				(join) => join.onTrue(),
+			),
+		// alice is kept, with a null object.
+		hydrated: [
+			{ id: 1, username: "alice", latestPost: null },
+			{ id: 2, username: "bob", latestPost: { id: 12, title: "Post 12" } },
+			{ id: 3, username: "carol", latestPost: { id: 15, title: "Post 15" } },
+		],
+		count: 3,
+		joinedOrderBy: "latestPost$$id",
+		joinedRows: [
+			{ id: 1, username: "alice", latestPost$$id: null, latestPost$$title: null },
+			{ id: 2, username: "bob", latestPost$$id: 12, latestPost$$title: "Post 12" },
+		],
+	},
+	{
+		name: "leftJoinLateralOneOrThrow",
+		build: (maxUserId) =>
+			userBase(maxUserId).leftJoinLateralOneOrThrow(
+				"profile",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("profiles")
+							.select(["id", "bio", "user_id"])
+							.whereRef("profiles.user_id", "=", "user.id")
+							.limit(1),
+					),
+				(join) => join.onTrue(),
+			),
+		// Uses profiles (every user has one): oneOrThrow over posts would throw
+		// for alice — that semantics is pinned in a hand-written test below.
+		hydrated: [
+			{ id: 1, username: "alice", profile: profileOf(1) },
+			{ id: 2, username: "bob", profile: profileOf(2) },
+			{ id: 3, username: "carol", profile: profileOf(3) },
+		],
+		count: 3,
+		joinedOrderBy: "profile$$id",
+		joinedRows: FLAT_PROFILE_ROWS,
+	},
+];
+
+describePg("query-set: joins (lateral)", () => {
+	//
+	// Shared contract, table-driven over every lateral join type
+	//
+
+	for (const joinCase of LATERAL_JOIN_TYPES) {
+		defineContractTests(joinCase);
+	}
+
+	//
+	// Cardinality-one semantics
+	//
+
+	test("leftJoinLateralOneOrThrow: rejects with ExpectedOneItemError when no row matches", async () => {
+		await assert.rejects(
+			querySet(db)
+				.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+				.where("users.id", "=", 1)
+				.leftJoinLateralOneOrThrow(
+					"latestPost",
+					({ eb, qs }) =>
+						qs(
+							eb
+								.selectFrom("posts")
+								.select(["id", "title"])
+								.whereRef("posts.user_id", "=", "user.id")
+								.orderBy("posts.id", "desc")
+								.limit(1),
+						),
+					(join) => join.onTrue(),
+				)
+				.execute(),
+			ExpectedOneItemError,
+		);
+	});
+
+	interface LateralOneJoinCase {
+		name: string;
+		/** Joins bob's 4 posts (no limit) as a (violated) cardinality-one collection. */
+		build: () => ExecutableQuerySet;
+	}
+
+	// Base for the violation cases: bob only (id 2, who has 4 posts) — the
+	// correlated subqueries have NO limit, so they return all 4.
+	const bobOnlyLateral = () =>
+		querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2);
+
+	const LATERAL_ONE_JOINS: LateralOneJoinCase[] = [
+		{
+			name: "innerJoinLateralOne",
+			build: () =>
+				bobOnlyLateral().innerJoinLateralOne(
+					"post",
+					({ eb, qs }) =>
+						qs(
+							eb
+								.selectFrom("posts")
+								.select(["id", "title"])
+								.whereRef("posts.user_id", "=", "user.id"),
+						),
+					(join) => join.onTrue(),
+				),
+		},
+		{
+			name: "leftJoinLateralOne",
+			build: () =>
+				bobOnlyLateral().leftJoinLateralOne(
+					"post",
+					({ eb, qs }) =>
+						qs(
+							eb
+								.selectFrom("posts")
+								.select(["id", "title"])
+								.whereRef("posts.user_id", "=", "user.id"),
+						),
+					(join) => join.onTrue(),
+				),
+		},
+		{
+			name: "leftJoinLateralOneOrThrow",
+			build: () =>
+				bobOnlyLateral().leftJoinLateralOneOrThrow(
+					"post",
+					({ eb, qs }) =>
+						qs(
+							eb
+								.selectFrom("posts")
+								.select(["id", "title"])
+								.whereRef("posts.user_id", "=", "user.id"),
+						),
+					(join) => join.onTrue(),
+				),
+		},
+	];
+
+	for (const oneJoinCase of LATERAL_ONE_JOINS) {
+		test(`${oneJoinCase.name}: rejects with CardinalityViolationError when multiple rows match`, async () => {
+			// bob (id 2) has 4 posts
+			await assert.rejects(oneJoinCase.build().execute(), CardinalityViolationError);
+		});
+	}
+
+	test("executeExists: false when an inner lateral join filters out every base record", async () => {
+		// alice exists but has no posts, so the correlated subquery matches nothing
+		const exists = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 1)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id"),
+					),
+				(join) => join.onTrue(),
+			)
+			.executeExists();
+
+		assert.strictEqual(exists, false);
+	});
+
+	//
+	// Nested lateral joins
+	//
+
+	test("nested lateral joins: posts with comments at both levels", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					).leftJoinLateralMany(
+						"comments",
+						({ eb, qs }) =>
+							qs(
+								eb
+									.selectFrom("comments")
+									.select(["id", "content"])
+									.whereRef("comments.post_id", "=", "posts.id")
+									.orderBy("comments.id")
+									.limit(2),
+							),
+						(join) => join.onTrue(),
+					),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{
+						id: 1,
+						title: "Post 1",
+						comments: [
+							{ id: 1, content: "Comment 1 on post 1" },
+							{ id: 2, content: "Comment 2 on post 1" },
+						],
+					},
+					{
+						id: 2,
+						title: "Post 2",
+						comments: [{ id: 3, content: "Comment 3 on post 2" }],
+					},
+				],
+			},
+		]);
+	});
+
+	//
+	// Hydration features with lateral joins
+	//
+
+	test("lateral joins with mapFields transformation", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					).mapFields({
+						title: (title) => title.toUpperCase(),
+					}),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "POST 1" },
+					{ id: 2, title: "POST 2" },
+				],
+			},
+		]);
+	});
+
+	test("lateral joins with extras", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					).extras({
+						titleLength: (row) => row.title.length,
+					}),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", titleLength: 6 },
+					{ id: 2, title: "Post 2", titleLength: 6 },
+				],
+			},
+		]);
+	});
+
+	test("lateral joins with omit", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					).omit(["user_id"]),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1" },
+					{ id: 2, title: "Post 2" },
+				],
+			},
+		]);
+	});
+
+	test("nested lateral joins with transformations at multiple levels", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.mapFields({
+				username: (username) => username.toUpperCase(),
+			})
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					)
+						.mapFields({
+							title: (title) => title.toUpperCase(),
+						})
+						.extras({
+							titleLength: (post) => post.title.length,
+						})
+						.innerJoinLateralMany(
+							"comments",
+							({ eb, qs }) =>
+								qs(
+									eb
+										.selectFrom("comments")
+										.select(["id", "content"])
+										.whereRef("comments.post_id", "=", "posts.id")
+										.orderBy("comments.id")
+										.limit(1),
+								)
+									.mapFields({
+										content: (content) => `[${content}]`,
+									})
+									.extras({
+										contentLength: (comment) => comment.content.length,
+									}),
+							(join) => join.onTrue(),
+						),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "BOB",
+				posts: [
+					{
+						id: 1,
+						title: "POST 1",
+						titleLength: 6,
+						comments: [
+							{
+								id: 1,
+								content: "[Comment 1 on post 1]",
+								contentLength: "Comment 1 on post 1".length,
+							},
+						],
+					},
+					{
+						id: 2,
+						title: "POST 2",
+						titleLength: 6,
+						comments: [
+							{
+								id: 3,
+								content: "[Comment 3 on post 2]",
+								contentLength: "Comment 3 on post 2".length,
+							},
+						],
+					},
+				],
+			},
+		]);
+	});
+
+	//
+	// Multiple lateral joins on same QuerySet
+	//
+
+	test("multiple lateral joins: posts and comments as siblings", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			)
+			.leftJoinLateralOne(
+				"latestComment",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("comments")
+							.select(["id", "content"])
+							.whereRef("comments.user_id", "=", "user.id")
+							.orderBy("comments.id", "desc")
+							.limit(1),
+					),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1" },
+					{ id: 2, title: "Post 2" },
+				],
+				latestComment: { id: 11, content: "Comment 11 on post 11" },
+			},
+		]);
+	});
+
+	//
+	// Pagination with lateral joins
+	//
+
+	test("limit: limits base records with lateral joins", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			);
+
+		const users = await qs.limit(3).execute();
+		const allUsers = await qs.execute();
+
+		assert.strictEqual(users.length, 3);
+		assert.strictEqual(allUsers.length, 10);
+		assert.deepStrictEqual(users, allUsers.slice(0, 3));
+	});
+
+	test("offset: skips base records with lateral joins", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			);
+
+		const users = await qs.offset(2).limit(3).execute();
+
+		assert.strictEqual(users.length, 3);
+		assert.strictEqual(users[0]?.id, 3);
+		assert.strictEqual(users[1]?.id, 4);
+		assert.strictEqual(users[2]?.id, 5);
+	});
+
+	test("pagination: limit + offset with lateral joins", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			);
+
+		// Page 1: users 1-2
+		const page1 = await qs.limit(2).execute();
+		assert.strictEqual(page1.length, 2);
+		assert.strictEqual(page1[0]?.id, 1);
+		assert.strictEqual(page1[1]?.id, 2);
+
+		// Page 2: users 3-4
+		const page2 = await qs.offset(2).limit(2).execute();
+		assert.strictEqual(page2.length, 2);
+		assert.strictEqual(page2[0]?.id, 3);
+		assert.strictEqual(page2[1]?.id, 4);
+	});
+
+	test("executeCount: ignores limit/offset with lateral joins", async () => {
+		const count = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 3)
+			.leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.limit(1),
+					),
+				(join) => join.onTrue(),
+			)
+			.limit(1)
+			.offset(1)
+			.executeCount(Number);
+
+		assert.strictEqual(count, 3); // Counts all matching users, not just paginated
+	});
+
+	//
+	// Flat rows beyond the per-type table coverage
+	//
+
+	test("toJoinedQuery: nested lateral joins show double prefixes", async () => {
+		const rows = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(1),
+					).innerJoinLateralMany(
+						"comments",
+						({ eb, qs }) =>
+							qs(
+								eb
+									.selectFrom("comments")
+									.select(["id", "content"])
+									.whereRef("comments.post_id", "=", "posts.id")
+									.orderBy("comments.id")
+									.limit(2),
+							),
+						(join) => join.onTrue(),
+					),
+				(join) => join.onTrue(),
+			)
+			.toJoinedQuery()
+			// Post 1's two comments; order pinned for the comparison
+			.orderBy("posts$$comments$$id")
+			.execute();
+
+		assert.deepStrictEqual(rows, [
+			{
+				id: 2,
+				username: "bob",
+				posts$$id: 1,
+				posts$$title: "Post 1",
+				posts$$comments$$id: 1,
+				posts$$comments$$content: "Comment 1 on post 1",
+			},
+			{
+				id: 2,
+				username: "bob",
+				posts$$id: 1,
+				posts$$title: "Post 1",
+				posts$$comments$$id: 2,
+				posts$$comments$$content: "Comment 2 on post 1",
+			},
+		]);
+	});
+
+	//
+	// Mixed lateral and regular joins
+	//
+
+	test("mixed: innerJoinOne and innerJoinLateralMany", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				profile: { id: 2, bio: "Bio for user 2", user_id: 2 },
+				posts: [
+					{ id: 1, title: "Post 1" },
+					{ id: 2, title: "Post 2" },
+				],
+			},
+		]);
+	});
+
+	test("mixed: innerJoinMany and innerJoinLateralOne", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
+				"posts.user_id",
+				"user.id",
+			)
+			.innerJoinLateralOne(
+				"latestComment",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("comments")
+							.select(["id", "content"])
+							.whereRef("comments.user_id", "=", "user.id")
+							.orderBy("comments.id", "desc")
+							.limit(1),
+					),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2 },
+					{ id: 2, title: "Post 2", user_id: 2 },
+				],
+				latestComment: { id: 11, content: "Comment 11 on post 11" },
+			},
+		]);
+	});
+
+	//
+	// Collection modification with lateral joins
+	//
+
+	test("modify: add where clause to lateral join collection", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(5),
+					),
+				(join) => join.onTrue(),
+			)
+			.modify("posts", (qs) => qs.where("posts.id", "<=", 2))
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1" },
+					{ id: 2, title: "Post 2" },
+				],
+			},
+		]);
+	});
+
+	test("modify: add extras to lateral join collection", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			)
+			.modify("posts", (qs) =>
+				qs.extras({
+					titleLength: (row) => row.title.length,
+				}),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", titleLength: 6 },
+					{ id: 2, title: "Post 2", titleLength: 6 },
+				],
+			},
+		]);
+	});
+
+	//
+	// Ordering + limit ("top N per group").  The query set's orderBy must be
+	// applied INSIDE the lateral subquery (it determines which rows the limit
+	// keeps) AND to the hydrated output order.
+	//
+
+	test("orderBy + limit on the nested query set: correct rows in correct order", async () => {
+		const qs0 = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "in", [2, 3])
+			.innerJoinLateralMany(
+				"topPosts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id"),
+					)
+						.orderBy("id", "desc")
+						.limit(2),
+				(join) => join.onTrue(),
+			);
+
+		// The ordering must appear inside the lateral subquery, before the limit.
+		const { sql } = qs0.compile();
+		assert.match(sql, /order by "topPosts"\."id" desc limit/);
+
+		const users = await qs0.execute();
+
+		// Bob's posts are 1, 2, 5, 12; Carol's are 3, 15.  Top-2 descending —
+		// both the selected rows and their order.
+		assert.deepStrictEqual(
+			users.map((u) => ({ id: u.id, topPosts: u.topPosts.map((p) => p.id) })),
+			[
+				{ id: 2, topPosts: [12, 5] },
+				{ id: 3, topPosts: [15, 3] },
+			],
+		);
+	});
+
+	test("orderBy on the raw inner subquery: selects the right rows but hydrates in key order", async () => {
+		// Documented behavior (see the lateral JSDoc): an ORDER BY written
+		// directly on the inner Kysely query controls which rows the LIMIT keeps,
+		// but the hydrator cannot see it, so the hydrated array is re-sorted by
+		// the nested query set's own orderings (by default, the keys, ascending).
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinLateralMany(
+				"topPosts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("id", "desc")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		// The top-2 posts by id desc (5, 12) were selected, but hydrate ascending.
+		assert.deepStrictEqual(
+			users.map((u) => ({ id: u.id, topPosts: u.topPosts.map((p) => p.id) })),
+			[{ id: 2, topPosts: [5, 12] }],
+		);
 	});
 });
