@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 4: leftJoinMany Tests
+// leftJoinMany Tests
 //
 
 describe("query-set: left-join-many", () => {
@@ -50,6 +50,9 @@ describe("query-set: left-join-many", () => {
 			)
 			.where("users.id", "=", 2)
 			.toJoinedQuery()
+			// The compiled SQL orders only by the base key; child-row order is
+			// engine-dependent, so pin it for the comparison below
+			.orderBy("posts$$id")
 			.execute();
 
 		// Should have 4 rows (one per post)

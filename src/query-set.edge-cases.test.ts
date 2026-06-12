@@ -1,6 +1,8 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
+import { NoResultError } from "kysely";
+
 import { getDbForTest } from "./__tests__/db.ts";
 import { ExpectedOneItemError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
@@ -8,7 +10,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 7: Edge Cases & Error Handling
+// Edge Cases & Error Handling
 //
 
 describe("query-set: edge-cases", () => {
@@ -36,7 +38,7 @@ describe("query-set: edge-cases", () => {
 				.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 				.where("users.id", "=", 999)
 				.executeTakeFirstOrThrow();
-		});
+		}, NoResultError);
 	});
 
 	test("edge case: empty result set - executeCount returns 0", async () => {
@@ -166,7 +168,8 @@ describe("query-set: edge-cases", () => {
 			)
 			.toBaseQuery();
 
-		const rows = await baseQuery.execute();
+		// toBaseQuery() has no ORDER BY at all, so pin one for the comparison
+		const rows = await baseQuery.orderBy("id").execute();
 
 		// Should only have base columns, no joins applied
 		assert.strictEqual(rows.length, 2);
@@ -177,6 +180,11 @@ describe("query-set: edge-cases", () => {
 	});
 
 	test("edge case: toJoinedQuery vs toQuery without pagination are equivalent", async () => {
+		// Illustrative rather than load-bearing: without pagination toQuery()
+		// returns the joined query unchanged, so both sides execute the same
+		// compiled SQL (pinned as compiled-SQL equality in
+		// query-set.mixed-joins.test.ts). It documents the equivalence for
+		// readers, especially next to the with-pagination contrast test below.
 		const qs = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
@@ -276,24 +284,33 @@ describe("query-set: edge-cases", () => {
 	});
 
 	test("edge case: composite keyBy with array of keys", async () => {
-		// Create a scenario where we need composite key (using posts table)
-		const posts = await querySet(db)
-			.selectAs(
-				"post",
-				db
-					.selectFrom("posts")
-					.select(["id", "title", "user_id"])
-					.where("user_id", "in", [2, 3])
-					.where("id", "<=", 3),
-				["user_id", "id"],
-			)
-			.execute();
+		// Comments 1 and 3 each have 2 replies, so the left join duplicates
+		// their (post_id, user_id) pairs: the base produces 6 raw rows for 4
+		// distinct composite keys. The keys share post_id (comments 1, 2 are
+		// both on post 1) AND user_id (comments 3, 10 are both by user 1), so
+		// a composite keyBy that collapsed to either single column would
+		// produce 3 entities instead of 4.
+		const qs = querySet(db).selectAs(
+			"comment",
+			db
+				.selectFrom("comments")
+				.leftJoin("replies", "replies.comment_id", "comments.id")
+				.select(["comments.post_id", "comments.user_id"])
+				.where("comments.id", "in", [1, 2, 3, 10]),
+			["post_id", "user_id"],
+		);
 
-		// Should deduplicate by (user_id, id) composite key
-		assert.deepStrictEqual(posts, [
-			{ id: 1, title: "Post 1", user_id: 2 },
-			{ id: 2, title: "Post 2", user_id: 2 },
-			{ id: 3, title: "Post 3", user_id: 3 },
+		const rawRows = await qs.toBaseQuery().execute();
+		assert.strictEqual(rawRows.length, 6); // Proves the dedup below is real
+
+		const comments = await qs.execute();
+
+		// Deduplicated by the (post_id, user_id) composite key, ordered by it
+		assert.deepStrictEqual(comments, [
+			{ post_id: 1, user_id: 2 },
+			{ post_id: 1, user_id: 3 },
+			{ post_id: 2, user_id: 1 },
+			{ post_id: 10, user_id: 1 },
 		]);
 	});
 
@@ -370,23 +387,10 @@ describe("query-set: edge-cases", () => {
 		assert.ok(joinedRows.length > users.length); // Row explosion in joined query
 	});
 
-	test("edge case: map prevents further joins", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 2)
-			.map((user) => ({
-				userId: user.id,
-				name: user.username,
-			}))
-			.execute();
-
-		assert.deepStrictEqual(users, [
-			{
-				userId: 2,
-				name: "bob",
-			},
-		]);
-	});
+	// ("map prevents further joins" is a type-level claim, pinned with
+	// ts-expect-error directives in query-set.test-d.ts ("Terminal .map() -
+	// limitations"); runtime map behavior is covered in
+	// query-set.hydration.test.ts.)
 
 	test("edge case: extras do not cascade - each receives original row", async () => {
 		const users = await querySet(db)
@@ -396,16 +400,19 @@ describe("query-set: edge-cases", () => {
 				first: (row) => row.id,
 			})
 			.extras({
-				second: (row) => row.id + 10,
+				// Reads the first extra's key: if extras cascaded, this would be 1
+				second: (row) => (row as { first?: number }).first,
 			})
 			.execute();
 
+		// The second extra received the ORIGINAL row, not the first extra's
+		// output, so `second` is undefined (the key is still set)
 		assert.deepStrictEqual(users, [
 			{
 				id: 1,
 				username: "alice",
 				first: 1,
-				second: 11,
+				second: undefined,
 			},
 		]);
 	});

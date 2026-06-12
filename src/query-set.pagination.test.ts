@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 5: Pagination Tests
+// Pagination Tests
 //
 
 // Basic pagination without joins
@@ -263,12 +263,13 @@ describe("query-set: pagination", () => {
 	test("pagination: executeExists ignores limit/offset", async () => {
 		const exists = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("id", ">", 100) // No users match
 			.limit(1)
+			.offset(100) // Past all 10 users: the page itself is empty
 			.executeExists();
 
-		// Should return false because no users match, even with limit
-		assert.strictEqual(exists, false);
+		// Should return true: matching records exist even though the
+		// offset(100) page contains none of them
+		assert.strictEqual(exists, true);
 	});
 
 	test("pagination: executeCount with joins ignores limit/offset", async () => {

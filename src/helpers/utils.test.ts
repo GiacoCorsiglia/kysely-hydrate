@@ -30,6 +30,10 @@ test("isIterable: returns true for arrays", () => {
 });
 
 test("isIterable: returns false for strings", () => {
+	// Intentional: strings ARE iterable in JS, but treating a string as an
+	// iterable of characters is never what hydrate() callers mean — a single
+	// string input must be handled as one value, not exploded. Don't "fix"
+	// this to true.
 	assert.strictEqual(isIterable("test"), false);
 });
 

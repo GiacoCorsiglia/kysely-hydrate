@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 4: crossJoinMany Tests
+// crossJoinMany Tests
 //
 
 describe("query-set: cross-join-many", () => {

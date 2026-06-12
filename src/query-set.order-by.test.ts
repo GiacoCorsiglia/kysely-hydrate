@@ -10,8 +10,7 @@ const db = getDbForTest({ fixture: "order-by-fixture" });
 // ORDER BY Tests
 //
 // These tests verify that the orderBy, clearOrderBy, and orderByKeys methods
-// work correctly in different scenarios. The tests should initially fail due
-// to incorrect ordering in results (not type errors).
+// work correctly in different scenarios.
 //
 // NOTE: This test file uses a dedicated fixture with RANDOMIZED data to ensure
 // ordering is truly tested. In the fixture:
@@ -67,54 +66,87 @@ describe("query-set: order-by", () => {
 	});
 
 	test("orderBy: orders by multiple columns", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-			.orderBy("username", "desc")
-			.orderBy("id", "asc")
+		// Each user commented twice, so user_id has real ties and the secondary
+		// column decides. With the secondary ignored, the id-asc tiebreaker
+		// would instead produce [3, 7, 1, 5, 4, 8, 2, 6].
+		const comments = await querySet(db)
+			.selectAs("comment", db.selectFrom("comments").select(["id", "user_id", "content"]))
+			.orderBy("user_id", "asc")
+			.orderBy("content", "desc")
 			.execute();
 
-		// Primary: username desc, Secondary: id asc (though each username is unique)
-		assert.deepStrictEqual(users, [
-			{ id: 7, username: "judy", email: "judy@example.com" },
-			{ id: 3, username: "ivan", email: "ivan@example.com" },
-			{ id: 10, username: "heidi", email: "heidi@example.com" },
-			{ id: 1, username: "grace", email: "grace@example.com" },
-			{ id: 8, username: "frank", email: "frank@example.com" },
-			{ id: 4, username: "eve", email: "eve@example.com" },
-			{ id: 9, username: "dave", email: "dave@example.com" },
-			{ id: 5, username: "carol", email: "carol@example.com" },
-			{ id: 6, username: "bob", email: "bob@example.com" },
-			{ id: 2, username: "alice", email: "alice@example.com" },
+		assert.deepStrictEqual(comments, [
+			{ id: 3, user_id: 4, content: "Comment on zeta by eve" },
+			{ id: 7, user_id: 4, content: "Comment on kappa by eve" },
+			{ id: 5, user_id: 5, content: "Comment on theta by carol" },
+			{ id: 1, user_id: 5, content: "Comment on gamma by carol" },
+			{ id: 8, user_id: 6, content: "Comment on epsilon by bob" },
+			{ id: 4, user_id: 6, content: "Comment on beta by bob" },
+			{ id: 6, user_id: 9, content: "Comment on delta by dave" },
+			{ id: 2, user_id: 9, content: "Comment on alpha by dave" },
 		]);
+	});
+
+	test("orderByKeys disabled: output preserves the base query's own order", async () => {
+		// The base query carries a TOTAL order of its own (user_id asc, id desc
+		// within ties). With orderByKeys(false) and no .orderBy(), the QuerySet
+		// adds no ordering anywhere — SQL or JS — so the output preserves the
+		// base query's order exactly. If keyBy ordering leaked in, the result
+		// would be re-sorted to id asc ([1..8]).
+		const comments = await querySet(db)
+			.selectAs(
+				"comment",
+				db
+					.selectFrom("comments")
+					.select(["id", "user_id", "content"])
+					.orderBy("user_id", "asc")
+					.orderBy("id", "desc"),
+			)
+			.orderByKeys(false)
+			.execute();
+
+		assert.deepStrictEqual(
+			comments.map((c) => c.id),
+			[7, 3, 5, 1, 8, 4, 6, 2],
+		);
 	});
 
 	test("orderBy: with orderByKeys disabled", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		// With an explicit orderBy, disabling key ordering drops the keyBy
+		// tiebreaker — pinned in the compiled SQL. Tie order in the output is
+		// genuinely unspecified here (having no tiebreaker is the point), so
+		// only the user_id grouping is asserted; the deterministic-output case
+		// is the test above.
+		const qs = querySet(db)
+			.selectAs("comment", db.selectFrom("comments").select(["id", "user_id", "content"]))
 			.orderByKeys(false)
-			.orderBy("username", "desc")
-			.execute();
+			.orderBy("user_id", "asc");
 
-		// Should only order by username, NOT by id as a tiebreaker
-		assert.deepStrictEqual(users, [
-			{ id: 7, username: "judy" },
-			{ id: 3, username: "ivan" },
-			{ id: 10, username: "heidi" },
-			{ id: 1, username: "grace" },
-			{ id: 8, username: "frank" },
-			{ id: 4, username: "eve" },
-			{ id: 9, username: "dave" },
-			{ id: 5, username: "carol" },
-			{ id: 6, username: "bob" },
-			{ id: 2, username: "alice" },
-		]);
+		const sql = qs.toQuery().compile().sql;
+		assert.ok(sql.endsWith('order by "comment"."user_id" asc'), sql);
+
+		// The explicit ordering still applies; within ties, order is unspecified
+		const comments = await qs.execute();
+		assert.deepStrictEqual(
+			comments.map((c) => c.user_id),
+			[4, 4, 5, 5, 6, 6, 9, 9],
+		);
 	});
 
 	test("orderBy: with default keyBy ordering", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		// The base query feeds rows in id-DESC order, so the default keyBy
+		// ordering must actively re-sort the output to id asc — it can't pass
+		// by riding on engine scan order (which this base query inverts)
+		const qs = querySet(db)
 			// No explicit orderBy, should default to ordering by id (keyBy)
-			.execute();
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]).orderBy("id", "desc"));
+
+		// The keyBy ordering is also emitted on the outer query (for toQuery
+		// consumers streaming the flat rows)
+		const sql = qs.toQuery().compile().sql;
+		assert.ok(sql.endsWith('order by "user"."id" asc'), sql);
+
+		const users = await qs.execute();
 
 		// Should be ordered by id ascending (default keyBy)
 		// grace(1), alice(2), ivan(3), eve(4), carol(5), bob(6), judy(7), frank(8), dave(9), heidi(10)
@@ -133,46 +165,55 @@ describe("query-set: order-by", () => {
 	});
 
 	test("clearOrderBy: removes custom ordering but keeps keyBy ordering", async () => {
+		// Keyed by username, so the keyBy ordering (alphabetical) is
+		// distinguishable in the output from both the cleared ordering (id
+		// desc, [10..1]) and engine scan order (id asc, [1..10])
 		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.orderBy("username", "desc")
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]), "username")
+			.orderBy("id", "desc")
 			.clearOrderBy()
 			.execute();
 
-		// Should revert to default keyBy ordering (id asc)
+		// Should revert to keyBy ordering (username asc)
 		assert.deepStrictEqual(users, [
-			{ id: 1, username: "grace" },
 			{ id: 2, username: "alice" },
-			{ id: 3, username: "ivan" },
-			{ id: 4, username: "eve" },
-			{ id: 5, username: "carol" },
 			{ id: 6, username: "bob" },
-			{ id: 7, username: "judy" },
-			{ id: 8, username: "frank" },
+			{ id: 5, username: "carol" },
 			{ id: 9, username: "dave" },
+			{ id: 4, username: "eve" },
+			{ id: 8, username: "frank" },
+			{ id: 1, username: "grace" },
 			{ id: 10, username: "heidi" },
+			{ id: 3, username: "ivan" },
+			{ id: 7, username: "judy" },
 		]);
 	});
 
 	test("orderByKeys: can be re-enabled after being disabled", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.orderByKeys(false)
-			.orderByKeys(true)
-			.execute();
+		// Keyed by username, so the re-enabled keyBy ordering (alphabetical) is
+		// distinguishable in the output from engine scan order (id asc)
+		const disabled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]), "username")
+			.orderByKeys(false);
+		const reEnabled = disabled.orderByKeys(true);
 
-		// Should be ordered by id (keyBy re-enabled)
+		// Disabled: no ordering at all
+		assert.ok(!disabled.toQuery().compile().sql.includes("order by"));
+
+		const users = await reEnabled.execute();
+
+		// Should be ordered by username (keyBy re-enabled)
 		assert.deepStrictEqual(users, [
-			{ id: 1, username: "grace" },
 			{ id: 2, username: "alice" },
-			{ id: 3, username: "ivan" },
-			{ id: 4, username: "eve" },
-			{ id: 5, username: "carol" },
 			{ id: 6, username: "bob" },
-			{ id: 7, username: "judy" },
-			{ id: 8, username: "frank" },
+			{ id: 5, username: "carol" },
 			{ id: 9, username: "dave" },
+			{ id: 4, username: "eve" },
+			{ id: 8, username: "frank" },
+			{ id: 1, username: "grace" },
 			{ id: 10, username: "heidi" },
+			{ id: 3, username: "ivan" },
+			{ id: 7, username: "judy" },
 		]);
 	});
 
@@ -235,31 +276,44 @@ describe("query-set: order-by", () => {
 	});
 
 	test("orderBy: orders by multiple columns including joined columns with leftJoinOne", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		// Comments 1 and 3 each have two replies, so the joined primary column
+		// (the comment's content) has real ties and the secondary column
+		// decides. With the secondary ignored, the id-asc tiebreaker would
+		// instead produce [6, 2, 4, 3, 1, 5].
+		const replies = await querySet(db)
+			.selectAs("reply", db.selectFrom("replies").select(["id", "comment_id", "user_id"]))
 			.leftJoinOne(
-				"profile",
-				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-				"profile.user_id",
-				"user.id",
+				"comment",
+				({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content"])),
+				"comment.id",
+				"reply.comment_id",
 			)
-			.orderBy("profile$$bio", "asc")
-			.orderBy("username", "desc")
+			.orderBy("comment$$content", "asc")
+			.orderBy("user_id", "asc")
 			.execute();
 
-		// Primary ordering by profile.bio asc, secondary by username desc, tertiary by id asc
-		// (All users have profiles in this fixture)
-		assert.deepStrictEqual(users, [
-			{ id: 2, username: "alice", profile: { id: 2, bio: "Bio for alice", user_id: 2 } },
-			{ id: 6, username: "bob", profile: { id: 6, bio: "Bio for bob", user_id: 6 } },
-			{ id: 5, username: "carol", profile: { id: 9, bio: "Bio for carol", user_id: 5 } },
-			{ id: 9, username: "dave", profile: { id: 3, bio: "Bio for dave", user_id: 9 } },
-			{ id: 4, username: "eve", profile: { id: 4, bio: "Bio for eve", user_id: 4 } },
-			{ id: 8, username: "frank", profile: { id: 10, bio: "Bio for frank", user_id: 8 } },
-			{ id: 1, username: "grace", profile: { id: 5, bio: "Bio for grace", user_id: 1 } },
-			{ id: 10, username: "heidi", profile: { id: 7, bio: "Bio for heidi", user_id: 10 } },
-			{ id: 3, username: "ivan", profile: { id: 8, bio: "Bio for ivan", user_id: 3 } },
-			{ id: 7, username: "judy", profile: { id: 1, bio: "Bio for judy", user_id: 7 } },
+		assert.deepStrictEqual(replies, [
+			{ id: 6, comment_id: 6, user_id: 6, comment: { id: 6, content: "Comment on delta by dave" } },
+			{
+				id: 4,
+				comment_id: 1,
+				user_id: 4,
+				comment: { id: 1, content: "Comment on gamma by carol" },
+			},
+			{
+				id: 2,
+				comment_id: 1,
+				user_id: 9,
+				comment: { id: 1, content: "Comment on gamma by carol" },
+			},
+			{
+				id: 3,
+				comment_id: 5,
+				user_id: 4,
+				comment: { id: 5, content: "Comment on theta by carol" },
+			},
+			{ id: 5, comment_id: 3, user_id: 5, comment: { id: 3, content: "Comment on zeta by eve" } },
+			{ id: 1, comment_id: 3, user_id: 6, comment: { id: 3, content: "Comment on zeta by eve" } },
 		]);
 	});
 
@@ -506,6 +560,8 @@ describe("query-set: order-by", () => {
 	});
 
 	test("orderBy: works correctly with leftJoinMany and pagination", async () => {
+		// bob and carol have 4 and 2 posts (6 exploded rows), so a limit
+		// applied to rows instead of entities would truncate the result
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.leftJoinMany(
@@ -514,14 +570,31 @@ describe("query-set: order-by", () => {
 				"posts.user_id",
 				"user.id",
 			)
-			.orderBy("username", "desc")
+			.orderBy("username", "asc")
+			.offset(1)
 			.limit(2)
 			.execute();
 
-		// First 2 when ordered by username desc: judy, ivan
+		// Ordered by username asc, skip alice, take 2: bob, carol
 		assert.deepStrictEqual(users, [
-			{ id: 7, username: "judy", posts: [] },
-			{ id: 3, username: "ivan", posts: [] },
+			{
+				id: 6,
+				username: "bob",
+				posts: [
+					{ id: 3, title: "Post Gamma", user_id: 6 },
+					{ id: 6, title: "Post Zeta", user_id: 6 },
+					{ id: 8, title: "Post Theta", user_id: 6 },
+					{ id: 10, title: "Post Kappa", user_id: 6 },
+				],
+			},
+			{
+				id: 5,
+				username: "carol",
+				posts: [
+					{ id: 1, title: "Post Alpha", user_id: 5 },
+					{ id: 4, title: "Post Delta", user_id: 5 },
+				],
+			},
 		]);
 	});
 
@@ -957,24 +1030,33 @@ describe("query-set: order-by", () => {
 	//
 
 	test("orderBy: keyBy as tiebreaker when custom ordering has duplicates", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]))
-			.orderBy("email", "asc")
-			.execute();
+		// Each user commented twice, so user_id has real ties for the keyBy
+		// tiebreaker to break. The base query feeds rows in id-DESC order, so
+		// the tiebreaker must actively re-sort each tie to id asc — it can't
+		// pass by riding on engine scan order. The compiled SQL pins the
+		// trailing keyBy term too.
+		const qs = querySet(db)
+			.selectAs(
+				"comment",
+				db.selectFrom("comments").select(["id", "user_id", "content"]).orderBy("id", "desc"),
+			)
+			.orderBy("user_id", "asc");
 
-		// Should be ordered by email (all unique), with id as tiebreaker
-		// Alphabetically by email: alice, bob, carol, dave, eve, frank, grace, heidi, ivan, judy
-		assert.deepStrictEqual(users, [
-			{ id: 2, username: "alice", email: "alice@example.com" },
-			{ id: 6, username: "bob", email: "bob@example.com" },
-			{ id: 5, username: "carol", email: "carol@example.com" },
-			{ id: 9, username: "dave", email: "dave@example.com" },
-			{ id: 4, username: "eve", email: "eve@example.com" },
-			{ id: 8, username: "frank", email: "frank@example.com" },
-			{ id: 1, username: "grace", email: "grace@example.com" },
-			{ id: 10, username: "heidi", email: "heidi@example.com" },
-			{ id: 3, username: "ivan", email: "ivan@example.com" },
-			{ id: 7, username: "judy", email: "judy@example.com" },
+		const sql = qs.toQuery().compile().sql;
+		assert.ok(sql.endsWith('order by "comment"."user_id" asc, "comment"."id" asc'), sql);
+
+		const comments = await qs.execute();
+
+		// Ordered by user_id asc, ties broken by id asc
+		assert.deepStrictEqual(comments, [
+			{ id: 3, user_id: 4, content: "Comment on zeta by eve" },
+			{ id: 7, user_id: 4, content: "Comment on kappa by eve" },
+			{ id: 1, user_id: 5, content: "Comment on gamma by carol" },
+			{ id: 5, user_id: 5, content: "Comment on theta by carol" },
+			{ id: 4, user_id: 6, content: "Comment on beta by bob" },
+			{ id: 8, user_id: 6, content: "Comment on epsilon by bob" },
+			{ id: 2, user_id: 9, content: "Comment on alpha by dave" },
+			{ id: 6, user_id: 9, content: "Comment on delta by dave" },
 		]);
 	});
 

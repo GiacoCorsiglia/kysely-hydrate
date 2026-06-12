@@ -20,9 +20,10 @@ describe("sqlCompare", () => {
 	});
 
 	it("should compare numbers correctly", () => {
-		assert.equal(sqlCompare(1, 2), -1);
-		assert.equal(sqlCompare(2, 1), 1);
-		assert.equal(sqlCompare(-5, 3), -8);
+		// The contract is sign-only; don't over-specify exact return values
+		assert.ok(sqlCompare(1, 2) < 0);
+		assert.ok(sqlCompare(2, 1) > 0);
+		assert.ok(sqlCompare(-5, 3) < 0);
 		assert.equal(sqlCompare(0, 0), 0);
 		// Check sign rather than exact value due to floating point precision
 		assert.ok(sqlCompare(1.5, 1.2) > 0);
@@ -56,7 +57,6 @@ describe("sqlCompare", () => {
 		const date2 = new Date("2024-01-02");
 		const date3 = new Date("2024-01-01");
 
-		assert.equal(sqlCompare(date1, date2), -86400000); // 1 day in ms
 		assert.ok(sqlCompare(date1, date2) < 0);
 		assert.ok(sqlCompare(date2, date1) > 0);
 		assert.equal(sqlCompare(date1, date3), 0);

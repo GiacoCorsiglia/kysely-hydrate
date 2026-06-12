@@ -112,4 +112,8 @@ test("hoistAndPrefixSelections: subquery with schema-qualified selections", () =
 	const node0 = hoisted[0]!.expression.toOperationNode() as k.ReferenceNode;
 	assert.strictEqual(node0.kind, "ReferenceNode");
 	assert.strictEqual((node0.column as k.ColumnNode).column.name, "id");
+	// The table part must be the subquery alias ("u") — the whole point of
+	// hoisting — not the original (possibly schema-qualified) table
+	assert.strictEqual(node0.table?.table.identifier.name, "u");
+	assert.strictEqual(node0.table?.table.schema, undefined);
 });

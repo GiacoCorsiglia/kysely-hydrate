@@ -2,12 +2,13 @@ import assert from "node:assert";
 import { describe, test } from "node:test";
 
 import { getDbForTest } from "./__tests__/db.ts";
+import { ExpectedOneItemError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
 
 //
-// Phase 3: leftJoinOneOrThrow Tests
+// leftJoinOneOrThrow Tests
 //
 
 describe("query-set: left-join-one-or-throw", () => {
@@ -85,7 +86,7 @@ describe("query-set: left-join-one-or-throw", () => {
 				)
 				.where("users.id", "=", 1)
 				.execute();
-		});
+		}, ExpectedOneItemError);
 	});
 
 	test("leftJoinOneOrThrow: executeCount counts all base records", async () => {

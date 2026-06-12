@@ -10,6 +10,11 @@ const db = getDbForTest();
 //
 // Tests
 //
+// Every test verifies post-delete DB state with a re-select inside the same
+// transaction: a DELETE's RETURNING output is identical to the pre-existing
+// seeded rows, so without the re-select these tests would pass even if the
+// library generated a plain SELECT instead of a DELETE.
+//
 
 describePg("query-set: postgres-delete", () => {
 	//
@@ -30,6 +35,13 @@ describePg("query-set: postgres-delete", () => {
 				username: "alice",
 				email: "alice@example.com",
 			});
+
+			const remaining = await trx
+				.selectFrom("users")
+				.select("id")
+				.where("id", "=", 1)
+				.executeTakeFirst();
+			assert.strictEqual(remaining, undefined);
 		});
 	});
 
@@ -39,16 +51,23 @@ describePg("query-set: postgres-delete", () => {
 
 	test("deleteAs() - delete with partial returning", async () => {
 		await testInTransaction(db, async (trx) => {
-			const query = querySet(trx)
-				.deleteAs("deletedUser", (db) => db.deleteFrom("users").where("id", "=", 2).returningAll())
-				.omit(["id"]); // Omit id from the result
+			const query = querySet(trx).deleteAs("deletedUser", (db) =>
+				db.deleteFrom("users").where("id", "=", 2).returning(["id", "username"]),
+			);
 
 			const result = await query.executeTakeFirst();
 
 			assert.deepStrictEqual(result, {
+				id: 2,
 				username: "bob",
-				email: "bob@example.com",
 			});
+
+			const remaining = await trx
+				.selectFrom("users")
+				.select("id")
+				.where("id", "=", 2)
+				.executeTakeFirst();
+			assert.strictEqual(remaining, undefined);
 		});
 	});
 
@@ -56,23 +75,31 @@ describePg("query-set: postgres-delete", () => {
 	// Test 28: Delete with custom keyBy
 	//
 
-	test("deleteAs() - delete with custom keyBy", async () => {
+	test("deleteAs() - delete with custom keyBy orders results by that key", async () => {
 		await testInTransaction(db, async (trx) => {
+			// Keyed by title; "Post 12" < "Post 2" < "Post 3" alphabetically, so
+			// key-ordering by title is distinguishable from the default id order
+			// ([2, 3, 12]). A no-op keyBy would produce a different order.
 			const query = querySet(trx).deleteAs(
-				"deletedUser",
-				(db) => db.deleteFrom("users").where("id", "=", 3).returningAll(),
-				"username",
+				"deletedPosts",
+				(db) => db.deleteFrom("posts").where("id", "in", [2, 3, 12]).returningAll(),
+				"title",
 			);
 
-			const result = await query.executeTakeFirst();
+			const results = await query.execute();
 
-			assert.ok(result);
-			assert.strictEqual(result.username, "carol");
-			assert.deepStrictEqual(result, {
-				id: 3,
-				username: "carol",
-				email: "carol@example.com",
-			});
+			assert.deepStrictEqual(results, [
+				{ id: 12, user_id: 2, title: "Post 12", content: "Content for post 12" },
+				{ id: 2, user_id: 2, title: "Post 2", content: "Content for post 2" },
+				{ id: 3, user_id: 3, title: "Post 3", content: "Content for post 3" },
+			]);
+
+			const remaining = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("id", "in", [2, 3, 12])
+				.execute();
+			assert.deepStrictEqual(remaining, []);
 		});
 	});
 
@@ -82,20 +109,28 @@ describePg("query-set: postgres-delete", () => {
 
 	test("deleteAs() - delete multiple rows with ordering", async () => {
 		await testInTransaction(db, async (trx) => {
+			// "Post 1" < "Post 10" < "Post 2" alphabetically, so ordering by title
+			// is distinguishable from id order ([1, 2, 10]).
 			const query = querySet(trx)
-				.deleteAs("deletedUsers", (db) =>
-					db.deleteFrom("users").where("id", "in", [4, 5, 6]).returningAll(),
+				.deleteAs("deletedPosts", (db) =>
+					db.deleteFrom("posts").where("id", "in", [1, 2, 10]).returningAll(),
 				)
-				.orderBy("username");
+				.orderBy("title");
 
 			const results = await query.execute();
 
-			assert.strictEqual(results.length, 3);
 			assert.deepStrictEqual(results, [
-				{ id: 4, username: "dave", email: "dave@example.com" },
-				{ id: 5, username: "eve", email: "eve@example.com" },
-				{ id: 6, username: "frank", email: "frank@example.com" },
+				{ id: 1, user_id: 2, title: "Post 1", content: "Content for post 1" },
+				{ id: 10, user_id: 9, title: "Post 10", content: "Content for post 10" },
+				{ id: 2, user_id: 2, title: "Post 2", content: "Content for post 2" },
 			]);
+
+			const remaining = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("id", "in", [1, 2, 10])
+				.execute();
+			assert.deepStrictEqual(remaining, []);
 		});
 	});
 
@@ -117,6 +152,13 @@ describePg("query-set: postgres-delete", () => {
 				username: "grace",
 				email: "grace@example.com",
 			});
+
+			const remaining = await trx
+				.selectFrom("users")
+				.select("id")
+				.where("id", "=", 7)
+				.executeTakeFirst();
+			assert.strictEqual(remaining, undefined);
 		});
 	});
 
@@ -149,6 +191,21 @@ describePg("query-set: postgres-delete", () => {
 					username: "bob",
 				},
 			});
+
+			const remainingPost = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("id", "=", 1)
+				.executeTakeFirst();
+			assert.strictEqual(remainingPost, undefined);
+
+			// The joined user is only hydrated, not deleted
+			const joinedUser = await trx
+				.selectFrom("users")
+				.select("id")
+				.where("id", "=", 2)
+				.executeTakeFirst();
+			assert.ok(joinedUser);
 		});
 	});
 
@@ -158,9 +215,8 @@ describePg("query-set: postgres-delete", () => {
 
 	test("QuerySet.delete() - with has-many join (leftJoinMany)", async () => {
 		await testInTransaction(db, async (trx) => {
-			// Delete a user and hydrate their posts
-			// Note: Since we have ON DELETE CASCADE, we need to be careful
-			// Let's delete a user who has posts
+			// Delete a user and hydrate their posts (joined against the snapshot
+			// before the ON DELETE CASCADE removes them)
 			const query = querySet(trx)
 				.selectAs("users", trx.selectFrom("users").select(["id", "username", "email"]))
 				.leftJoinMany(
@@ -180,6 +236,21 @@ describePg("query-set: postgres-delete", () => {
 			// Bob should have 4 posts in the result (before cascade delete)
 			assert.strictEqual(result.posts.length, 4);
 			assert.ok(result.posts.every((p: any) => p.user_id === 2));
+
+			const remainingUser = await trx
+				.selectFrom("users")
+				.select("id")
+				.where("id", "=", 2)
+				.executeTakeFirst();
+			assert.strictEqual(remainingUser, undefined);
+
+			// ON DELETE CASCADE removed the user's posts
+			const remainingPosts = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("user_id", "=", 2)
+				.execute();
+			assert.deepStrictEqual(remainingPosts, []);
 		});
 	});
 
@@ -222,6 +293,13 @@ describePg("query-set: postgres-delete", () => {
 					},
 				},
 			});
+
+			const remainingPost = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("id", "=", 2)
+				.executeTakeFirst();
+			assert.strictEqual(remainingPost, undefined);
 		});
 	});
 
@@ -249,6 +327,13 @@ describePg("query-set: postgres-delete", () => {
 				upperTitle: "POST 3",
 				titleLength: 6,
 			});
+
+			const remaining = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("id", "=", 3)
+				.executeTakeFirst();
+			assert.strictEqual(remaining, undefined);
 		});
 	});
 
@@ -288,6 +373,13 @@ describePg("query-set: postgres-delete", () => {
 					usernameUpper: "DAVE",
 				},
 			});
+
+			const remaining = await trx
+				.selectFrom("posts")
+				.select("id")
+				.where("id", "=", 4)
+				.executeTakeFirst();
+			assert.strictEqual(remaining, undefined);
 		});
 	});
 
@@ -304,6 +396,10 @@ describePg("query-set: postgres-delete", () => {
 			const result = await query.executeTakeFirst();
 
 			assert.strictEqual(result, undefined);
+
+			// Nothing matched, so nothing was deleted
+			const users = await trx.selectFrom("users").select("id").execute();
+			assert.strictEqual(users.length, 10);
 		});
 	});
 
@@ -340,6 +436,13 @@ describePg("query-set: postgres-delete", () => {
 				username: "ivan",
 				email: "ivan@example.com",
 			});
+
+			const remaining = await trx
+				.selectFrom("users")
+				.select("id")
+				.where("id", "in", [8, 9])
+				.execute();
+			assert.deepStrictEqual(remaining, []);
 		});
 	});
 });

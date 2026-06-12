@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 2: Simple Base Query Modifications
+// Simple Base Query Modifications
 //
 
 describe("query-set: modify", () => {

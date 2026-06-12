@@ -416,13 +416,16 @@ test("composite keys: work at nested level", async () => {
 		posts$$comments$$text: string | null;
 	}
 
+	// The three posts pairwise share key1 OR key2, so a composite keyBy that
+	// collapsed to either single column would merge posts and change the
+	// grouping below
 	const rows: UserWithPosts[] = [
 		{
 			id: 1,
 			name: "Alice",
 			posts$$key1: "a",
 			posts$$key2: 1,
-			posts$$title: "Post 1",
+			posts$$title: "Post a1",
 			posts$$comments$$id: 100,
 			posts$$comments$$text: "Comment 1",
 		},
@@ -431,9 +434,27 @@ test("composite keys: work at nested level", async () => {
 			name: "Alice",
 			posts$$key1: "a",
 			posts$$key2: 1,
-			posts$$title: "Post 1",
+			posts$$title: "Post a1",
 			posts$$comments$$id: 101,
 			posts$$comments$$text: "Comment 2",
+		},
+		{
+			id: 1,
+			name: "Alice",
+			posts$$key1: "a",
+			posts$$key2: 2,
+			posts$$title: "Post a2",
+			posts$$comments$$id: 102,
+			posts$$comments$$text: "Comment 3",
+		},
+		{
+			id: 1,
+			name: "Alice",
+			posts$$key1: "b",
+			posts$$key2: 1,
+			posts$$title: "Post b1",
+			posts$$comments$$id: 103,
+			posts$$comments$$text: "Comment 4",
 		},
 	];
 
@@ -447,8 +468,35 @@ test("composite keys: work at nested level", async () => {
 
 	const result = await hydrate(rows, hydrator);
 
-	assert.strictEqual(result[0]?.posts.length, 1);
-	assert.strictEqual(result[0]?.posts[0]?.comments.length, 2);
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			name: "Alice",
+			posts: [
+				{
+					key1: "a",
+					key2: 1,
+					title: "Post a1",
+					comments: [
+						{ id: 100, text: "Comment 1" },
+						{ id: 101, text: "Comment 2" },
+					],
+				},
+				{
+					key1: "a",
+					key2: 2,
+					title: "Post a2",
+					comments: [{ id: 102, text: "Comment 3" }],
+				},
+				{
+					key1: "b",
+					key2: 1,
+					title: "Post b1",
+					comments: [{ id: 103, text: "Comment 4" }],
+				},
+			],
+		},
+	]);
 });
 
 test("composite keys: skips rows where any key part is null", async () => {
@@ -584,7 +632,10 @@ test("hasMany: handles multiple nesting levels", async () => {
 	});
 });
 
-test("hasOne: returns first nested entity or null", async () => {
+test("hasOne: returns single nested entity or null", async () => {
+	// (hasOne never returns a "first" entity: more than one distinct nested
+	// entity is a cardinality violation and throws — see the grouping test
+	// "hasOne throws CardinalityViolationError for multiple distinct children")
 	interface UserWithProfile extends User {
 		profile$$name: string | null;
 		profile$$age: number | null;
@@ -841,7 +892,13 @@ test("attachMany: parents sharing a match value receive independent arrays", asy
 	// get its own array: the grouped rows are internal storage, and handing the
 	// same instance to both parents would let one parent's mutation (e.g. a
 	// .sort() in a map function) corrupt its sibling's collection.
-	const posts = [
+	interface CategorizedPost {
+		id: number;
+		categoryId: number;
+		title: string;
+	}
+
+	const posts: CategorizedPost[] = [
 		{ id: 1, categoryId: 7, title: "A" },
 		{ id: 2, categoryId: 7, title: "B" },
 	];
@@ -851,7 +908,7 @@ test("attachMany: parents sharing a match value receive independent arrays", asy
 		{ id: 101, categoryId: 7, tag: "y" },
 	];
 
-	const hydrator = createHydrator<(typeof posts)[number]>("id")
+	const hydrator = createHydrator<CategorizedPost>("id")
 		.fields({ id: true, title: true })
 		.attachMany("tags", fetchTags, { matchChild: "categoryId", toParent: "categoryId" });
 
@@ -872,14 +929,19 @@ test("hasMany: parents with identical child content receive independent arrays",
 	// content, each parent must get its own array, so mutation cannot leak
 	// between siblings (pins the contract against future implementation changes
 	// such as caching identical child groups).
-	const rows = [
+	interface UserWithPosts extends User {
+		posts$$id: number;
+		posts$$title: string;
+	}
+
+	const rows: UserWithPosts[] = [
 		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "shared" },
 		{ id: 1, name: "Alice", posts$$id: 11, posts$$title: "shared too" },
 		{ id: 2, name: "Bob", posts$$id: 10, posts$$title: "shared" },
 		{ id: 2, name: "Bob", posts$$id: 11, posts$$title: "shared too" },
 	];
 
-	const hydrator = createHydrator<(typeof rows)[number]>("id")
+	const hydrator = createHydrator<UserWithPosts>("id")
 		.fields({ id: true, name: true })
 		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
 
@@ -910,25 +972,26 @@ test("attachMany: returns empty array when no matches", async () => {
 	assert.strictEqual(result[0]?.posts.length, 0);
 });
 
-test("attachMany: uses compareTo for custom matching keys", async () => {
-	const users: User[] = [{ id: 100, name: "Alice" }];
+test("attachMany: uses toParent for custom matching keys", async () => {
+	// toParent names a NON-key parent column: if toParent were ignored, the
+	// default (the keyBy, id = 100) would match nothing and posts would be []
+	interface UserWithSlug extends User {
+		slug: string;
+	}
+
+	const users: UserWithSlug[] = [{ id: 100, slug: "alice", name: "Alice" }];
 
 	const fetchPosts = async () => {
-		return [{ id: 10, authorId: 100, title: "Post" }];
+		return [{ id: 10, authorSlug: "alice", title: "Post" }];
 	};
 
-	const hydrator = createHydrator<User>("id")
-		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { matchChild: "authorId", toParent: "id" });
+	const hydrator = createHydrator<UserWithSlug>("id")
+		.fields({ id: true, slug: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "authorSlug", toParent: "slug" });
 
 	const result = await hydrate(users, hydrator);
 
-	assert.strictEqual(result[0]?.posts.length, 1);
-	assert.deepStrictEqual(result[0]?.posts[0], {
-		id: 10,
-		authorId: 100,
-		title: "Post",
-	});
+	assert.deepStrictEqual(result[0]?.posts, [{ id: 10, authorSlug: "alice", title: "Post" }]);
 });
 
 test("attachMany: works with composite keys", async () => {
@@ -1016,54 +1079,60 @@ test("attachOne: throws on cardinality violation", async () => {
 });
 
 test("attachOne: works at nested level", async () => {
-	const users: User[] = [
-		{ id: 1, name: "Alice" },
-		{ id: 2, name: "Bob" },
-	];
-
-	interface PostOutput {
-		id: number;
-		userId: number;
-		title: string;
-		latestComment: { id: number; content: string } | null;
+	// The attach is embedded in a hasMany sub-hydrator built from prefixed
+	// rows — the library's real nested-attach machinery — rather than a
+	// manual hydrate() call inside a parent fetchFn
+	interface UserWithPosts extends User {
+		posts$$id: number;
+		posts$$title: string;
 	}
 
-	const fetchPosts = async (inputs: User[]): Promise<PostOutput[]> => {
-		const userIds = inputs.map((u) => u.id);
-		const posts = [
-			{ id: 10, userId: 1, title: "Post 1" },
-			{ id: 11, userId: 2, title: "Post 2" },
-		].filter((p) => userIds.includes(p.userId));
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Post 1" },
+		{ id: 1, name: "Alice", posts$$id: 11, posts$$title: "Post 2" },
+		{ id: 2, name: "Bob", posts$$id: 12, posts$$title: "Post 3" },
+	];
 
-		const fetchComments = async () => {
-			return [
-				{ id: 100, postId: 10, content: "Comment 1" },
-				{ id: 101, postId: 11, content: "Comment 2" }, // Changed to postId: 11
-			];
-		};
+	const fetchComments = async () => [
+		{ id: 100, postId: 10, content: "Comment 1" },
+		{ id: 102, postId: 12, content: "Comment 2" },
+	];
 
-		const postHydrator = createHydrator<{
-			id: number;
-			userId: number;
-			title: string;
-		}>("id")
-			.fields({ id: true, userId: true, title: true })
-			.attachOne("latestComment", fetchComments, {
-				matchChild: "postId",
-				toParent: "id",
-			});
-
-		return await hydrate(posts, postHydrator);
-	};
-
-	const hydrator = createHydrator<User>("id")
+	const hydrator = createHydrator<UserWithPosts>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+		.hasMany("posts", "posts$$", (h) =>
+			h("id")
+				.fields({ id: true, title: true })
+				.attachOne("latestComment", fetchComments, { matchChild: "postId", toParent: "id" }),
+		);
 
-	const result = await hydrate(users, hydrator);
+	const result = await hydrator.hydrate(rows);
 
-	assert.strictEqual(result[0]?.posts[0]?.latestComment?.content, "Comment 1");
-	assert.strictEqual(result[1]?.posts[0]?.latestComment?.content, "Comment 2");
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			name: "Alice",
+			posts: [
+				{
+					id: 10,
+					title: "Post 1",
+					latestComment: { id: 100, postId: 10, content: "Comment 1" },
+				},
+				{ id: 11, title: "Post 2", latestComment: null },
+			],
+		},
+		{
+			id: 2,
+			name: "Bob",
+			posts: [
+				{
+					id: 12,
+					title: "Post 3",
+					latestComment: { id: 102, postId: 12, content: "Comment 2" },
+				},
+			],
+		},
+	]);
 });
 
 test("attachOneOrThrow: returns entity when exists", async () => {
@@ -1103,72 +1172,56 @@ test("attachOneOrThrow: throws when no match exists", async () => {
 });
 
 test("attachOneOrThrow: works at nested level", async () => {
-	const users: User[] = [{ id: 1, name: "Alice" }];
+	// Embedded in a hasMany sub-hydrator: exercises the real nested-attach
+	// machinery (see "attachOne: works at nested level")
+	interface UserWithPosts extends User {
+		posts$$id: number;
+		posts$$title: string;
+	}
 
-	const fetchPosts = async () => {
-		const posts = [{ id: 10, userId: 1, title: "Post 1" }];
+	const rows: UserWithPosts[] = [{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Post 1" }];
 
-		const fetchAuthor = async () => {
-			return [{ id: 100, postId: 10, name: "Author" }];
-		};
+	const fetchAuthor = async () => [{ id: 100, postId: 10, name: "Author" }];
 
-		const postHydrator = createHydrator<{
-			id: number;
-			userId: number;
-			title: string;
-		}>("id")
-			.fields({ id: true, userId: true, title: true })
-			.attachOneOrThrow("author", fetchAuthor, {
-				matchChild: "postId",
-				toParent: "id",
-			});
-
-		return await hydrate(posts, postHydrator);
-	};
-
-	const hydrator = createHydrator<User>("id")
+	const hydrator = createHydrator<UserWithPosts>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+		.hasMany("posts", "posts$$", (h) =>
+			h("id")
+				.fields({ id: true, title: true })
+				.attachOneOrThrow("author", fetchAuthor, { matchChild: "postId", toParent: "id" }),
+		);
 
-	const result = await hydrate(users, hydrator);
+	const result = await hydrator.hydrate(rows);
 
-	assert.deepStrictEqual(result[0]?.posts[0]?.author, {
-		id: 100,
-		postId: 10,
-		name: "Author",
-	});
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			name: "Alice",
+			posts: [{ id: 10, title: "Post 1", author: { id: 100, postId: 10, name: "Author" } }],
+		},
+	]);
 });
 
 test("attachOneOrThrow: throws at nested level when missing", async () => {
-	const users: User[] = [{ id: 1, name: "Alice" }];
+	interface UserWithPosts extends User {
+		posts$$id: number;
+		posts$$title: string;
+	}
 
-	const fetchPosts = async () => {
-		const posts = [{ id: 10, userId: 1, title: "Post 1" }];
+	const rows: UserWithPosts[] = [{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Post 1" }];
 
-		const fetchAuthor = async () => {
-			return [];
-		};
+	const fetchAuthor = async (): Promise<{ id: number; postId: number }[]> => [];
 
-		const postHydrator = createHydrator<{
-			id: number;
-			userId: number;
-			title: string;
-		}>("id")
-			.fields({ id: true, userId: true, title: true })
-			.attachOneOrThrow("requiredAuthor", fetchAuthor, {
-				matchChild: "postId",
-				toParent: "id",
-			});
-
-		return await hydrate(posts, postHydrator);
-	};
-
-	const hydrator = createHydrator<User>("id")
+	const hydrator = createHydrator<UserWithPosts>("id")
 		.fields({ id: true, name: true })
-		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+		.hasMany("posts", "posts$$", (h) =>
+			h("id")
+				.fields({ id: true, title: true })
+				.attachOneOrThrow("requiredAuthor", fetchAuthor, { matchChild: "postId", toParent: "id" }),
+		);
 
 	await assert.rejects(async () => {
-		await hydrate(users, hydrator);
+		await hydrator.hydrate(rows);
 	}, ExpectedOneItemError);
 });
 
@@ -1858,9 +1911,11 @@ test("with: merges attachOneOrThrow collections", async () => {
 //
 
 test("createHydrator: keyBy defaults to 'id' when input has id", async () => {
-	// keyBy omitted - should default to "id"
+	// keyBy omitted - should default to "id". The repeated id with a differing
+	// name proves the key is id: keying by name would yield 3 entities.
 	const users: User[] = [
 		{ id: 1, name: "Alice" },
+		{ id: 1, name: "Alice (duplicate row)" },
 		{ id: 2, name: "Bob" },
 	];
 
@@ -1880,8 +1935,11 @@ test("hasMany: keyBy defaults to 'id' when nested input has id", async () => {
 		posts$$title: string;
 	};
 
+	// The repeated posts$$id 1 with a differing title proves the nested
+	// default key is id: keying posts by title would yield 3 posts for Alice
 	const data: UserWithPosts[] = [
 		{ id: 1, name: "Alice", posts$$id: 1, posts$$title: "Post 1" },
+		{ id: 1, name: "Alice", posts$$id: 1, posts$$title: "Post 1 (duplicate row)" },
 		{ id: 1, name: "Alice", posts$$id: 2, posts$$title: "Post 2" },
 		{ id: 2, name: "Bob", posts$$id: 3, posts$$title: "Post 3" },
 	];
@@ -1894,10 +1952,11 @@ test("hasMany: keyBy defaults to 'id' when nested input has id", async () => {
 	const result = await hydrate(data, hydrator);
 
 	assert.strictEqual(result.length, 2);
-	assert.strictEqual(result[0]?.posts.length, 2);
-	assert.deepStrictEqual(result[0]?.posts[0], { id: 1, title: "Post 1" });
-	assert.strictEqual(result[1]?.posts.length, 1);
-	assert.deepStrictEqual(result[1]?.posts[0], { id: 3, title: "Post 3" });
+	assert.deepStrictEqual(result[0]?.posts, [
+		{ id: 1, title: "Post 1" },
+		{ id: 2, title: "Post 2" },
+	]);
+	assert.deepStrictEqual(result[1]?.posts, [{ id: 3, title: "Post 3" }]);
 });
 
 test("hasOne: keyBy defaults to 'id' when nested input has id", async () => {
@@ -1911,7 +1970,13 @@ test("hasOne: keyBy defaults to 'id' when nested input has id", async () => {
 		author$$name: string;
 	};
 
-	const data: PostWithAuthor[] = [{ id: 1, title: "Post 1", author$$id: 1, author$$name: "Alice" }];
+	// The repeated author$$id with a differing name proves the nested default
+	// key is id: keying the author by name would yield two distinct authors
+	// (a cardinality violation for hasOne)
+	const data: PostWithAuthor[] = [
+		{ id: 1, title: "Post 1", author$$id: 1, author$$name: "Alice" },
+		{ id: 1, title: "Post 1", author$$id: 1, author$$name: "Alice (duplicate row)" },
+	];
 
 	// Both createHydrator and hasOne keyBy omitted
 	const hydrator = createHydrator<PostWithAuthor>()
@@ -1930,8 +1995,12 @@ test("hasOneOrThrow: keyBy defaults to 'id' when nested input has id", async () 
 		profile$$bio: string;
 	};
 
+	// The repeated profile$$id with a differing bio proves the nested default
+	// key is id: keying the profile by bio would yield two distinct profiles
+	// (a cardinality violation for hasOneOrThrow)
 	const data: UserWithProfile[] = [
 		{ id: 1, name: "Alice", profile$$id: 1, profile$$bio: "Bio for Alice" },
+		{ id: 1, name: "Alice", profile$$id: 1, profile$$bio: "Bio for Alice (duplicate row)" },
 	];
 
 	// Both createHydrator and hasOneOrThrow keyBy omitted
@@ -1977,6 +2046,16 @@ test("multiple nested levels: keyBy defaults to 'id' at all levels", async () =>
 			posts$$title: "Post 2",
 			posts$$comments$$id: 3,
 			posts$$comments$$content: "Comment 3",
+		},
+		{
+			// Duplicate ids at EVERY level with differing non-key fields: if any
+			// level defaulted to a non-id key, the entity counts below would grow
+			id: 1,
+			name: "Alice (duplicate row)",
+			posts$$id: 1,
+			posts$$title: "Post 1 (duplicate row)",
+			posts$$comments$$id: 1,
+			posts$$comments$$content: "Comment 1 (duplicate row)",
 		},
 	];
 

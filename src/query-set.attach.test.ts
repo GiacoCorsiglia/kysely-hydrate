@@ -4,20 +4,23 @@ import { describe, test } from "node:test";
 import { getDbForTest } from "./__tests__/db.ts";
 
 const db = getDbForTest();
-import { ExpectedOneItemError } from "./helpers/errors.ts";
+import { CardinalityViolationError, ExpectedOneItemError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
 describe("query-set: attach", () => {
 	//
-	// Phase 6: Attach Methods - attachMany, attachOne, attachOneOrThrow
+	// Attach Methods - attachMany, attachOne, attachOneOrThrow
 	//
 
 	test("attachMany: fetches and matches related entities", async () => {
 		const fetchPosts = async () => {
+			// Attached arrays preserve fetch order, so the fetch needs an ORDER BY
+			// for the deterministic comparison below
 			return await db
 				.selectFrom("posts")
 				.select(["id", "title", "user_id"])
 				.where("user_id", "in", [2, 3])
+				.orderBy("id")
 				.execute();
 		};
 
@@ -76,30 +79,28 @@ describe("query-set: attach", () => {
 	});
 
 	test("attachMany: uses toParent for custom matching keys", async () => {
-		const fetchPosts = async () => {
-			return await db
-				.selectFrom("posts")
-				.select(["id", "title", "user_id"])
-				.where("user_id", "=", 2)
-				.execute();
+		// toParent names a NON-key parent column: if toParent were ignored, the
+		// default (the keyBy, id = 2) would match nothing and badges would be []
+		const fetchBadges = async () => {
+			return [
+				{ awardedTo: "bob", badge: "early-adopter" },
+				{ awardedTo: "bob", badge: "contributor" },
+			];
 		};
 
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
-			.attachMany("posts", fetchPosts, { matchChild: "user_id", toParent: "id" })
+			.attachMany("badges", fetchBadges, { matchChild: "awardedTo", toParent: "username" })
 			.execute();
 
-		assert.strictEqual(users.length, 1);
 		assert.deepStrictEqual(users, [
 			{
 				id: 2,
 				username: "bob",
-				posts: [
-					{ id: 1, title: "Post 1", user_id: 2 },
-					{ id: 2, title: "Post 2", user_id: 2 },
-					{ id: 5, title: "Post 5", user_id: 2 },
-					{ id: 12, title: "Post 12", user_id: 2 },
+				badges: [
+					{ awardedTo: "bob", badge: "early-adopter" },
+					{ awardedTo: "bob", badge: "contributor" },
 				],
 			},
 		]);
@@ -136,7 +137,11 @@ describe("query-set: attach", () => {
 
 	test("attachMany: accepts SelectQueryBuilder return from fetchFn", async () => {
 		const fetchPosts = () => {
-			return db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2);
+			return db
+				.selectFrom("posts")
+				.select(["id", "title", "user_id"])
+				.where("user_id", "=", 2)
+				.orderBy("id"); // Attached arrays preserve fetch order
 		};
 
 		const users = await querySet(db)
@@ -166,6 +171,7 @@ describe("query-set: attach", () => {
 				.selectFrom("comments")
 				.select(["id", "content", "post_id"])
 				.where("post_id", "in", [1, 2])
+				.orderBy("id") // Attached arrays preserve fetch order
 				.execute();
 		};
 
@@ -210,32 +216,34 @@ describe("query-set: attach", () => {
 	});
 
 	test("attachOne: returns single match or null", async () => {
+		// Only alice's profile is fetched, so bob — a parent that exists but has
+		// no matching child — gets null
 		const fetchProfile = async () => {
-			return await db.selectFrom("profiles").select(["id", "bio", "user_id"]).execute();
+			return await db
+				.selectFrom("profiles")
+				.select(["id", "bio", "user_id"])
+				.where("user_id", "=", 1)
+				.execute();
 		};
 
-		const usersWithProfile = await querySet(db)
+		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 1)
+			.where("users.id", "in", [1, 2])
 			.attachOne("profile", fetchProfile, { matchChild: "user_id" })
 			.execute();
 
-		const usersWithoutProfile = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 999)
-			.attachOne("profile", fetchProfile, { matchChild: "user_id" })
-			.execute();
-
-		assert.strictEqual(usersWithProfile.length, 1);
-		assert.deepStrictEqual(usersWithProfile, [
+		assert.deepStrictEqual(users, [
 			{
 				id: 1,
 				username: "alice",
 				profile: { id: 1, bio: "Bio for user 1", user_id: 1 },
 			},
+			{
+				id: 2,
+				username: "bob",
+				profile: null,
+			},
 		]);
-
-		assert.strictEqual(usersWithoutProfile.length, 0);
 	});
 
 	test("attachOne: throws on cardinality violation", async () => {
@@ -250,7 +258,7 @@ describe("query-set: attach", () => {
 
 		await assert.rejects(async () => {
 			await qs.execute();
-		});
+		}, CardinalityViolationError);
 	});
 
 	test("attachOne: works at nested level", async () => {
@@ -421,9 +429,9 @@ describe("query-set: attach", () => {
 		}, ExpectedOneItemError);
 	});
 
-	test("attachMany: modify attached QuerySet via init callback", async () => {
+	test("attachMany: configures the attached QuerySet inside the fetchFn", async () => {
 		const fetchPosts = () => {
-			// Modify the QuerySet before returning it
+			// Configure the QuerySet before returning it
 			return querySet(db)
 				.selectAs(
 					"post",
@@ -454,9 +462,121 @@ describe("query-set: attach", () => {
 		]);
 	});
 
+	//
+	// .modify("<attachKey>", …) — the three documented forms: the modifier
+	// receives whatever the fetchFn returned (QuerySet, query builder, or the
+	// value/promise itself).
+	//
+
+	test("attachMany: modify attached QuerySet via .modify(key, fn)", async () => {
+		const fetchPosts = () =>
+			querySet(db).selectAs(
+				"post",
+				db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2),
+			);
+
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.attachMany("posts", fetchPosts, { matchChild: "user_id" })
+			.modify("posts", (posts) =>
+				posts.where("posts.id", "<=", 2).extras({ titleLength: (row) => row.title.length }),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2, titleLength: 6 },
+					{ id: 2, title: "Post 2", user_id: 2, titleLength: 6 },
+				],
+			},
+		]);
+	});
+
+	test("attachMany: modify attached query builder via .modify(key, fn)", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.attachMany(
+				"posts",
+				() => db.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 2),
+				{ matchChild: "user_id" },
+			)
+			.modify("posts", (qb) => qb.where("posts.id", "<=", 2))
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2 },
+					{ id: 2, title: "Post 2", user_id: 2 },
+				],
+			},
+		]);
+	});
+
+	test("attachMany: replaces a join collection previously defined under the same key", async () => {
+		// Regression test: attach* used to register only on the hydrator,
+		// leaving the same-key join in the compiled SQL (row explosion would
+		// inflate executeCount; the join's prefixed columns went unconsumed)
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2) // bob has 4 posts via the join
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.attachMany("posts", () => [{ ownerId: 2, title: "attached" }], { matchChild: "ownerId" });
+
+		assert.ok(!qs.toQuery().compile().sql.includes("posts$$"));
+		assert.strictEqual(await qs.executeCount(Number), 1);
+		assert.deepStrictEqual(await qs.execute(), [
+			{ id: 2, username: "bob", posts: [{ ownerId: 2, title: "attached" }] },
+		]);
+	});
+
+	test("attachMany: modify attached external values via .modify(key, fn)", async () => {
+		const fetchBadges = async () => [
+			{ ownerId: 2, badge: "founder" },
+			{ ownerId: 2, badge: "contributor" },
+		];
+
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.attachMany("badges", fetchBadges, { matchChild: "ownerId" })
+			.modify("badges", async (badgesPromise) =>
+				(await badgesPromise).map((b) => ({ ...b, badgeUpper: b.badge.toUpperCase() })),
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				badges: [
+					{ ownerId: 2, badge: "founder", badgeUpper: "FOUNDER" },
+					{ ownerId: 2, badge: "contributor", badgeUpper: "CONTRIBUTOR" },
+				],
+			},
+		]);
+	});
+
 	test("attachMany: with nested join and attach combination", async () => {
 		const fetchComments = async () => {
-			return await db.selectFrom("comments").select(["id", "content", "post_id"]).execute();
+			// Attached arrays preserve fetch order
+			return await db
+				.selectFrom("comments")
+				.select(["id", "content", "post_id"])
+				.orderBy("id")
+				.execute();
 		};
 
 		const fetchTags = async () => {

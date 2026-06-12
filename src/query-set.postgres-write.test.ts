@@ -138,11 +138,17 @@ describePg("query-set: postgres-write", () => {
 				.executeTakeFirst();
 
 			assert.ok(result);
-			assert.strictEqual(result.id, 2);
-			assert.strictEqual(result.email, "joined@example.com");
-			assert.ok(Array.isArray(result.posts));
-			assert.ok(result.posts.length > 0);
-			assert.ok(result.posts.every((p: any) => p.user_id === 2));
+			assert.deepStrictEqual(result, {
+				id: 2,
+				username: "bob",
+				email: "joined@example.com",
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2 },
+					{ id: 2, title: "Post 2", user_id: 2 },
+					{ id: 5, title: "Post 5", user_id: 2 },
+					{ id: 12, title: "Post 12", user_id: 2 },
+				],
+			});
 		});
 	});
 
@@ -176,9 +182,17 @@ describePg("query-set: postgres-write", () => {
 				.executeTakeFirst();
 
 			assert.ok(result);
-			assert.strictEqual(result.id, 2);
-			assert.strictEqual(result.email, "write-method@example.com");
-			assert.ok(Array.isArray(result.posts));
+			assert.deepStrictEqual(result, {
+				id: 2,
+				username: "bob",
+				email: "write-method@example.com",
+				posts: [
+					{ id: 1, title: "Post 1", user_id: 2 },
+					{ id: 2, title: "Post 2", user_id: 2 },
+					{ id: 5, title: "Post 5", user_id: 2 },
+					{ id: 12, title: "Post 12", user_id: 2 },
+				],
+			});
 		});
 	});
 

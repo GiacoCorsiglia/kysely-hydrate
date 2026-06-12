@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 6: Mixed Joins Tests
+// Mixed Joins Tests
 //
 
 // Multiple cardinality-one joins
@@ -240,6 +240,9 @@ describe("query-set: mixed-joins", () => {
 			)
 			.where("users.id", "<=", 3)
 			.toJoinedQuery()
+			// The compiled SQL orders only by the base key; child-row order is
+			// engine-dependent, so pin it for the comparison below
+			.orderBy("posts$$id")
 			.execute();
 
 		// Row explosion: bob (2 posts × 1 profile = 2 rows) + carol (1 post × 1 profile = 1 row) = 3 rows
@@ -429,61 +432,12 @@ describe("query-set: mixed-joins", () => {
 		assert.deepStrictEqual(users, allUsers.slice(0, 2));
 	});
 
-	// toQuery() vs toJoinedQuery() - should be same without pagination
-
-	test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-one", async () => {
-		const base = querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.innerJoinOne(
-				"profile",
-				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-				"profile.user_id",
-				"user.id",
-			)
-			.innerJoinOne(
-				"primaryPost",
-				({ eb, qs }) =>
-					qs(
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 3, 4]), // Exactly one post per user
-					),
-				"primaryPost.user_id",
-				"user.id",
-			)
-			.where("users.id", "<=", 4);
-
-		const queryRows = await base.toQuery().execute();
-		const joinedRows = await base.toJoinedQuery().execute();
-
-		// Without pagination, toQuery() should equal toJoinedQuery()
-		assert.deepStrictEqual(queryRows, joinedRows);
-	});
-
-	test("mixed: toQuery without pagination equals toJoinedQuery for cardinality-many", async () => {
-		const base = querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.innerJoinMany(
-				"posts",
-				({ eb, qs }) =>
-					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 3)),
-				"posts.user_id",
-				"user.id",
-			)
-			.innerJoinMany(
-				"profiles",
-				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
-				"profiles.user_id",
-				"user.id",
-			)
-			.where("users.id", "<=", 3);
-
-		const queryRows = await base.toQuery().execute();
-		const joinedRows = await base.toJoinedQuery().execute();
-
-		// Without pagination, toQuery() should equal toJoinedQuery()
-		assert.deepStrictEqual(queryRows, joinedRows);
-	});
-
-	test("mixed: toQuery without pagination equals toJoinedQuery for mixed joins", async () => {
+	test("mixed: toQuery without pagination compiles to the same SQL as toJoinedQuery", async () => {
+		// The contract is that toQuery() adds no wrapping (subquery, limit,
+		// dedup) when there is no pagination — it returns the joined query
+		// unchanged. Compiled-SQL equality pins exactly that; executing both
+		// and comparing rows would pass trivially even if they diverged into
+		// two different-but-equivalent queries.
 		const base = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinOne(
@@ -500,10 +454,10 @@ describe("query-set: mixed-joins", () => {
 			)
 			.where("users.id", "<=", 3);
 
-		const queryRows = await base.toQuery().execute();
-		const joinedRows = await base.toJoinedQuery().execute();
+		const queryCompiled = base.toQuery().compile();
+		const joinedCompiled = base.toJoinedQuery().compile();
 
-		// Without pagination, toQuery() should equal toJoinedQuery()
-		assert.deepStrictEqual(queryRows, joinedRows);
+		assert.strictEqual(queryCompiled.sql, joinedCompiled.sql);
+		assert.deepStrictEqual(queryCompiled.parameters, joinedCompiled.parameters);
 	});
 });

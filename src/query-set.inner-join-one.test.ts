@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 3: innerJoinOne Tests
+// innerJoinOne Tests
 //
 
 describe("query-set: inner-join-one", () => {

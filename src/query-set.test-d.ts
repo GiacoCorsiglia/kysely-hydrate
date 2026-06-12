@@ -2726,7 +2726,7 @@ interface Comment {
 }
 
 ////////////////////////////////////////////////////////////
-// Section 48: Error Cases - invalid join columns
+// Section 48a: Error Cases - invalid join columns
 ////////////////////////////////////////////////////////////
 
 {
@@ -2741,7 +2741,7 @@ interface Comment {
 						// @ts-expect-error - invalid nested selection
 						.select(["nonExistent"]),
 				),
-			"post.id",
+			"posts.id",
 			"user.id",
 		);
 }
@@ -2758,13 +2758,13 @@ interface Comment {
 						// @ts-expect-error - selecting from table not in nested query
 						.select(["comments.content"]),
 				),
-			"post.id",
+			"posts.id",
 			"user.id",
 		);
 }
 
 ////////////////////////////////////////////////////////////
-// Section 48: Error Cases - Cannot nest writes
+// Section 48b: Error Cases - Cannot nest writes
 ////////////////////////////////////////////////////////////
 
 {

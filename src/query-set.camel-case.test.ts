@@ -4,11 +4,9 @@
  * These tests verify that QuerySet works correctly with Kysely's CamelCasePlugin,
  * which transforms snake_case column names to camelCase in the JavaScript layer.
  *
- * These tests require a PostgreSQL database to run since the fixture uses snake_case
- * column names (user_id, post_id, etc.) which the plugin transforms.
- *
- * To run these tests:
- *   HYDRATE_TEST_DB=postgres npm test -- src/query-set.camel-case.test.ts
+ * The fixture uses snake_case column names (user_id, post_id, etc.) which the
+ * plugin transforms. The suite runs against both sqlite and postgres, like the
+ * rest of the shared suite.
  */
 
 import assert from "node:assert";

@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 3: leftJoinOne Tests
+// leftJoinOne Tests
 //
 
 describe("query-set: left-join-one", () => {

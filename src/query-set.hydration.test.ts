@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 6: Hydration Features - extras, mapFields, omit, with, map
+// Hydration Features - extras, mapFields, omit, with, map
 //
 
 // extras: Add computed fields
@@ -356,21 +356,24 @@ describe("query-set: hydration", () => {
 			username: string;
 		}
 
+		// Suffix markers are non-commutative, so this distinguishes replacement
+		// ("alice-B") from composition ("alice-A-B"); an idempotent transform
+		// like upper/lower could not tell the two apart.
 		const override = createHydrator<User>("id").fields({
-			username: (username) => username.toUpperCase(),
+			username: (username) => `${username}-B`,
 		});
 
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 1)
 			.mapFields({
-				username: (username) => username.toLowerCase(),
+				username: (username) => `${username}-A`,
 			})
 			.with(override)
 			.execute();
 
-		// The hydrator passed to with() takes precedence
-		assert.deepStrictEqual(users, [{ id: 1, username: "ALICE" }]);
+		// The hydrator passed to with() REPLACES the existing field transform
+		assert.deepStrictEqual(users, [{ id: 1, username: "alice-B" }]);
 	});
 
 	test("with: merges omit from hydrator", async () => {
@@ -471,18 +474,20 @@ describe("query-set: hydration", () => {
 	});
 
 	test("multiple mapFields calls: later takes precedence for same field", async () => {
+		// Suffix markers are non-commutative: replacement yields "alice-B",
+		// composition would yield "alice-A-B".
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 1)
 			.mapFields({
-				username: (value) => value.toUpperCase(),
+				username: (value) => `${value}-A`,
 			})
 			.mapFields({
-				username: (value) => value.toLowerCase(), // This should win
+				username: (value) => `${value}-B`, // This should win
 			})
 			.execute();
 
-		assert.deepStrictEqual(users, [{ id: 1, username: "alice" }]);
+		assert.deepStrictEqual(users, [{ id: 1, username: "alice-B" }]);
 	});
 
 	// map: Transform entire output
@@ -656,6 +661,10 @@ describe("query-set: hydration", () => {
 	});
 
 	test("hydrate: produces same result as execute", async () => {
+		// Illustrative rather than load-bearing: execute() is implemented as
+		// exactly this toQuery().execute() + hydrate() composition, so this can't
+		// fail independently of the literal-pinning tests above. It documents the
+		// equivalence for readers.
 		const qs = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "<=", 3)

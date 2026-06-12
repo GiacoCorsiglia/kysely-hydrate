@@ -7,7 +7,7 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Phase 7: Complex Scenarios - Multi-level nesting and real-world patterns
+// Complex Scenarios - Multi-level nesting and real-world patterns
 //
 
 describe("query-set: complex", () => {
@@ -57,6 +57,8 @@ describe("query-set: complex", () => {
 	});
 
 	test("complex: 4-level nesting with mixed cardinality", async () => {
+		// user → posts → comments → replies, with a sibling cardinality-one
+		// profile at the second level
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
@@ -73,7 +75,14 @@ describe("query-set: complex", () => {
 						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
 					).innerJoinMany(
 						"comments",
-						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						({ eb, qs }) =>
+							qs(eb.selectFrom("comments").select(["id", "content", "post_id"])).leftJoinMany(
+								"replies",
+								({ eb, qs }) =>
+									qs(eb.selectFrom("replies").select(["id", "content", "comment_id"])),
+								"replies.comment_id",
+								"comments.id",
+							),
 						"comments.post_id",
 						"posts.id",
 					),
@@ -93,15 +102,33 @@ describe("query-set: complex", () => {
 						title: "Post 1",
 						user_id: 2,
 						comments: [
-							{ id: 1, content: "Comment 1 on post 1", post_id: 1 },
-							{ id: 2, content: "Comment 2 on post 1", post_id: 1 },
+							{
+								id: 1,
+								content: "Comment 1 on post 1",
+								post_id: 1,
+								replies: [
+									{ id: 2, content: "Reply 2 to comment 1", comment_id: 1 },
+									{ id: 4, content: "Reply 4 to comment 1", comment_id: 1 },
+								],
+							},
+							{ id: 2, content: "Comment 2 on post 1", post_id: 1, replies: [] },
 						],
 					},
 					{
 						id: 2,
 						title: "Post 2",
 						user_id: 2,
-						comments: [{ id: 3, content: "Comment 3 on post 2", post_id: 2 }],
+						comments: [
+							{
+								id: 3,
+								content: "Comment 3 on post 2",
+								post_id: 2,
+								replies: [
+									{ id: 1, content: "Reply 1 to comment 3", comment_id: 3 },
+									{ id: 5, content: "Reply 5 to comment 3", comment_id: 3 },
+								],
+							},
+						],
 					},
 				],
 			},
@@ -114,6 +141,10 @@ describe("query-set: complex", () => {
 				{ id: 1, name: "typescript", post_id: 1 },
 				{ id: 2, name: "kysely", post_id: 2 },
 			];
+		};
+
+		const fetchBadges = async () => {
+			return [{ owner_id: 2, badge: "author" }];
 		};
 
 		const users = await querySet(db)
@@ -133,12 +164,14 @@ describe("query-set: complex", () => {
 				"posts.user_id",
 				"user.id",
 			)
+			.attachMany("badges", fetchBadges, { matchChild: "owner_id" })
 			.execute();
 
 		assert.deepStrictEqual(users, [
 			{
 				id: 2,
 				username: "bob",
+				badges: [{ owner_id: 2, badge: "author" }],
 				posts: [
 					{
 						id: 1,
@@ -194,12 +227,16 @@ describe("query-set: complex", () => {
 	});
 
 	test("complex: mixed nullability with deep nesting", async () => {
+		// Every null/empty branch is exercised: alice gets a NULL profile (the
+		// subquery excludes her) and an empty posts array; bob's post 12 has an
+		// empty comments array
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "in", [1, 2])
 			.leftJoinOne(
 				"profile",
-				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				({ eb, qs }) =>
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "!=", 1)),
 				"profile.user_id",
 				"user.id",
 			)
@@ -207,7 +244,7 @@ describe("query-set: complex", () => {
 				"posts",
 				({ eb, qs }) =>
 					qs(
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
+						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "in", [1, 12]),
 					).leftJoinMany(
 						"comments",
 						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
@@ -223,7 +260,7 @@ describe("query-set: complex", () => {
 			{
 				id: 1,
 				username: "alice",
-				profile: { id: 1, bio: "Bio for user 1", user_id: 1 },
+				profile: null, // Filtered out of the profile subquery
 				posts: [], // Alice has no posts
 			},
 			{
@@ -241,10 +278,10 @@ describe("query-set: complex", () => {
 						],
 					},
 					{
-						id: 2,
-						title: "Post 2",
+						id: 12,
+						title: "Post 12",
 						user_id: 2,
-						comments: [{ id: 3, content: "Comment 3 on post 2", post_id: 2 }],
+						comments: [], // Post 12 has no comments
 					},
 				],
 			},
@@ -397,6 +434,10 @@ describe("query-set: complex", () => {
 				"user.id",
 			)
 			.toJoinedQuery()
+			// The compiled SQL orders only by the base key; child-row order is
+			// engine-dependent, so pin it for the comparison below
+			.orderBy("posts$$id")
+			.orderBy("posts$$comments$$id")
 			.execute();
 
 		// Flattened rows with prefixes showing cartesian product:

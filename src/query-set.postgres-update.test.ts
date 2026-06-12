@@ -44,21 +44,20 @@ describePg("query-set: postgres-update", () => {
 
 	test("updateAs() - update with partial returning", async () => {
 		await testInTransaction(db, async (trx) => {
-			const query = querySet(trx)
-				.updateAs("updatedUser", (db) =>
-					db
-						.updateTable("users")
-						.set({ username: "partialUpdate" })
-						.where("id", "=", 2)
-						.returningAll(),
-				)
-				.omit(["id"]); // Omit id from the result
+			// A genuine partial RETURNING list (email exists but is not returned)
+			const query = querySet(trx).updateAs("updatedUser", (db) =>
+				db
+					.updateTable("users")
+					.set({ username: "partialUpdate" })
+					.where("id", "=", 2)
+					.returning(["id", "username"]),
+			);
 
 			const result = await query.executeTakeFirst();
 
 			assert.deepStrictEqual(result, {
+				id: 2,
 				username: "partialUpdate",
-				email: "bob@example.com",
 			});
 		});
 	});
@@ -67,28 +66,29 @@ describePg("query-set: postgres-update", () => {
 	// Test 15: Update with custom keyBy
 	//
 
-	test("updateAs() - update with custom keyBy", async () => {
+	test("updateAs() - update with custom keyBy orders results by that key", async () => {
 		await testInTransaction(db, async (trx) => {
+			// Keyed by title; "Post 12" < "Post 2" < "Post 3" alphabetically, so
+			// key-ordering by title is distinguishable from the default id order
+			// ([2, 3, 12]). A no-op keyBy would produce a different order.
 			const query = querySet(trx).updateAs(
-				"updatedUser",
+				"updatedPosts",
 				(db) =>
 					db
-						.updateTable("users")
-						.set({ email: "customkey@example.com" })
-						.where("id", "=", 3)
+						.updateTable("posts")
+						.set({ content: "Updated content" })
+						.where("id", "in", [2, 3, 12])
 						.returningAll(),
-				"username",
+				"title",
 			);
 
-			const result = await query.executeTakeFirst();
+			const results = await query.execute();
 
-			assert.ok(result);
-			assert.strictEqual(result.username, "carol");
-			assert.deepStrictEqual(result, {
-				id: 3,
-				username: "carol",
-				email: "customkey@example.com",
-			});
+			assert.deepStrictEqual(results, [
+				{ id: 12, user_id: 2, title: "Post 12", content: "Updated content" },
+				{ id: 2, user_id: 2, title: "Post 2", content: "Updated content" },
+				{ id: 3, user_id: 3, title: "Post 3", content: "Updated content" },
+			]);
 		});
 	});
 
@@ -98,23 +98,24 @@ describePg("query-set: postgres-update", () => {
 
 	test("updateAs() - update multiple rows with ordering", async () => {
 		await testInTransaction(db, async (trx) => {
+			// "Post 1" < "Post 10" < "Post 2" alphabetically, so ordering by title
+			// is distinguishable from id order ([1, 2, 10])
 			const query = querySet(trx)
-				.updateAs("updatedUsers", (db) =>
+				.updateAs("updatedPosts", (db) =>
 					db
-						.updateTable("users")
-						.set({ email: "bulk@example.com" })
-						.where("id", "in", [4, 5, 6])
+						.updateTable("posts")
+						.set({ content: "Bulk updated" })
+						.where("id", "in", [1, 2, 10])
 						.returningAll(),
 				)
-				.orderBy("username");
+				.orderBy("title");
 
 			const results = await query.execute();
 
-			assert.strictEqual(results.length, 3);
 			assert.deepStrictEqual(results, [
-				{ id: 4, username: "dave", email: "bulk@example.com" },
-				{ id: 5, username: "eve", email: "bulk@example.com" },
-				{ id: 6, username: "frank", email: "bulk@example.com" },
+				{ id: 1, user_id: 2, title: "Post 1", content: "Bulk updated" },
+				{ id: 10, user_id: 9, title: "Post 10", content: "Bulk updated" },
+				{ id: 2, user_id: 2, title: "Post 2", content: "Bulk updated" },
 			]);
 		});
 	});

@@ -48,7 +48,8 @@ INSERT INTO profiles (user_id, bio, avatar_url) VALUES
   (5, 'Bio for carol', 'https://example.com/avatars/5.png'),
   (8, 'Bio for frank', 'https://example.com/avatars/8.png');
 
--- Insert replies in RANDOMIZED order (not by id, comment_id, or user_id)
+-- Insert replies with comment_id and user_id values deliberately NOT in
+-- sorted order (insertion order necessarily matches the autoincrement ids)
 INSERT INTO replies (comment_id, user_id, content) VALUES
   (3, 6, 'Reply to zeta comment by bob'),      -- id 1
   (1, 9, 'Reply to gamma comment by dave'),    -- id 2

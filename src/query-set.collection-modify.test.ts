@@ -8,7 +8,7 @@ const db = getDbForTest();
 
 describe("query-set: collection-modify", () => {
 	//
-	// Phase 6: Collection Modification - Modifying nested collections via .modify()
+	// Collection Modification - Modifying nested collections via .modify()
 	//
 
 	test("modify collection: add WHERE clause to joined collection", async () => {

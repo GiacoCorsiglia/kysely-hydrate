@@ -48,44 +48,15 @@ describePg("query-set: postgres-insert", () => {
 
 	test("insertAs() - insert with partial returning", async () => {
 		await testInTransaction(db, async (trx) => {
-			const query = querySet(trx)
-				.insertAs("newUser", (db) =>
-					db
-						.insertInto("users")
-						.values({
-							username: "partialUser",
-							email: "partial@example.com",
-						})
-						.returningAll(),
-				)
-				.omit(["id"]); // Omit id from the result
-
-			const result = await query.executeTakeFirst();
-
-			assert.deepStrictEqual(result, {
-				username: "partialUser",
-				email: "partial@example.com",
-			});
-		});
-	});
-
-	//
-	// Test 3: Insert with custom keyBy
-	//
-
-	test("insertAs() - insert with custom keyBy", async () => {
-		await testInTransaction(db, async (trx) => {
-			const query = querySet(trx).insertAs(
-				"newUser",
-				(db) =>
-					db
-						.insertInto("users")
-						.values({
-							username: "customKeyUser",
-							email: "customkey@example.com",
-						})
-						.returningAll(),
-				"username",
+			// A genuine partial RETURNING list (email is inserted but not returned)
+			const query = querySet(trx).insertAs("newUser", (db) =>
+				db
+					.insertInto("users")
+					.values({
+						username: "partialUser",
+						email: "partial@example.com",
+					})
+					.returning(["id", "username"]),
 			);
 
 			const result = await query.executeTakeFirst();
@@ -94,9 +65,45 @@ describePg("query-set: postgres-insert", () => {
 			assert.ok(typeof result.id === "number");
 			delete (result as any).id;
 			assert.deepStrictEqual(result, {
-				username: "customKeyUser",
-				email: "customkey@example.com",
+				username: "partialUser",
 			});
+		});
+	});
+
+	//
+	// Test 3: Insert with custom keyBy
+	//
+
+	test("insertAs() - insert with custom keyBy orders results by that key", async () => {
+		await testInTransaction(db, async (trx) => {
+			// Inserted in non-alphabetical order: key-ordering by username is
+			// distinguishable from the default id (= insertion) order
+			const query = querySet(trx).insertAs(
+				"newUsers",
+				(db) =>
+					db
+						.insertInto("users")
+						.values([
+							{ username: "zeta", email: "zeta@example.com" },
+							{ username: "alpha", email: "alpha@example.com" },
+							{ username: "mike", email: "mike@example.com" },
+						])
+						.returningAll(),
+				"username",
+			);
+
+			const results = await query.execute();
+
+			for (const result of results) {
+				assert.ok(typeof result.id === "number");
+				delete (result as any).id;
+			}
+
+			assert.deepStrictEqual(results, [
+				{ username: "alpha", email: "alpha@example.com" },
+				{ username: "mike", email: "mike@example.com" },
+				{ username: "zeta", email: "zeta@example.com" },
+			]);
 		});
 	});
 
@@ -106,14 +113,16 @@ describePg("query-set: postgres-insert", () => {
 
 	test("insertAs() - insert multiple rows with ordering", async () => {
 		await testInTransaction(db, async (trx) => {
+			// Inserted in non-alphabetical order: orderBy("username") is
+			// distinguishable from the default id (= insertion) order
 			const query = querySet(trx)
 				.insertAs("newUsers", (db) =>
 					db
 						.insertInto("users")
 						.values([
-							{ username: "user1", email: "user1@example.com" },
-							{ username: "user2", email: "user2@example.com" },
-							{ username: "user3", email: "user3@example.com" },
+							{ username: "userB", email: "userB@example.com" },
+							{ username: "userA", email: "userA@example.com" },
+							{ username: "userC", email: "userC@example.com" },
 						])
 						.returningAll(),
 				)
@@ -129,9 +138,9 @@ describePg("query-set: postgres-insert", () => {
 			}
 
 			assert.deepStrictEqual(results, [
-				{ username: "user1", email: "user1@example.com" },
-				{ username: "user2", email: "user2@example.com" },
-				{ username: "user3", email: "user3@example.com" },
+				{ username: "userA", email: "userA@example.com" },
+				{ username: "userB", email: "userB@example.com" },
+				{ username: "userC", email: "userC@example.com" },
 			]);
 		});
 	});

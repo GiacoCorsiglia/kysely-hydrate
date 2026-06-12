@@ -9,8 +9,8 @@ const db = getDbForTest();
 //
 // SQL Generation Verification Tests
 //
-// These tests verify the SQL generation strategies described in example.ts.
-// They ensure that the implementation correctly handles:
+// These tests verify the QuerySet SQL generation strategies. They ensure
+// that the implementation correctly handles:
 // 1. WHERE EXISTS conversion for innerJoinMany in count queries
 // 2. leftJoin omission from count queries
 // 3. Nested subquery wrapping for pagination with many-joins
@@ -238,7 +238,7 @@ describe("query-set: sql-generation", () => {
 		);
 	});
 
-	test("SQL: executeCount with all 4 join types - example.ts lines 52-58 pattern", async () => {
+	test("SQL: executeCount with all 4 join types", async () => {
 		const qs = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinOne(
@@ -721,8 +721,10 @@ describe("query-set: sql-generation", () => {
 		// Should not have WHERE EXISTS (not needed for cardinality-one)
 		assert.ok(!toQuerySql.includes("where exists"), "Should not use EXISTS for cardinality-one");
 
-		// Should not use nested subquery (not needed for cardinality-one)
-		assert.ok(!toQuerySql.includes("where exists"), "Should not use nested subquery");
+		// Should not use a nested pagination subquery (not needed for
+		// cardinality-one): the LIMIT sits at the end of the top-level
+		// statement rather than inside a wrapping subquery
+		assert.match(toQuerySql, /limit (\?|\$\d+)$/, "Should not use nested subquery");
 	});
 
 	//

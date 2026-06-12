@@ -224,7 +224,7 @@ describe("Hydrator ordering", () => {
 		assert.equal(result[0]!.posts[2]!.title, "C");
 	});
 
-	it("orderByKeys should work after extend", async () => {
+	it("orderByKeys should work after combining hydrators with .with()", async () => {
 		const rows: User[] = [
 			{ id: 1, username: "alice", posts$$id: 3, posts$$title: "Same", posts$$user_id: 1 },
 			{ id: 1, username: "alice", posts$$id: 1, posts$$title: "Same", posts$$user_id: 1 },

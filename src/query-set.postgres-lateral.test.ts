@@ -12,6 +12,7 @@ import { test } from "node:test";
 
 import { getDbForTest } from "./__tests__/db.ts";
 import { describePg } from "./__tests__/helpers.ts";
+import { ExpectedOneItemError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
 describePg("query-set: postgres-lateral", () => {
@@ -88,7 +89,9 @@ describePg("query-set: postgres-lateral", () => {
 		]);
 	});
 
-	test("crossJoinLateralMany: creates cartesian product with limit", async () => {
+	test("crossJoinLateralMany: correlated subquery with limit", async () => {
+		// (Not a cartesian product: the lateral subquery is correlated via
+		// whereRef, so this is behaviorally an inner lateral join)
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)
@@ -228,7 +231,7 @@ describePg("query-set: postgres-lateral", () => {
 					(join) => join.onTrue(),
 				)
 				.execute();
-		});
+		}, ExpectedOneItemError);
 	});
 
 	//
@@ -703,6 +706,9 @@ describePg("query-set: postgres-lateral", () => {
 				(join) => join.onTrue(),
 			)
 			.toJoinedQuery()
+			// The compiled SQL orders only by the base key; child-row order is
+			// engine-dependent, so pin it for the comparison below
+			.orderBy("posts$$id")
 			.execute();
 
 		// Should have 2 flattened rows (one per post)

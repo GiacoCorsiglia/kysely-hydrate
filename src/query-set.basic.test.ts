@@ -1,6 +1,8 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
+import { NoResultError } from "kysely";
+
 import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
 
@@ -8,7 +10,7 @@ const db = getDbForTest();
 
 describe("query-set: basic", () => {
 	//
-	// Phase 1: Basic Query Execution
+	// Basic Query Execution
 	//
 
 	test("execute: returns array of hydrated rows", async () => {
@@ -61,7 +63,7 @@ describe("query-set: basic", () => {
 			await querySet(db)
 				.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
 				.executeTakeFirstOrThrow();
-		});
+		}, NoResultError);
 	});
 
 	test("init: defaults keyBy to 'id'", async () => {
@@ -286,7 +288,8 @@ describe("query-set: basic", () => {
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.toBaseQuery();
 
-		const rows = await baseQuery.execute();
+		// toBaseQuery() has no ORDER BY at all, so pin one for the comparison
+		const rows = await baseQuery.orderBy("id").execute();
 		assert.strictEqual(rows.length, 10);
 		assert.deepStrictEqual(rows, [
 			{ id: 1, username: "alice" },
