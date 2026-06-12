@@ -17,6 +17,8 @@ After making changes, always run
 - `npm run lint`
 - `npm run format`
 
-Ignore the `src/experimental` directory.
+At the end of each task, launch a subagent to review touched files holistically, refactor, and reduce complexity and duplication. Do so even if it exceeds the mandate of the user's original request.
 
 Do not commit code. Always ask the user to review and allow them to commit manually.
+
+Ignore the `src/experimental` directory.
