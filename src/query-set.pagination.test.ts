@@ -247,47 +247,8 @@ describe("query-set: pagination", () => {
 		assert.deepStrictEqual(users, allUsers.slice(1, 3));
 	});
 
-	// executeCount and executeExists should ignore pagination
-
-	test("pagination: executeCount ignores limit/offset", async () => {
-		const count = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.limit(3)
-			.offset(2)
-			.executeCount(Number);
-
-		// Should count all 10 users, not just the 3 in the page
-		assert.strictEqual(count, 10);
-	});
-
-	test("pagination: executeExists ignores limit/offset", async () => {
-		const exists = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.limit(1)
-			.offset(100) // Past all 10 users: the page itself is empty
-			.executeExists();
-
-		// Should return true: matching records exist even though the
-		// offset(100) page contains none of them
-		assert.strictEqual(exists, true);
-	});
-
-	test("pagination: executeCount with joins ignores limit/offset", async () => {
-		const count = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.innerJoinMany(
-				"posts",
-				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-				"posts.user_id",
-				"user.id",
-			)
-			.where("users.id", "<=", 3)
-			.limit(1)
-			.executeCount(Number);
-
-		// Should count 2 users (users 2 and 3 have posts), not just 1
-		assert.strictEqual(count, 2);
-	});
+	// (executeCount / executeExists ignoring pagination is covered in
+	// query-set.execution.test.ts.)
 
 	// clearLimit and clearOffset
 

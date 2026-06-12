@@ -7,56 +7,15 @@ import { querySet } from "./query-set.ts";
 const db = getDbForTest();
 
 //
-// Complex Scenarios - Multi-level nesting and real-world patterns
+// Deep Nesting Tests
+//
+// Multi-level joined collections (user → posts → comments → replies),
+// attaches inside joined collections, null/empty branches at every level,
+// and pagination/flat-row behavior through deep nesting.
 //
 
-describe("query-set: complex", () => {
-	test("complex: 3-level nesting users → posts → comments", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 2)
-			.innerJoinMany(
-				"posts",
-				({ eb, qs }) =>
-					qs(
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
-					).innerJoinMany(
-						"comments",
-						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-						"comments.post_id",
-						"posts.id",
-					),
-				"posts.user_id",
-				"user.id",
-			)
-			.execute();
-
-		assert.deepStrictEqual(users, [
-			{
-				id: 2,
-				username: "bob",
-				posts: [
-					{
-						id: 1,
-						title: "Post 1",
-						user_id: 2,
-						comments: [
-							{ id: 1, content: "Comment 1 on post 1", post_id: 1 },
-							{ id: 2, content: "Comment 2 on post 1", post_id: 1 },
-						],
-					},
-					{
-						id: 2,
-						title: "Post 2",
-						user_id: 2,
-						comments: [{ id: 3, content: "Comment 3 on post 2", post_id: 2 }],
-					},
-				],
-			},
-		]);
-	});
-
-	test("complex: 4-level nesting with mixed cardinality", async () => {
+describe("query-set: nesting", () => {
+	test("nesting: 4 levels with mixed cardinality", async () => {
 		// user → posts → comments → replies, with a sibling cardinality-one
 		// profile at the second level
 		const users = await querySet(db)
@@ -135,7 +94,7 @@ describe("query-set: complex", () => {
 		]);
 	});
 
-	test("complex: nested joins with attach at multiple levels", async () => {
+	test("nesting: attach collections at multiple levels inside joins", async () => {
 		const fetchTags = async () => {
 			return [
 				{ id: 1, name: "typescript", post_id: 1 },
@@ -195,38 +154,7 @@ describe("query-set: complex", () => {
 		]);
 	});
 
-	test("complex: multiple modifications chained with hydration", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 2)
-			.innerJoinMany(
-				"posts",
-				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-				"posts.user_id",
-				"user.id",
-			)
-			.modify("posts", (qs) => qs.where("posts.id", "<=", 2))
-			.modify("posts", (qs) =>
-				qs.extras({
-					titleLength: (row) => row.title.length,
-				}),
-			)
-			.modify("posts", (qs) => qs.omit(["user_id"]))
-			.execute();
-
-		assert.deepStrictEqual(users, [
-			{
-				id: 2,
-				username: "bob",
-				posts: [
-					{ id: 1, title: "Post 1", titleLength: 6 },
-					{ id: 2, title: "Post 2", titleLength: 6 },
-				],
-			},
-		]);
-	});
-
-	test("complex: mixed nullability with deep nesting", async () => {
+	test("nesting: mixed nullability with deep nesting", async () => {
 		// Every null/empty branch is exercised: alice gets a NULL profile (the
 		// subquery excludes her) and an empty posts array; bob's post 12 has an
 		// empty comments array
@@ -288,7 +216,7 @@ describe("query-set: complex", () => {
 		]);
 	});
 
-	test("complex: pagination with deep nesting", async () => {
+	test("nesting: pagination with deep nesting", async () => {
 		const qs = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinMany(
@@ -310,7 +238,6 @@ describe("query-set: complex", () => {
 
 		// Should return only first user (bob) with ALL their posts and comments
 		// Note: Post 12 is filtered out because it has no comments (innerJoinMany)
-		assert.strictEqual(users.length, 1);
 		assert.strictEqual(allUsers.length, 2);
 		assert.deepStrictEqual(users, allUsers.slice(0, 1));
 		assert.deepStrictEqual(users, [
@@ -344,78 +271,7 @@ describe("query-set: complex", () => {
 		]);
 	});
 
-	test("complex: sibling collections with transformation", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.where("users.id", "=", 2)
-			.innerJoinOne(
-				"profile",
-				({ eb, qs }) =>
-					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).extras({
-						bioLength: (row) => row.bio?.length ?? 0,
-					}),
-				"profile.user_id",
-				"user.id",
-			)
-			.innerJoinMany(
-				"posts",
-				({ eb, qs }) =>
-					qs(
-						eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2),
-					).mapFields({
-						title: (value) => value.toUpperCase(),
-					}),
-				"posts.user_id",
-				"user.id",
-			)
-			.map((user) => ({
-				userId: user.id,
-				name: user.username,
-				bio: user.profile.bio,
-				bioLength: user.profile.bioLength,
-				postTitles: user.posts.map((p) => p.title),
-			}))
-			.execute();
-
-		assert.deepStrictEqual(users, [
-			{
-				userId: 2,
-				name: "bob",
-				bio: "Bio for user 2",
-				bioLength: 14,
-				postTitles: ["POST 1", "POST 2"],
-			},
-		]);
-	});
-
-	test("complex: executeCount with deep nesting", async () => {
-		const qs = querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.innerJoinMany(
-				"posts",
-				({ eb, qs }) =>
-					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
-						"comments",
-						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-						"comments.post_id",
-						"posts.id",
-					),
-				"posts.user_id",
-				"user.id",
-			)
-			.where("users.id", "<=", 4);
-
-		const count = await qs.executeCount(Number);
-		const users = await qs.execute();
-		const joinedRows = await qs.toJoinedQuery().execute();
-
-		// Users with posts that have comments
-		assert.strictEqual(count, 3); // bob (2), carol (3), and one more
-		assert.strictEqual(users.length, 3); // Verify count matches execute
-		assert.ok(joinedRows.length > users.length); // Row explosion in joined query
-	});
-
-	test("complex: toJoinedQuery with deep nesting shows full row explosion", async () => {
+	test("nesting: toJoinedQuery with deep nesting shows full row explosion", async () => {
 		const rows = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)

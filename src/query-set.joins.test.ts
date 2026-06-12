@@ -23,8 +23,9 @@ const db = getDbForTest();
 // - Join-type-DISTINGUISHING semantics (match/no-match shapes, base
 //   filtering, cardinality violations, exists-false through a filtering
 //   join) are hand-written.
-// - Argument-form plumbing (onRef callback, pre-built QuerySet) is shared
-//   machinery, tested once each.
+// - Argument forms (onRef callback, pre-built QuerySet) are covered per
+//   join type where the original suite covered them (innerJoinMany,
+//   leftJoinMany, innerJoinOne).
 //
 // Fixture facts used throughout: alice (1) has NO posts; bob (2) has posts
 // 1, 2, 5, 12; carol (3) has posts 3, 15; every user has a profile with
@@ -296,10 +297,11 @@ describe("query-set: joins", () => {
 	}
 
 	//
-	// Argument forms (shared plumbing; tested once each)
+	// Argument forms: the on-condition as an onRef callback, and the joined
+	// collection as a pre-built QuerySet
 	//
 
-	test("join condition as a callback with onRef", async () => {
+	test("innerJoinMany: join condition as a callback with onRef", async () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.innerJoinMany(
@@ -313,7 +315,72 @@ describe("query-set: joins", () => {
 		assert.deepStrictEqual(users, [{ id: 2, username: "bob", posts: BOB_POSTS }]);
 	});
 
-	test("joined collection as a pre-built QuerySet", async () => {
+	test("leftJoinMany: join condition as a callback with onRef", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				(join) => join.onRef("posts.user_id", "=", "user.id"),
+			)
+			.where("users.id", "<=", 2)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice", posts: [] },
+			{ id: 2, username: "bob", posts: BOB_POSTS },
+		]);
+	});
+
+	test("innerJoinOne: join condition as a callback with onRef", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				(join) => join.onRef("profile.user_id", "=", "user.id"),
+			)
+			.where("users.id", "<=", 2)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice", profile: profileOf(1) },
+			{ id: 2, username: "bob", profile: profileOf(2) },
+		]);
+	});
+
+	test("innerJoinMany: joined collection as a pre-built QuerySet", async () => {
+		const postsQuery = querySet(db).selectAs("post", (eb) =>
+			eb.selectFrom("posts").select(["id", "title", "user_id"]),
+		);
+
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinMany("posts", postsQuery, "posts.user_id", "user.id")
+			.where("users.id", "=", 2)
+			.execute();
+
+		assert.deepStrictEqual(users, [{ id: 2, username: "bob", posts: BOB_POSTS }]);
+	});
+
+	test("leftJoinMany: joined collection as a pre-built QuerySet", async () => {
+		const postsQuery = querySet(db).selectAs("post", (eb) =>
+			eb.selectFrom("posts").select(["id", "title", "user_id"]),
+		);
+
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany("posts", postsQuery, "posts.user_id", "user.id")
+			.where("users.id", "<=", 2)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 1, username: "alice", posts: [] },
+			{ id: 2, username: "bob", posts: BOB_POSTS },
+		]);
+	});
+
+	test("innerJoinOne: joined collection as a pre-built QuerySet", async () => {
 		const profileQuery = querySet(db).selectAs("profile", (eb) =>
 			eb.selectFrom("profiles").select(["id", "bio", "user_id"]),
 		);
@@ -501,6 +568,24 @@ describe("query-set: joins", () => {
 				.execute(),
 			ExpectedOneItemError,
 		);
+	});
+
+	test("leftJoinOne: executeCount counts all base records when nothing matches", async () => {
+		const count = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOne(
+				"profile",
+				({ eb, qs }) =>
+					// No profile has this user_id
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999)),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 5)
+			.executeCount(Number);
+
+		// A left join never filters the base, even when it matches nothing
+		assert.strictEqual(count, 5);
 	});
 
 	//
@@ -973,6 +1058,115 @@ describe("query-set: joins", () => {
 
 		assert.strictEqual(queryCompiled.sql, joinedCompiled.sql);
 		assert.deepStrictEqual(queryCompiled.parameters, joinedCompiled.parameters);
+	});
+
+	test("mixed: toJoinedQuery vs toQuery without pagination are equivalent when executed", async () => {
+		// Illustrative rather than load-bearing: without pagination toQuery()
+		// returns the joined query unchanged, so both sides execute the same
+		// compiled SQL (pinned as compiled-SQL equality in the test above). It
+		// documents the equivalence for readers, especially next to the
+		// with-pagination contrast test below.
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "<=", 2)),
+				"posts.user_id",
+				"user.id",
+			);
+
+		const joinedRows = await qs.toJoinedQuery().execute();
+		const queryRows = await qs.toQuery().execute();
+
+		// Without pagination, both should be identical (flat rows with prefixes)
+		assert.deepStrictEqual(joinedRows, queryRows);
+		assert.strictEqual(joinedRows.length, 2); // 2 posts
+	});
+
+	test("mixed: toJoinedQuery vs toQuery with pagination differ for many-joins", async () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "in", [2, 3])
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.limit(1);
+
+		const joinedRows = await qs.toJoinedQuery().execute();
+		const queryRows = await qs.toQuery().execute();
+
+		// toJoinedQuery does not apply pagination at all: it returns every
+		// exploded row for both users (user 2 has 4 posts, user 3 has 2).
+		assert.strictEqual(joinedRows.length, 6);
+
+		// toQuery applies the limit to unique base records via a nested
+		// subquery: 1 user (user 2, the lowest id), with all 4 of their
+		// exploded post rows.
+		assert.strictEqual(queryRows.length, 4);
+		assert.ok(queryRows.every((row) => row.id === 2));
+	});
+
+	test("mixed: toBaseQuery strips multiple joins and hydration", async () => {
+		const baseQuery = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 2)
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.toBaseQuery();
+
+		// toBaseQuery() has no ORDER BY at all, so pin one for the comparison
+		const rows = await baseQuery.orderBy("id").execute();
+
+		// Should only have base columns, no joins applied
+		assert.deepStrictEqual(rows, [
+			{ id: 1, username: "alice" },
+			{ id: 2, username: "bob" },
+		]);
+	});
+
+	test("collection override: second join with the same key wins", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1)),
+				"posts.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 2)),
+				"posts.user_id",
+				"user.id",
+			)
+			.execute();
+
+		// Second posts join should override first
+		assert.deepStrictEqual(users, [
+			{
+				id: 2,
+				username: "bob",
+				posts: [{ id: 2, title: "Post 2", user_id: 2 }],
+			},
+		]);
 	});
 });
 

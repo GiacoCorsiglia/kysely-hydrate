@@ -1,40 +1,54 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { NoResultError } from "kysely";
-
 import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
 
-describe("query-set: basic", () => {
+//
+// Core QuerySet Tests
+//
+// Construction (selectAs / writeAs / write), keyBy semantics, base-query
+// modification (.modify() / .where()), and the toBaseQuery / toQuery escape
+// hatches — all without nested collections. Execution-method semantics
+// (empty results, count/exists) live in query-set.execution.test.ts; joins
+// live in query-set.joins.test.ts.
+//
+
+// Expected hydrated shapes shared across tests.
+const ALL_USERS = [
+	{ id: 1, username: "alice" },
+	{ id: 2, username: "bob" },
+	{ id: 3, username: "carol" },
+	{ id: 4, username: "dave" },
+	{ id: 5, username: "eve" },
+	{ id: 6, username: "frank" },
+	{ id: 7, username: "grace" },
+	{ id: 8, username: "heidi" },
+	{ id: 9, username: "ivan" },
+	{ id: 10, username: "judy" },
+];
+
+const ALL_USERS_WITH_EMAIL = ALL_USERS.map((user) => ({
+	...user,
+	email: `${user.username}@example.com`,
+}));
+
+describe("query-set: core", () => {
 	//
-	// Basic Query Execution
+	// Basic query execution
 	//
 
-	test("execute: returns array of hydrated rows", async () => {
+	test("execute: returns hydrated rows (keyBy defaults to 'id')", async () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.execute();
 
-		assert.ok(Array.isArray(users));
-		assert.strictEqual(users.length, 10);
-		assert.deepStrictEqual(users, [
-			{ id: 1, username: "alice" },
-			{ id: 2, username: "bob" },
-			{ id: 3, username: "carol" },
-			{ id: 4, username: "dave" },
-			{ id: 5, username: "eve" },
-			{ id: 6, username: "frank" },
-			{ id: 7, username: "grace" },
-			{ id: 8, username: "heidi" },
-			{ id: 9, username: "ivan" },
-			{ id: 10, username: "judy" },
-		]);
+		assert.deepStrictEqual(users, ALL_USERS);
 	});
 
-	test("executeTakeFirst: returns first row or undefined", async () => {
+	test("executeTakeFirst: returns the first row", async () => {
 		const user = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.executeTakeFirst();
@@ -42,15 +56,7 @@ describe("query-set: basic", () => {
 		assert.deepStrictEqual(user, { id: 1, username: "alice" });
 	});
 
-	test("executeTakeFirst: returns undefined when no rows", async () => {
-		const user = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
-			.executeTakeFirst();
-
-		assert.strictEqual(user, undefined);
-	});
-
-	test("executeTakeFirstOrThrow: returns first row", async () => {
+	test("executeTakeFirstOrThrow: returns the first row", async () => {
 		const user = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.executeTakeFirstOrThrow();
@@ -58,52 +64,16 @@ describe("query-set: basic", () => {
 		assert.deepStrictEqual(user, { id: 1, username: "alice" });
 	});
 
-	test("executeTakeFirstOrThrow: throws when no rows", async () => {
-		await assert.rejects(async () => {
-			await querySet(db)
-				.selectAs("user", db.selectFrom("users").select(["id", "username"]).where("id", "=", 999))
-				.executeTakeFirstOrThrow();
-		}, NoResultError);
-	});
-
-	test("init: defaults keyBy to 'id'", async () => {
-		const users = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.execute();
-
-		assert.strictEqual(users.length, 10);
-		assert.deepStrictEqual(users, [
-			{ id: 1, username: "alice" },
-			{ id: 2, username: "bob" },
-			{ id: 3, username: "carol" },
-			{ id: 4, username: "dave" },
-			{ id: 5, username: "eve" },
-			{ id: 6, username: "frank" },
-			{ id: 7, username: "grace" },
-			{ id: 8, username: "heidi" },
-			{ id: 9, username: "ivan" },
-			{ id: 10, username: "judy" },
-		]);
-	});
+	//
+	// Construction and keyBy
+	//
 
 	test("init: accepts explicit keyBy", async () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username", "email"]), "username")
 			.execute();
 
-		assert.strictEqual(users.length, 10);
-		assert.deepStrictEqual(users, [
-			{ id: 1, username: "alice", email: "alice@example.com" },
-			{ id: 2, username: "bob", email: "bob@example.com" },
-			{ id: 3, username: "carol", email: "carol@example.com" },
-			{ id: 4, username: "dave", email: "dave@example.com" },
-			{ id: 5, username: "eve", email: "eve@example.com" },
-			{ id: 6, username: "frank", email: "frank@example.com" },
-			{ id: 7, username: "grace", email: "grace@example.com" },
-			{ id: 8, username: "heidi", email: "heidi@example.com" },
-			{ id: 9, username: "ivan", email: "ivan@example.com" },
-			{ id: 10, username: "judy", email: "judy@example.com" },
-		]);
+		assert.deepStrictEqual(users, ALL_USERS_WITH_EMAIL);
 	});
 
 	test("init: explicit keyBy works without selecting 'id'", async () => {
@@ -114,18 +84,10 @@ describe("query-set: basic", () => {
 			.selectAs("user", db.selectFrom("users").select(["username", "email"]), "username")
 			.execute();
 
-		assert.deepStrictEqual(users, [
-			{ username: "alice", email: "alice@example.com" },
-			{ username: "bob", email: "bob@example.com" },
-			{ username: "carol", email: "carol@example.com" },
-			{ username: "dave", email: "dave@example.com" },
-			{ username: "eve", email: "eve@example.com" },
-			{ username: "frank", email: "frank@example.com" },
-			{ username: "grace", email: "grace@example.com" },
-			{ username: "heidi", email: "heidi@example.com" },
-			{ username: "ivan", email: "ivan@example.com" },
-			{ username: "judy", email: "judy@example.com" },
-		]);
+		assert.deepStrictEqual(
+			users,
+			ALL_USERS_WITH_EMAIL.map(({ username, email }) => ({ username, email })),
+		);
 	});
 
 	test("init: groups by explicit keyBy, not by 'id'", async () => {
@@ -183,24 +145,51 @@ describe("query-set: basic", () => {
 		]);
 	});
 
-	test("init: executeCount counts base rows, not entities, when keyBy is not unique", async () => {
-		// keyBy is required to be a unique key of the base query.  Hydration
-		// defensively collapses duplicate keys (see test above), but counting is a
-		// plain COUNT(*) with no DISTINCT, so a non-unique keyBy overcounts
-		// relative to execute().  This is intentional: adding DISTINCT would slow
-		// down every well-formed count to accommodate a contract violation.
-		const qs = () =>
-			querySet(db).selectAs("post", db.selectFrom("posts").select(["user_id"]), "user_id");
+	test("init: composite keyBy with array of keys", async () => {
+		// Comments 1 and 3 each have 2 replies, so the left join duplicates
+		// their (post_id, user_id) pairs: the base produces 6 raw rows for 4
+		// distinct composite keys. The keys share post_id (comments 1, 2 are
+		// both on post 1) AND user_id (comments 3, 10 are both by user 1), so
+		// a composite keyBy that collapsed to either single column would
+		// produce 3 entities instead of 4.
+		const qs = querySet(db).selectAs(
+			"comment",
+			db
+				.selectFrom("comments")
+				.leftJoin("replies", "replies.comment_id", "comments.id")
+				.select(["comments.post_id", "comments.user_id"])
+				.where("comments.id", "in", [1, 2, 3, 10]),
+			["post_id", "user_id"],
+		);
 
-		const count = await qs().executeCount(Number);
-		const entities = await qs().execute();
+		const rawRows = await qs.toBaseQuery().execute();
+		assert.strictEqual(rawRows.length, 6); // Proves the dedup below is real
 
-		assert.strictEqual(entities.length, 9); // Distinct post authors.
-		assert.strictEqual(count, 15); // Total post rows.
+		const comments = await qs.execute();
+
+		// Deduplicated by the (post_id, user_id) composite key, ordered by it
+		assert.deepStrictEqual(comments, [
+			{ post_id: 1, user_id: 2 },
+			{ post_id: 1, user_id: 3 },
+			{ post_id: 2, user_id: 1 },
+			{ post_id: 10, user_id: 1 },
+		]);
 	});
 
+	test("init: accepts factory function", async () => {
+		const users = await querySet(db)
+			.selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
+			.execute();
+
+		assert.deepStrictEqual(users, ALL_USERS_WITH_EMAIL);
+	});
+
+	//
+	// Write-based query sets (writeAs / write creation paths)
+	//
+
 	test("init: writeAs passes explicit keyBy to the hydrator", async () => {
-		// Same regression as above, via the writeAs() creation path.
+		// Same keyBy regression as above, via the writeAs() creation path.
 		const users = await querySet(db)
 			.writeAs(
 				"u",
@@ -263,25 +252,62 @@ describe("query-set: basic", () => {
 		assert.strictEqual(users.length, 10);
 	});
 
-	test("init: accepts factory function", async () => {
+	//
+	// Base-query modification
+	//
+
+	test("modify: add WHERE clause", async () => {
 		const users = await querySet(db)
-			.selectAs("user", (eb) => eb.selectFrom("users").select(["id", "username", "email"]))
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.modify((qb) => qb.where("id", ">", 5))
 			.execute();
 
-		assert.strictEqual(users.length, 10);
+		assert.deepStrictEqual(users, ALL_USERS.slice(5));
+	});
+
+	test("modify: add additional SELECT", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.modify((qb) => qb.select("email"))
+			.execute();
+
+		assert.deepStrictEqual(users, ALL_USERS_WITH_EMAIL);
+	});
+
+	test("modify: multiple calls chained", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.modify((qb) => qb.where("id", "<=", 5))
+			.modify((qb) => qb.select("email"))
+			.execute();
+
+		assert.deepStrictEqual(users, ALL_USERS_WITH_EMAIL.slice(0, 5));
+	});
+
+	test("where: simple reference", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("id", "=", 1)
+			.execute();
+
+		assert.deepStrictEqual(users, [{ id: 1, username: "alice" }]);
+	});
+
+	test("where: with expression factory", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where((eb) => eb.or([eb("id", "=", 1), eb("id", "=", 2)]))
+			.execute();
+
 		assert.deepStrictEqual(users, [
-			{ id: 1, username: "alice", email: "alice@example.com" },
-			{ id: 2, username: "bob", email: "bob@example.com" },
-			{ id: 3, username: "carol", email: "carol@example.com" },
-			{ id: 4, username: "dave", email: "dave@example.com" },
-			{ id: 5, username: "eve", email: "eve@example.com" },
-			{ id: 6, username: "frank", email: "frank@example.com" },
-			{ id: 7, username: "grace", email: "grace@example.com" },
-			{ id: 8, username: "heidi", email: "heidi@example.com" },
-			{ id: 9, username: "ivan", email: "ivan@example.com" },
-			{ id: 10, username: "judy", email: "judy@example.com" },
+			{ id: 1, username: "alice" },
+			{ id: 2, username: "bob" },
 		]);
 	});
+
+	//
+	// Escape hatches: toBaseQuery / toQuery
+	//
 
 	test("toBaseQuery: returns underlying base query", async () => {
 		const baseQuery = querySet(db)
@@ -290,18 +316,19 @@ describe("query-set: basic", () => {
 
 		// toBaseQuery() has no ORDER BY at all, so pin one for the comparison
 		const rows = await baseQuery.orderBy("id").execute();
-		assert.strictEqual(rows.length, 10);
+		assert.deepStrictEqual(rows, ALL_USERS);
+	});
+
+	test("toBaseQuery: returns modified base query", async () => {
+		const baseQuery = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.modify((qb) => qb.where("id", "<", 3))
+			.toBaseQuery();
+
+		const rows = await baseQuery.execute();
 		assert.deepStrictEqual(rows, [
 			{ id: 1, username: "alice" },
 			{ id: 2, username: "bob" },
-			{ id: 3, username: "carol" },
-			{ id: 4, username: "dave" },
-			{ id: 5, username: "eve" },
-			{ id: 6, username: "frank" },
-			{ id: 7, username: "grace" },
-			{ id: 8, username: "heidi" },
-			{ id: 9, username: "ivan" },
-			{ id: 10, username: "judy" },
 		]);
 	});
 
@@ -311,18 +338,16 @@ describe("query-set: basic", () => {
 			.toQuery();
 
 		const rows = await query.execute();
-		assert.strictEqual(rows.length, 10);
-		assert.deepStrictEqual(rows, [
-			{ id: 1, username: "alice" },
-			{ id: 2, username: "bob" },
-			{ id: 3, username: "carol" },
-			{ id: 4, username: "dave" },
-			{ id: 5, username: "eve" },
-			{ id: 6, username: "frank" },
-			{ id: 7, username: "grace" },
-			{ id: 8, username: "heidi" },
-			{ id: 9, username: "ivan" },
-			{ id: 10, username: "judy" },
-		]);
+		assert.deepStrictEqual(rows, ALL_USERS);
+	});
+
+	test("toQuery: returns opaque query builder with modifications", async () => {
+		const query = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.modify((qb) => qb.where("id", "=", 1))
+			.toQuery();
+
+		const rows = await query.execute();
+		assert.deepStrictEqual(rows, [{ id: 1, username: "alice" }]);
 	});
 });
