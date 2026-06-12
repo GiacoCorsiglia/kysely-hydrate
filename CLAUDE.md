@@ -18,3 +18,5 @@ After making changes, always run
 - `npm run format`
 
 Ignore the `src/experimental` directory.
+
+Do not commit code. Always ask the user to review and allow them to commit manually.
