@@ -1,7 +1,10 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
+import { sql } from "kysely";
+
 import { dialect, getDbForTest } from "./__tests__/db.ts";
+import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
@@ -1480,5 +1483,73 @@ describe("query-set: sql-generation", () => {
 			order by "user"."profile$$bio" asc, "user"."id" asc
 		`,
 		);
+	});
+
+	//
+	// Selection-hoisting errors
+	//
+	// Hoisting requires statically knowing every selected column name, so
+	// selectAll() and non-identifier aliases are rejected. The errors are
+	// thrown lazily, when the query is compiled — not when the query set or
+	// join is declared.
+	//
+
+	test("error: selectAll() on the base query throws UnexpectedSelectAllError at toQuery", () => {
+		const qs = querySet(db).selectAs("user", db.selectFrom("users").selectAll());
+
+		assert.throws(() => qs.toQuery(), UnexpectedSelectAllError);
+	});
+
+	test("error: selectAll() in a joined subquery throws UnexpectedSelectAllError at toQuery", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").selectAll()),
+				"posts.user_id",
+				"user.id",
+			);
+
+		assert.throws(() => qs.toQuery(), UnexpectedSelectAllError);
+	});
+
+	test("error: selectAll('table') in a joined subquery throws UnexpectedSelectAllError at toQuery", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").selectAll("posts")),
+				"posts.user_id",
+				"user.id",
+			);
+
+		assert.throws(() => qs.toQuery(), UnexpectedSelectAllError);
+	});
+
+	test("error: selectAll() rejects execute() too", async () => {
+		const qs = querySet(db).selectAs("user", db.selectFrom("users").selectAll());
+
+		await assert.rejects(() => qs.execute(), UnexpectedSelectAllError);
+	});
+
+	test("error: a non-identifier alias in a joined subquery throws UnexpectedComplexAliasError at toQuery", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "user_id"])
+							// An Expression alias compiles to a RawNode, not an
+							// IdentifierNode, so its name can't be extracted for hoisting.
+							.select(sql`upper(title)`.as(sql`complex_alias`) as never),
+					),
+				"posts.user_id",
+				"user.id",
+			);
+
+		assert.throws(() => qs.toQuery(), UnexpectedComplexAliasError);
 	});
 });
