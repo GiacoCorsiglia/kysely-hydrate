@@ -1139,6 +1139,54 @@ describe("query-set: joins", () => {
 		]);
 	});
 
+	test("mixed: sibling many-joins over the same table under different keys", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"allPosts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"allPosts.user_id",
+				"user.id",
+			)
+			.execute();
+
+		// Both collections read from "posts" but hydrate independently under
+		// their own keys/prefixes.
+		assert.deepStrictEqual(users, [
+			{ id: 2, username: "bob", posts: BOB_POSTS, allPosts: BOB_POSTS },
+		]);
+	});
+
+	test("mixed: sibling one-joins over the same table under different keys", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinOne(
+				"profile2",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile2.user_id",
+				"user.id",
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 2, username: "bob", profile: profileOf(2), profile2: profileOf(2) },
+		]);
+	});
+
 	test("collection override: second join with the same key wins", async () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))

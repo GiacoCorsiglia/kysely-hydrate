@@ -97,6 +97,33 @@ describe("query-set: execution", () => {
 		assert.deepStrictEqual(users, []);
 	});
 
+	test("empty result: execute returns empty array with nested joins", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 999)
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).innerJoinMany(
+						"comments",
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
+						"comments.post_id",
+						"posts.id",
+					),
+				"posts.user_id",
+				"user.id",
+			)
+			.execute();
+
+		assert.deepStrictEqual(users, []);
+	});
+
 	//
 	// executeCount / executeExists ignore pagination
 	//
@@ -171,6 +198,55 @@ describe("query-set: execution", () => {
 
 		assert.strictEqual(entities.length, 9); // Distinct post authors.
 		assert.strictEqual(count, 15); // Total post rows.
+	});
+
+	test("executeCount and executeExists: with all five join types at once", async () => {
+		// Each join type uses a different counting strategy:
+		// - innerJoinOne: included as an inner join
+		// - leftJoinOne: included as a left join
+		// - innerJoinMany: converted to WHERE EXISTS
+		// - leftJoinMany: omitted entirely (it can't filter the base)
+		// - crossJoinMany: converted to WHERE EXISTS
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 5)
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinOne(
+				"profile2",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile2.user_id",
+				"user.id",
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"allPosts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"allPosts.user_id",
+				"user.id",
+			)
+			.crossJoinMany("crossPosts", ({ eb, qs }) =>
+				qs(eb.selectFrom("posts").select(["id", "title"]).where("user_id", "=", 3).limit(1)),
+			);
+
+		const count = await qs.executeCount(Number);
+		const exists = await qs.executeExists();
+		const users = await qs.execute();
+
+		// Users 1-5 all have profiles; only 2-5 have posts (the inner many-join
+		// filters alice); the cross-joined set is non-empty for everyone.
+		assert.strictEqual(count, 4);
+		assert.strictEqual(users.length, 4);
+		assert.strictEqual(exists, true);
 	});
 
 	test("executeCount: counts base records through deeply nested many-joins", async () => {

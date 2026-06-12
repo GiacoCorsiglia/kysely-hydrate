@@ -305,6 +305,19 @@ describe("query-set: core", () => {
 		]);
 	});
 
+	test("where: multiple chained where calls combine with AND", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", ">=", 2)
+			.where("users.id", "<=", 3)
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 2, username: "bob" },
+			{ id: 3, username: "carol" },
+		]);
+	});
+
 	//
 	// Escape hatches: toBaseQuery / toQuery
 	//

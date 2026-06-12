@@ -38,7 +38,7 @@ function snapshot(template: TemplateStringsArray) {
 	return str;
 }
 
-describe("query-set: sql-generation", () => {
+describe("query-set: sql", () => {
 	test("snapshot", () => {
 		const unindented = "foo bar baz (bing)";
 		assert.strictEqual(
@@ -1551,5 +1551,133 @@ describe("query-set: sql-generation", () => {
 			);
 
 		assert.throws(() => qs.toQuery(), UnexpectedComplexAliasError);
+	});
+
+	//
+	// Column aliases in generated SQL
+	//
+	// When the base or a subquery selects with an alias (`username as name`),
+	// the alias becomes the column name that hoisting prefixes.
+	//
+
+	test("aliases: base query with column alias", () => {
+		const qs = querySet(db).selectAs(
+			"user",
+			db.selectFrom("users").select(["id", "username as name"]),
+		);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Should preserve the alias in the output
+		assert.ok(sql.includes('"username" as "name"'), `Expected alias in SQL: ${sql}`);
+	});
+
+	test("aliases: innerJoinMany with column aliases are correctly prefixed", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username as name"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Base query alias should be preserved in the subquery
+		assert.ok(sql.includes('"username" as "name"'), `Expected base alias in subquery: ${sql}`);
+
+		// In the outer query, the alias is used as the column name and prefixed
+		// Inner subquery: "title" as "postTitle"
+		// Outer query references: "posts"."postTitle" as "posts$$postTitle"
+		assert.ok(
+			sql.includes('"posts"."postTitle" as "posts$$postTitle"'),
+			`Expected prefixed alias reference in outer query: ${sql}`,
+		);
+	});
+
+	test("aliases: doubly-prefixed aliases for deeply nested collections", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username as name"]))
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title as postTitle", "user_id"])).innerJoinMany(
+						"comments",
+						({ eb, qs }) =>
+							qs(
+								eb
+									.selectFrom("comments")
+									.select(["id", "content as commentText", "post_id", "user_id"]),
+							),
+						"comments.post_id",
+						"posts.id",
+					),
+				"posts.user_id",
+				"user.id",
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Deeply nested alias gets double prefix in outer query
+		// Inner: "content" as "commentText" -> "comments"."commentText" as "comments$$commentText"
+		// Outer: "posts"."comments$$commentText" as "posts$$comments$$commentText"
+		assert.ok(
+			sql.includes('"posts"."comments$$commentText" as "posts$$comments$$commentText"'),
+			`Expected doubly-prefixed alias reference: ${sql}`,
+		);
+	});
+
+	test("aliases: mixed aliased and non-aliased columns", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username as name", "email"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio as biography", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Base query: aliased and non-aliased in subquery
+		assert.ok(sql.includes('"username" as "name"'), `Expected base alias: ${sql}`);
+		assert.ok(sql.includes('"email"'), `Expected non-aliased column: ${sql}`);
+
+		// Nested: alias is used as column name in outer query with prefix
+		// Inner subquery: "bio" as "biography"
+		// Outer query: "profile"."biography" as "profile$$biography"
+		assert.ok(
+			sql.includes('"profile"."biography" as "profile$$biography"'),
+			`Expected prefixed alias reference: ${sql}`,
+		);
+		assert.ok(
+			sql.includes('"profile"."user_id" as "profile$$user_id"'),
+			`Expected prefixed non-aliased column: ${sql}`,
+		);
+	});
+
+	test("aliases: leftJoinOne with column alias", () => {
+		const qs = querySet(db)
+			.selectAs("post", db.selectFrom("posts").select(["id", "title as postTitle", "user_id"]))
+			.leftJoinOne(
+				"author",
+				({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username as authorName"])),
+				"author.id",
+				"post.user_id",
+			);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Base query alias preserved in subquery
+		assert.ok(sql.includes('"title" as "postTitle"'), `Expected base alias in subquery: ${sql}`);
+
+		// Nested: alias is used as column name with prefix in outer query
+		// Inner subquery: "username" as "authorName"
+		// Outer query: "author"."authorName" as "author$$authorName"
+		assert.ok(
+			sql.includes('"author"."authorName" as "author$$authorName"'),
+			`Expected prefixed alias reference: ${sql}`,
+		);
 	});
 });
