@@ -6,7 +6,7 @@ import {
 	ExpectedOneItemError,
 	KeyByMismatchError,
 } from "./helpers/errors.ts";
-import { createHydrator, hydrate } from "./hydrator.ts";
+import { createHydrator, EnableAutoInclusion, hydrate } from "./hydrator.ts";
 
 // Test data types
 interface User {
@@ -2306,4 +2306,127 @@ test("map: works with attached collections", async () => {
 			postTitles: ["Post 1", "Post 2"],
 		},
 	]);
+});
+
+//
+// __proto__ keys
+//
+// A column or config key named "__proto__" must become a normal own property
+// of the hydrated entity. Plain `entity[key] = value` assignment would hit
+// Object.prototype's `__proto__` accessor instead: scalar values are silently
+// dropped, and object values would REPLACE the entity's prototype (a
+// prototype-pollution shape). Note all input rows below are built with
+// JSON.parse or computed keys — a plain `{ __proto__: ... }` literal sets the
+// prototype rather than creating an own key.
+//
+
+test("fields: a field named __proto__ hydrates as a normal own property", async () => {
+	interface ProtoRow {
+		id: number;
+		__proto__: string;
+	}
+
+	const rows = JSON.parse(
+		'[{"id":1,"__proto__":"alice"},{"id":2,"__proto__":"bob"}]',
+	) as ProtoRow[];
+
+	const hydrator = createHydrator<ProtoRow>("id").fields({ id: true, ["__proto__"]: true });
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, ["__proto__"]: "alice" },
+		{ id: 2, ["__proto__"]: "bob" },
+	]);
+	// The key must be an own property, not a prototype mutation.
+	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+});
+
+test("fields: an object-valued __proto__ field does not replace the entity prototype", async () => {
+	interface ProtoRow {
+		id: number;
+		__proto__: { polluted: boolean };
+	}
+
+	// e.g. a JSON column hydrated by the driver
+	const rows = JSON.parse('[{"id":1,"__proto__":{"polluted":true}}]') as ProtoRow[];
+
+	const hydrator = createHydrator<ProtoRow>("id").fields({ id: true, ["__proto__"]: true });
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: { polluted: true } }]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+	// Without own-property shadowing, the object value would have become the
+	// entity's prototype: invisible to Object.keys but reachable by lookup.
+	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
+	assert.strictEqual(({} as Record<string, unknown>).polluted, undefined);
+});
+
+test("auto-inclusion: a column named __proto__ hydrates as a normal own property", async () => {
+	interface ProtoRow {
+		id: number;
+		name: string;
+		__proto__: string;
+	}
+
+	const rows = JSON.parse(
+		'[{"id":1,"name":"Alice","__proto__":"x"},{"id":2,"name":"Bob","__proto__":"y"}]',
+	) as ProtoRow[];
+
+	const hydrator = createHydrator<ProtoRow>("id");
+
+	const result = await hydrator.hydrate(rows, { [EnableAutoInclusion]: true });
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", ["__proto__"]: "x" },
+		{ id: 2, name: "Bob", ["__proto__"]: "y" },
+	]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+});
+
+test("fields: __proto__ works at nested collection level", async () => {
+	interface UserWithProtoPosts extends User {
+		posts$$id: number | null;
+		posts$$__proto__: string | null;
+	}
+
+	const rows: UserWithProtoPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$__proto__: "p10" },
+		{ id: 1, name: "Alice", posts$$id: 11, posts$$__proto__: "p11" },
+	];
+
+	const hydrator = createHydrator<UserWithProtoPosts>("id")
+		.fields({ id: true, name: true })
+		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, ["__proto__"]: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			name: "Alice",
+			posts: [
+				{ id: 10, ["__proto__"]: "p10" },
+				{ id: 11, ["__proto__"]: "p11" },
+			],
+		},
+	]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]!.posts[0]), Object.prototype);
+});
+
+test("extras: an extra named __proto__ hydrates as a normal own property", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extras({
+			["__proto__"]: (input) => `proto-${input.name}`,
+		});
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: "proto-Alice" }]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
 });

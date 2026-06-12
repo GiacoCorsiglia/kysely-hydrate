@@ -791,9 +791,40 @@ interface HydrationContext {
 
 	/**
 	 * Cache for auto-include field names keyed by prefix.
-	 * Maps: prefix -> fieldNames[]
+	 * Maps: prefix -> AutoFields
 	 */
-	readonly autoFieldsCache: Map<string, string[]>;
+	readonly autoFieldsCache: Map<string, AutoFields>;
+}
+
+/**
+ * Auto-include field names for one prefix level, plus a precomputed flag so
+ * the per-row assignment loop never has to scan the names itself.
+ */
+interface AutoFields {
+	readonly names: readonly string[];
+
+	/**
+	 * True when `names` contains "__proto__", which must be assigned via
+	 * {@link defineProtoShadowedKey}.
+	 */
+	readonly needsProtoShadow: boolean;
+}
+
+/**
+ * Sets a "__proto__" output key as a normal own data property. Plain
+ * `entity[key] = value` assignment would hit `Object.prototype`'s
+ * `__proto__` accessor instead: scalar values are silently dropped, and
+ * object values would REPLACE the entity's prototype (prototype pollution).
+ * An own data property shadows the accessor, so subsequent reads and plain
+ * writes behave normally.
+ */
+function defineProtoShadowedKey(entity: object, value: unknown): void {
+	Object.defineProperty(entity, "__proto__", {
+		value,
+		writable: true,
+		enumerable: true,
+		configurable: true,
+	});
 }
 
 /**
@@ -802,8 +833,27 @@ interface HydrationContext {
 class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Output> {
 	#props: HydratorProps<Input>;
 
+	/**
+	 * Memo for {@link #getConfigNeedsProtoShadow}; computed on first hydration.
+	 */
+	#configNeedsProtoShadow: boolean | undefined;
+
 	constructor(props: HydratorProps<Input>) {
 		this.#props = props;
+	}
+
+	/**
+	 * True when any configured output key is "__proto__", which must be
+	 * assigned via {@link defineProtoShadowedKey}.
+	 */
+	#getConfigNeedsProtoShadow(): boolean {
+		this.#configNeedsProtoShadow ??= Boolean(
+			this.#props.fields?.has("__proto__") ||
+			this.#props.extras?.has("__proto__") ||
+			this.#props.collections?.has("__proto__") ||
+			this.#props.attachedCollections?.has("__proto__"),
+		);
+		return this.#configNeedsProtoShadow;
 	}
 
 	get [IsFullHydrator]() {
@@ -1050,7 +1100,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * parent, and not to any nested collection.  Does this once per hydration
 	 * (assumes all inputs have the same keys).
 	 */
-	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): string[] {
+	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): AutoFields {
 		// Have we done this already?
 		const cached = ctx.autoFieldsCache.get(prefix);
 		if (cached) {
@@ -1060,7 +1110,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// If we get a null for some bizarre reason, I guess we should try again
 		// on the next row.
 		if (typeof input !== "object" || input === null) {
-			return [];
+			return { names: [], needsProtoShadow: false };
 		}
 
 		const { fields, extras, collections } = this.#props;
@@ -1095,9 +1145,14 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			autoFields.push(unprefixedKey);
 		}
 
+		const result: AutoFields = {
+			names: autoFields,
+			needsProtoShadow: autoFields.includes("__proto__"),
+		};
+
 		// Cache and return the auto-include fields
-		ctx.autoFieldsCache.set(prefix, autoFields);
-		return autoFields;
+		ctx.autoFieldsCache.set(prefix, result);
+		return result;
 	}
 
 	/**
@@ -1115,10 +1170,22 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const entity: any = {};
 
+		// A "__proto__" key must go through defineProtoShadowedKey (see its doc).
+		// Both flags are precomputed outside the row loop (per cached auto-field
+		// set / memoized per hydrator), so the common case pays only a
+		// short-circuited boolean test per assignment.
+		const configShadow = this.#getConfigNeedsProtoShadow();
+
 		// Auto-include all fields at this prefix level when enabled
 		if (ctx.autoIncludeFields) {
-			for (const key of this.#getAutoFields(ctx, prefix, input)) {
-				entity[key] = getPrefixedValue(prefix, input, key);
+			const autoFields = this.#getAutoFields(ctx, prefix, input);
+			for (const key of autoFields.names) {
+				const value = getPrefixedValue(prefix, input, key);
+				if (autoFields.needsProtoShadow && key === "__proto__") {
+					defineProtoShadowedKey(entity, value);
+				} else {
+					entity[key] = value;
+				}
 			}
 		}
 
@@ -1129,7 +1196,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					continue;
 				}
 				const value = getPrefixedValue(prefix, input, key);
-				entity[key] = field === true ? value : field(value as any);
+				const output = field === true ? value : field(value as any);
+				if (configShadow && key === "__proto__") {
+					defineProtoShadowedKey(entity, output);
+				} else {
+					entity[key] = output;
+				}
 			}
 		}
 
@@ -1138,7 +1210,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			if (extras) {
 				for (const [key, extra] of extras) {
-					entity[key] = extra(accessor as Input);
+					const output = extra(accessor as Input);
+					if (configShadow && key === "__proto__") {
+						defineProtoShadowedKey(entity, output);
+					} else {
+						entity[key] = output;
+					}
 				}
 			}
 
@@ -1158,7 +1235,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				// Hydrate nested collections (all attach collections already fetched)
 				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, rows);
 
-				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
+				const output = applyCollectionMode(collectionOutputs, collection.mode, key);
+				if (configShadow && key === "__proto__") {
+					defineProtoShadowedKey(entity, output);
+				} else {
+					entity[key] = output;
+				}
 			}
 		}
 
@@ -1175,7 +1257,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const groupedData = ctx.attachedDataMap.get(mapKey);
 				const attached = groupedData?.get(inputKey);
 
-				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
+				const output = applyGroupedCollectionMode(attached, collection.mode, key);
+				if (configShadow && key === "__proto__") {
+					defineProtoShadowedKey(entity, output);
+				} else {
+					entity[key] = output;
+				}
 			}
 		}
 
