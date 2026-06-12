@@ -183,7 +183,7 @@ describe("query-set: edge-cases", () => {
 		// Illustrative rather than load-bearing: without pagination toQuery()
 		// returns the joined query unchanged, so both sides execute the same
 		// compiled SQL (pinned as compiled-SQL equality in
-		// query-set.mixed-joins.test.ts). It documents the equivalence for
+		// query-set.joins.test.ts). It documents the equivalence for
 		// readers, especially next to the with-pagination contrast test below.
 		const qs = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
