@@ -287,3 +287,30 @@ as issues so the release notes can scope them.
   `90d201c`, `6618f09`) have concrete completions in §4.1–§4.3 — items 1–3
   are the release blockers, since each is a wrong-result or unsafe behavior
   in the very feature the commit advertises as fixed.
+
+---
+
+## 5. Resolution (2026-07-11, same day)
+
+Every finding in §2 and the §3.1 test gap has been fixed (or explicitly
+documented where a fix was the wrong tradeoff) in the commits below. Full
+matrix after the fixes: SQLite 587 pass / 0 fail, Postgres 700 pass / 0
+fail (2 pre-existing skips each), typecheck and lint clean.
+
+| Findings | Commit | Resolution |
+|---|---|---|
+| Q1, Q2 | `1a8d124` | `has()`/`attach()` now delete the same key from the other map; `with()` applies last-writer-wins across kinds. Joins and attaches fully replace each other; stale fetchFns no longer run. |
+| H1 | `fc8bcf1` | Extender results with an own enumerable `__proto__` key are pre-shadowed as an own data property before `Object.assign`, preserving exact merge semantics otherwise. |
+| Q7 | `dbea811` | `sqlCompare` is a strict total order: type-rank for cross-type pairs, NaN/invalid Dates pinned after their type, null vs undefined equal. Same-type comparisons unchanged. |
+| Q6, Q8 | `91490cb` | Modifiers applied exactly once on the outermost builder on all six `#toQuery` paths; on the write fast path `modifyEnd` lands on the write builder and `modifyFront` forces the CTE wrap. Redundant `selectAll()` removed. |
+| Q3 | `99df5aa` | Made it work: one-joins that aren't recursively cardinality-one are included in the paginated subquery in reduced form (without their nested many-joins), so ordering by their columns with pagination now executes correctly (incl. lateral top-N). No type change needed. Ordering by a *many*-join's column with pagination remains invalid (pre-existing, semantically ill-defined). |
+| Q4, Q9 | `6617abc` | Data-modifying CTEs hoisted to the top-level statement at both wrap sites (pagination and EXISTS — the plain-write `__base` CTE in `toExistsQuery` was also affected); `#asWrite` resets the stale `writeQueryCreator`. `toCountQuery` was verified already correct and pinned. |
+| Q5 | `10e42eb` | Write bases with explicit RETURNING columns now hoist those names through the pagination wrap; `returningAll()` gets a clear `UnsupportedReturningAllError` instead of the misleading internal error. |
+| H3 | `deedc4b` | The sort path copies before sorting — fixes caller-array mutation and a second latent bug where a sibling collection's `orderBy` reordered the shared group array other siblings read. |
+| H2, H7 | `6522b05` | Composite key parts are self-delimiting tokens (type tag + JSON string literal), provably injective — bigint/string, NaN/Infinity, and Date/ISO collisions eliminated. Single-key raw-value semantics kept and documented (H7). |
+| H5, H6, H8, H9 | `1b356b1` | Empty attach inputs skip the fetchFn (H6); mismatched `matchChild`/`toParent` arity throws `AttachedKeysArityMismatchError`, with `["id"]` ≡ `"id"` normalization (H8); standalone `hydrate()` never throws synchronously (H9). H5 resolved by documented constraint: fetch-input dedupe is global and pre-sort, so "same row for fetch and lookup" would require restructuring the pipeline — duplicate-keyed parents must agree on `toParent` columns (now in FetchFn's JSDoc, with the consistent case pinned by test). |
+| H4, §3.1 gap | `ec0e782` | Attach element sharing documented on `FetchFn`, the attach methods, and the README; matchless-left-join `executeExists` assertions restored for `leftJoinOne`/`leftJoinMany`. |
+
+A final adversarial review of the cumulative fix diff (interactions between
+the fixes, which repeatedly touched `#toQuery` and the hydrator pipeline)
+was run before sign-off; see the branch discussion for its verdict.
