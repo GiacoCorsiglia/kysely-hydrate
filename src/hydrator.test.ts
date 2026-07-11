@@ -550,6 +550,237 @@ test("composite keys: values containing the separator do not collide", async () 
 	assert.deepStrictEqual(result[1], { key1: "x", key2: "y::z", items: [{ id: 2 }] });
 });
 
+test("composite keys: bigint and its string form do not collide", async () => {
+	interface CompositeRow {
+		key1: bigint | string;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// Regression test: bigints were encoded as `${value}n`, so the bigint 123n
+	// and the literal string "123n" produced the same key and were merged.
+	const rows: CompositeRow[] = [
+		{ key1: 123n, key2: "x", nested$$id: 1 },
+		{ key1: "123n", key2: "x", nested$$id: 2 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.deepStrictEqual(result[0], { key1: 123n, key2: "x", items: [{ id: 1 }] });
+	assert.deepStrictEqual(result[1], { key1: "123n", key2: "x", items: [{ id: 2 }] });
+});
+
+test("composite keys: NaN and Infinity do not collide, NaN groups with NaN", async () => {
+	interface CompositeRow {
+		key1: number;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// Regression test: NaN and Infinity both JSON-serialize to null, so they
+	// produced the same key and were merged.  NaN must still equal NaN
+	// (SameValueZero), so the two NaN rows group into one entity.
+	const rows: CompositeRow[] = [
+		{ key1: Number.NaN, key2: "x", nested$$id: 1 },
+		{ key1: Number.NaN, key2: "x", nested$$id: 2 },
+		{ key1: Number.POSITIVE_INFINITY, key2: "x", nested$$id: 3 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.deepStrictEqual(result[0], {
+		key1: Number.NaN,
+		key2: "x",
+		items: [{ id: 1 }, { id: 2 }],
+	});
+	assert.deepStrictEqual(result[1], {
+		key1: Number.POSITIVE_INFINITY,
+		key2: "x",
+		items: [{ id: 3 }],
+	});
+});
+
+test("composite keys: Date and its ISO string do not collide, equal Dates group", async () => {
+	interface CompositeRow {
+		key1: Date | string;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	const date = new Date("2026-01-02T03:04:05.678Z");
+
+	// Regression test: Date#toJSON made a Date and its ISO string produce the
+	// same key, merging them.  Two Dates with the same time value must still
+	// produce the same key (compared by value, not identity).
+	const rows: CompositeRow[] = [
+		{ key1: date, key2: "x", nested$$id: 1 },
+		{ key1: date.toISOString(), key2: "x", nested$$id: 2 },
+		{ key1: new Date(date.getTime()), key2: "x", nested$$id: 3 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.deepStrictEqual(result[0], { key1: date, key2: "x", items: [{ id: 1 }, { id: 3 }] });
+	assert.deepStrictEqual(result[1], {
+		key1: date.toISOString(),
+		key2: "x",
+		items: [{ id: 2 }],
+	});
+});
+
+test("composite keys: values containing the encoding's structural characters do not collide", async () => {
+	interface CompositeRow {
+		key1: string;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// The key encoding uses type-tag characters and JSON string literals
+	// (quotes and backslash escapes).  Strings containing those structural
+	// characters must not collide across part boundaries.
+	const rows: CompositeRow[] = [
+		{ key1: 'a"s"b', key2: "c", nested$$id: 1 },
+		{ key1: "a", key2: 'b"s"c', nested$$id: 2 },
+		{ key1: 'a\\"s"b', key2: "c", nested$$id: 3 },
+		{ key1: "a\\", key2: '"s"b\\"c', nested$$id: 4 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 4);
+	assert.deepStrictEqual(result[0], { key1: 'a"s"b', key2: "c", items: [{ id: 1 }] });
+	assert.deepStrictEqual(result[1], { key1: "a", key2: 'b"s"c', items: [{ id: 2 }] });
+	assert.deepStrictEqual(result[2], { key1: 'a\\"s"b', key2: "c", items: [{ id: 3 }] });
+	assert.deepStrictEqual(result[3], { key1: "a\\", key2: '"s"b\\"c', items: [{ id: 4 }] });
+});
+
+test("composite keys: part boundaries cannot shift", async () => {
+	interface CompositeRow {
+		key1: string;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// The same characters split differently across parts must produce
+	// different keys — ["a", "b"] vs ["ab", ""] and the empty-first variant.
+	const rows: CompositeRow[] = [
+		{ key1: "a", key2: "b", nested$$id: 1 },
+		{ key1: "ab", key2: "", nested$$id: 2 },
+		{ key1: "", key2: "ab", nested$$id: 3 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 3);
+	assert.deepStrictEqual(result[0], { key1: "a", key2: "b", items: [{ id: 1 }] });
+	assert.deepStrictEqual(result[1], { key1: "ab", key2: "", items: [{ id: 2 }] });
+	assert.deepStrictEqual(result[2], { key1: "", key2: "ab", items: [{ id: 3 }] });
+});
+
+test("composite keys: values without a primitive conversion do not reject", async () => {
+	// String() throws for null-prototype objects; the fallback encoding must
+	// still produce a deterministic key rather than rejecting hydration.
+	const weird = Object.create(null);
+	const rows = [
+		{ key1: weird, key2: 1 },
+		{ key1: weird, key2: 1 },
+		{ key1: weird, key2: 2 },
+	];
+
+	const hydrator = createHydrator<any>(["key1", "key2"]).fields({ key2: true });
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ key2: 1 }, { key2: 2 }]);
+});
+
+test("composite keys: values with equal string forms are separated by type", async () => {
+	interface CompositeRow {
+		key1: boolean | string | { toString(): string };
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// Distinct types whose string forms are identical must not collide: the
+	// boolean true vs the string "true", and a non-Date object whose String()
+	// form (the fallback encoding) equals a sibling string value.
+	const stringLikeObject = { toString: () => "true" };
+	const rows: CompositeRow[] = [
+		{ key1: true, key2: "x", nested$$id: 1 },
+		{ key1: "true", key2: "x", nested$$id: 2 },
+		{ key1: stringLikeObject, key2: "x", nested$$id: 3 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 3);
+	assert.deepStrictEqual(result[0], { key1: true, key2: "x", items: [{ id: 1 }] });
+	assert.deepStrictEqual(result[1], { key1: "true", key2: "x", items: [{ id: 2 }] });
+	assert.deepStrictEqual(result[2], { key1: stringLikeObject, key2: "x", items: [{ id: 3 }] });
+});
+
+test("composite keys: binary values group by content and keep byte boundaries", async () => {
+	interface CompositeRow {
+		key1: Uint8Array;
+		key2: string;
+		nested$$id: number | null;
+	}
+
+	// Binary key parts (e.g. blob columns) compare by content: two distinct
+	// Uint8Array instances with the same bytes group together, while byte
+	// sequences like [1, 2] and [12] stay distinct.
+	const rows: CompositeRow[] = [
+		{ key1: new Uint8Array([1, 2]), key2: "x", nested$$id: 1 },
+		{ key1: new Uint8Array([1, 2]), key2: "x", nested$$id: 2 },
+		{ key1: new Uint8Array([12]), key2: "x", nested$$id: 3 },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(result.length, 2);
+	assert.deepStrictEqual(result[0], {
+		key1: new Uint8Array([1, 2]),
+		key2: "x",
+		items: [{ id: 1 }, { id: 2 }],
+	});
+	assert.deepStrictEqual(result[1], {
+		key1: new Uint8Array([12]),
+		key2: "x",
+		items: [{ id: 3 }],
+	});
+});
+
 //
 // Nested Collections (has/hasMany/hasOne/hasOneOrThrow)
 //
