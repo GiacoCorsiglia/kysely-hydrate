@@ -1315,6 +1315,274 @@ describe("query-set: sql", () => {
 		);
 	});
 
+	test("SQL: writeAs() with many-join and pagination - CTEs hoisted above the wrapping subquery", async () => {
+		const qs = querySet(db)
+			.writeAs(
+				"updated",
+				(db) =>
+					db.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"updated.id",
+			)
+			.limit(1);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Pagination with many-joins wraps the base in a derived table; Postgres
+		// requires data-modifying CTEs at the top level of the statement, so the
+		// WITH must be hoisted above the wrapping subquery — exactly once.
+		assert.ok(sql.startsWith("with"));
+		assert.strictEqual(sql.match(/with /g)?.length, 1);
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select
+				"updated"."id" as "id",
+				"updated"."username" as "username",
+				"updated"."email" as "email",
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from (
+				select
+					"updated"."id" as "id",
+					"updated"."username" as "username",
+					"updated"."email" as "email"
+				from (
+					select "id", "username", "email" from "updated"
+				) as "updated"
+				order by "updated"."id" asc
+				limit ?
+			) as "updated"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "updated"."id"
+			order by "updated"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: writeAs() toExistsQuery - CTEs hoisted to top level", async () => {
+		const qs = querySet(db)
+			.writeAs(
+				"updated",
+				(db) =>
+					db.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"updated.id",
+			);
+
+		const sql = qs.toExistsQuery().compile().sql;
+
+		// The base select becomes an EXISTS subquery, so the WITH must be hoisted
+		// to the outer statement — exactly once.  (The leftJoinMany is excluded
+		// from exists queries entirely.)
+		assert.ok(sql.startsWith("with"));
+		assert.strictEqual(sql.match(/with /g)?.length, 1);
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select exists (
+				select 1 as "_"
+				from (
+					select "id", "username", "email" from "updated"
+				) as "updated"
+			) as "exists"
+		`,
+		);
+	});
+
+	test("SQL: writeAs() toCountQuery - CTEs stay at top level", async () => {
+		const qs = querySet(db)
+			.writeAs(
+				"updated",
+				(db) =>
+					db.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"updated.id",
+			);
+
+		const sql = qs.toCountQuery().compile().sql;
+
+		// Count queries never wrap the base select, so the WITH is already at the
+		// top level.  (The leftJoinMany is excluded from count queries entirely.)
+		assert.ok(sql.startsWith("with"));
+		assert.strictEqual(sql.match(/with /g)?.length, 1);
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "updated" as (
+				update "users"
+				set "email" = ?
+				where "id" = ?
+				returning *
+			)
+			select count(*) as "count"
+			from (
+				select "id", "username", "email" from "updated"
+			) as "updated"
+		`,
+		);
+	});
+
+	test("SQL: insertAs() toExistsQuery - implicit __base CTE hoisted to top level", async () => {
+		const qs = querySet(db).insertAs("newUser", (db) =>
+			db
+				.insertInto("users")
+				.values({ username: "user1", email: "user1@example.com" })
+				.returning(["id", "username", "email"]),
+		);
+
+		const sql = qs.toExistsQuery().compile().sql;
+
+		// The __base CTE wrapping a write is data-modifying too, so it must also
+		// be hoisted above the EXISTS subquery.
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?)
+				returning "id", "username", "email"
+			)
+			select exists (
+				select 1 as "_" from "__base" as "newUser"
+			) as "exists"
+		`,
+		);
+	});
+
+	test("SQL: insert() after write() discards the stale write CTEs", async () => {
+		const afterWrite = querySet(db)
+			.writeAs(
+				"u",
+				(db) =>
+					db.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "stale@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			)
+			.insert((db) =>
+				db
+					.insertInto("users")
+					.values({ username: "user1", email: "user1@example.com" })
+					.returning(["id", "username", "email"]),
+			);
+
+		const fresh = querySet(db).insertAs("u", (db) =>
+			db
+				.insertInto("users")
+				.values({ username: "user1", email: "user1@example.com" })
+				.returning(["id", "username", "email"]),
+		);
+
+		const sql = afterWrite.toQuery().compile().sql;
+
+		// The stale "updated" CTE (and its UPDATE) must not appear anywhere; the
+		// query must be identical to a fresh insert query set.
+		assert.ok(!sql.includes("update"));
+		assert.strictEqual(sql, fresh.toQuery().compile().sql);
+	});
+
+	test("SQL: write() after insert() fully replaces the base", async () => {
+		const afterInsert = querySet(db)
+			.insertAs("updated", (db) =>
+				db
+					.insertInto("users")
+					.values({ username: "user1", email: "user1@example.com" })
+					.returning(["id", "username", "email"]),
+			)
+			.write(
+				(db) =>
+					db.with("updated", (qb) =>
+						qb
+							.updateTable("users")
+							.set({ email: "new@example.com" })
+							.where("id", "=", 1)
+							.returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			);
+
+		const fresh = querySet(db).writeAs(
+			"updated",
+			(db) =>
+				db.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", 1)
+						.returningAll(),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+		);
+
+		const sql = afterInsert.toQuery().compile().sql;
+
+		// The replaced insert must not appear anywhere; the query must be
+		// identical to a fresh write query set.
+		assert.ok(!sql.includes("insert"));
+		assert.strictEqual(sql, fresh.toQuery().compile().sql);
+	});
+
 	test("SQL: writeAs() with withSchema - CTE names are not schema-qualified", async () => {
 		const sdb = db.withSchema("myapp");
 		const qs = querySet(sdb).writeAs(

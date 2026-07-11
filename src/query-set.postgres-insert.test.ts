@@ -395,6 +395,36 @@ describePg("query-set: postgres-insert", () => {
 	});
 
 	//
+	// Test 10b: executeExists hoists the implicit __base CTE
+	//
+
+	test("insertAs() - executeExists hoists the __base CTE above the EXISTS wrap", async () => {
+		await testInTransaction(db, async (trx) => {
+			// The implicit __base CTE wrapping the INSERT is data-modifying, so it
+			// must be hoisted to the top level of the EXISTS statement or Postgres
+			// rejects the query (SQLSTATE 0A000).
+			const exists = await querySet(trx)
+				.insertAs("newUser", (db) =>
+					db
+						.insertInto("users")
+						.values({ username: "existsUser", email: "exists-insert@example.com" })
+						.returning(["id", "username", "email"]),
+				)
+				.executeExists();
+
+			assert.strictEqual(exists, true);
+
+			// The insert itself still executed.
+			const user = await trx
+				.selectFrom("users")
+				.select(["username"])
+				.where("email", "=", "exists-insert@example.com")
+				.executeTakeFirstOrThrow();
+			assert.strictEqual(user.username, "existsUser");
+		});
+	});
+
+	//
 	// Test 11: Insert with no results (should return undefined)
 	//
 
