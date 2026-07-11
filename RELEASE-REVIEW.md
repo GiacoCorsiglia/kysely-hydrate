@@ -139,6 +139,53 @@ combination is only covered indirectly (via `executeCount` with the same
 matchless child, which shares the join-filtering strategy). Low risk;
 worth restoring as a one-line table case.
 
+### 3.2 Remaining test restructuring (core/execution split, renames, setup refactor)
+
+**Verdict: no coverage regressions found.** Every deleted or renamed file was
+accounted test-by-test against its state immediately before deletion:
+
+| Old file | Tests | Accounted | Destination(s) |
+|---|---|---|---|
+| `query-set.basic.test.ts` | 19 | 19/19 | `core.test.ts`, `execution.test.ts` |
+| `query-set.edge-cases.test.ts` | 24 | 24/24 | `execution`, `core`, `hydration`, `joins` |
+| `query-set.collection-modify.test.ts` | 7 | 7/7 | `hydration.test.ts` (verbatim) |
+| `query-set.modify.test.ts` | 7 | 7/7 | `core.test.ts` (verbatim) |
+| `query-set.complex.test.ts` → `nesting.test.ts` | 9 | 9/9 | `nesting`, `hydration`, `execution` (one 3-level test subsumed by the retained 4-level superset) |
+| `query-set.sql-generation.test.ts` → `sql.test.ts` | 38 | 38/38 | pure rename + 129 added lines; all SQL-text/snapshot/error-class assertions intact |
+| `query-set.column-aliases.test.ts` (shrunk) | 13 | 13/13 | 5 SQL tests moved verbatim to `sql.test.ts` |
+| `query-set.postgres.test.ts` | 36 | 36/36 | see below |
+| `query-set.pagination.test.ts` (3 moved) | 3 | 3/3 | `execution.test.ts` (verbatim) |
+
+Notable points:
+
+- **The deleted 717-line `query-set.postgres.test.ts` was a smoke suite**
+  (length / `Array.isArray` checks) of generic API behavior with *no*
+  pg-specific constructs (no jsonb, arrays, RETURNING, casts — verified by
+  grep). Every generic test file runs under both dialects via
+  `getDbForTest()` + `npm run test:all`, so its 36 scenarios went from
+  pg-only smoke checks to exact-equality checks under **both** dialects.
+  The genuinely pg-only write suites (`postgres-insert/update/delete/write/
+  mixed-writes`) survive with identical test counts.
+- **Fixture data is structurally unchanged** (`aa84af4`): only reply content
+  strings were renamed; row counts, ids, relationships, nulls, and the tricky
+  duplicate-reply structure that composite-keyBy/deep-nesting tests depend on
+  are intact. `fixture.ts` was not deleted — only the experimental seeder
+  moved out.
+- **Postgres wiring was strengthened**: `search_path` is now set via pool
+  `options` so every pooled connection uses the per-file random schema
+  (previously only one connection was configured — a latent flakiness bug),
+  and a `pool.end()` guard fixes hangs in compile-only test files.
+- Error-class assertions (`NoResultError`, `ExpectedOneItemError`,
+  `CardinalityViolationError`, `UnexpectedSelectAllError`,
+  `UnexpectedComplexAliasError`) all survive. The deleted `prefixSelectArg`
+  tests covered a function deleted in the same commit with no other callers
+  (dead code, not a gap); `helpers/query-wrapper.ts` was confirmed
+  reference-free before deletion.
+- New unit coverage: `prefixes.test.ts` (16 proxy/prefix tests),
+  `hydrator.test.ts` 67→85 (proto-safety, dedupe, referential distinctness,
+  one-shot iterables, async rejection), expanded hydration/attach/execution
+  suites.
+
 ---
 
 ## 4. Fix plan
