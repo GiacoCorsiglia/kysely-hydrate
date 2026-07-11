@@ -1018,13 +1018,20 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 
 	/**
 	 * Calls {@link k.SelectQueryBuilder.modifyFront} on the query before it is
-	 * executed.
+	 * executed.  The modifier is applied to the outermost query produced by
+	 * {@link toQuery}, not to any inner subqueries.
+	 *
+	 * **Note:** Kysely write query builders (insert/update/delete) don't
+	 * support `modifyFront`, so on a write query set this forces the write into
+	 * a data-modifying CTE and applies the modifier to the outer `SELECT`
+	 * (dialect support required, e.g. PostgreSQL).
 	 */
 	modifyFront(modifier: k.Expression<any>): this;
 
 	/**
 	 * Calls {@link k.SelectQueryBuilder.modifyEnd} on the query before it is
-	 * executed.
+	 * executed.  The modifier is applied to the outermost query produced by
+	 * {@link toQuery}, not to any inner subqueries.
 	 */
 	modifyEnd(modifier: k.Expression<any>): this;
 
@@ -2843,6 +2850,31 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
+	/**
+	 * Applies the stored `modifyFront`/`modifyEnd` modifiers to the query.
+	 * Every return path of {@link #toQuery} must pass its final (outermost)
+	 * builder through this exactly once so the modifiers end up on the query
+	 * the caller actually executes, never on an inner subquery.
+	 *
+	 * All Kysely query builders support `modifyEnd`, but only select query
+	 * builders support `modifyFront` — callers must not pass a non-select
+	 * builder when front modifiers are present ({@link #toQuery} wraps writes
+	 * in a SELECT in that case).
+	 */
+	#applyModifiers<QB extends AnyQueryBuilder>(qb: QB): QB {
+		const { frontModifiers, endModifiers } = this.#props;
+
+		for (const modifier of frontModifiers) {
+			qb = (qb as AnySelectQueryBuilder).modifyFront(modifier) as QB;
+		}
+
+		for (const modifier of endModifiers) {
+			qb = (qb as AnySelectQueryBuilder).modifyEnd(modifier) as QB;
+		}
+
+		return qb;
+	}
+
 	#applyOrderBy(qb: AnySelectQueryBuilder, isOuter: boolean = false): AnySelectQueryBuilder {
 		const { baseAlias, keyBy, orderBy } = this.#props;
 		const eb = k.expressionBuilder<any, any>(qb);
@@ -2983,25 +3015,32 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				if (isNested && !isSelectQueryBuilder(baseQuery)) {
 					throw new InvalidJoinedQuerySetError(baseAlias);
 				}
-				return baseQuery as IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder;
+				// Kysely write query builders don't support `modifyFront`, so when front
+				// modifiers are present a write must fall through to the CTE wrapping
+				// below, which applies the modifiers to the outer SELECT instead.
+				if (isSelectQueryBuilder(baseQuery) || !this.#props.frontModifiers.length) {
+					return this.#applyModifiers(baseQuery) as IsNested extends true
+						? AnySelectQueryBuilder
+						: AnyQueryBuilder;
+				}
 			}
 
 			// If it's a SELECT, we can just apply the limit and offset to the base query.
 			if (isSelectQueryBuilder(baseQuery)) {
-				return this.#applyLimitAndOffset(baseQuery);
+				return this.#applyModifiers(this.#applyLimitAndOffset(baseQuery));
 			}
 
-			// Otherwise, for writes, (unusual use case) we need to make it a CTE.  Just select all
-			// instead of hoisting, because these can't be nested anyway (so we will never need to hoist
-			// from here).
-			return this.#applyLimitAndOffset(
-				this.#getSelectFromBase(isNested, isLocalSubquery).selectAll(),
+			// Otherwise, for writes, (unusual use case) we need to make it a CTE.
+			// #getSelectFromBase selects all instead of hoisting here, because these
+			// can't be nested anyway (so we will never need to hoist from here).
+			return this.#applyModifiers(
+				this.#applyLimitAndOffset(this.#getSelectFromBase(isNested, isLocalSubquery)),
 			);
 		}
 
 		// If no pagination, just return the joined query, even if it has row explosion.
 		if (!hasPagination) {
-			return this.#toJoinedQuery(isNested, isLocalSubquery);
+			return this.#applyModifiers(this.#toJoinedQuery(isNested, isLocalSubquery));
 		}
 
 		// If only cardinality-one joins, we can safely apply limit/offset to the
@@ -3016,7 +3055,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			if (isNested || isLocalSubquery) {
 				qb = this.#applyOrderBy(qb, false);
 			}
-			return this.#applyLimitAndOffset(qb);
+			return this.#applyModifiers(this.#applyLimitAndOffset(qb));
 		}
 
 		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery);
@@ -3048,15 +3087,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			qb = this.#applyOrderBy(qb, true);
 		}
 
-		for (const modifier of this.#props.frontModifiers) {
-			qb = qb.modifyFront(modifier);
-		}
-
-		for (const modifier of this.#props.endModifiers) {
-			qb = qb.modifyEnd(modifier);
-		}
-
-		return qb;
+		return this.#applyModifiers(qb);
 	}
 
 	toQuery(): any {
