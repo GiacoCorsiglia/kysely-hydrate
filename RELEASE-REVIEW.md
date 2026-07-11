@@ -1,6 +1,8 @@
 # Release review: changes since `3fabc72` (keyBy fix) through HEAD
 
-Reviewed 2026-07-11, covering 34 commits (`3fabc72^..HEAD`): every functional
+Reviewed 2026-07-11, covering the 34 commits from `3fabc72` (inclusive)
+through `3c5c17b` — i.e. `3fabc72^..HEAD` excluding the commits that add
+this report: every functional
 fix and the full test restructuring, ahead of the next release. Baseline at
 HEAD: SQLite suite 532 pass / 0 fail, Postgres suite 639 pass / 0 fail,
 typecheck clean, lint clean.
@@ -45,7 +47,8 @@ gaps or weakened assertions.
 | `38fb3ca` | Dead code removed: `src/helpers/query-wrapper.ts`, parts of `prefixes.ts`, `select-renamer.ts`, `utils.ts`                                |
 
 Docs-only commits in the range: `42ef7bc`, `b5ce0c7`, `0b766fa`, `f2ec40f`,
-`6902197` (+ test), `833b51a`, `c9bde4c`, `75a7ede`.
+`833b51a`, `c9bde4c`, `75a7ede`. (`6902197` is primarily a docs/behavior
+clarification but ships a test, so it is cataloged above.)
 
 ### 1.3 Test restructuring
 
@@ -62,11 +65,12 @@ Docs-only commits in the range: `42ef7bc`, `b5ce0c7`, `0b766fa`, `f2ec40f`,
   `hydration`/`attach`/`order-by`/`pagination`/`column-aliases` files.
 - **Renames**: `query-set.complex.test.ts` → `query-set.nesting.test.ts`;
   `query-set.sql-generation.test.ts` → `query-set.sql.test.ts`.
-- **Setup refactor** (`aa84af4`): `src/__tests__/fixture.ts` deleted,
-  `helpers.ts` added, `fixture.sql` / `postgres.ts` / `sqlite.ts` reworked,
-  `experimental-seed-db.ts` added.
-- **New unit tests**: `src/helpers/prefixes.test.ts`, expanded
-  `utils.test.ts`, `select-renamer.test.ts`, `hydrator.test.ts` (+741 lines),
+- **Setup refactor** (`aa84af4`): `src/__tests__/fixture.ts` slimmed (the
+  experimental seeder moved to `experimental-seed-db.ts`), `describePg` added
+  to `helpers.ts`, `fixture.sql` / `postgres.ts` / `sqlite.ts` reworked.
+- **New unit tests** (`f274c5f`, `afd861e`; plus `49b8fda` fixing a bad
+  test): `src/helpers/prefixes.test.ts`, expanded `utils.test.ts`,
+  `select-renamer.test.ts`, `hydrator.test.ts` (+741 lines),
   `hydrator.test-d.ts`.
 
 ---
@@ -111,7 +115,7 @@ only (Q1/Q2). `025e650` fixed pairwise antisymmetry only (Q7).
 | Q3  | **major** (confirmed)                                 | `#applyOrderBy`/`#toCardinalityOneQuery` (`src/query-set.ts:2846/2893`); type gap in `TOrderableColumnsWithJoin` (`:2499`); sibling of `6618f09` | **Ordering by a one-join's column emits invalid SQL when that join's nested query set contains a many-join and pagination is set.** `#isCollectionCardinalityOne` is recursive, so the join is excluded from the cardinality-one subquery, but the type of `orderBy` keys is not recursive — `.orderBy("author$$username").limit(3)` compiles with no cast and fails at execution with `no such column: author.username`. Fix: tighten `TOrderableColumnsWithJoin` to require recursive cardinality-one plus a clear runtime error (or include row-limited left one-joins in the subquery). No test.                                                                                                                           |
 | Q4  | **major** (SQL verified; pg error by documented rule) | `#getSelectFromBase` (`src/query-set.ts:2744`) + wrap (`:3029`); commit `ce044c4`                                                                | **`.write()` CTEs are emitted inside a derived-table subquery when combined with many-joins + pagination** — PostgreSQL rejects data-modifying CTEs below the top level (SQLSTATE 0A000). Same defect for `toExistsQuery()` on any write query set. `ce044c4` fixed only the no-join/no-pagination fast path. Fix: strip CTEs from the inner query and attach the `writeQueryCreator` to the outermost builder. No pg write test uses `limit`/`offset` at all.                                                                                                                                                                                                                                                                 |
 | Q5  | major, fails loudly (confirmed)                       | `#getSelectFromBase` (`src/query-set.ts:2768`) vs `applyHoistedSelections` (`:3034`); pre-existing                                               | `.insert()`/`.update()`/`.delete()` base + many-join + pagination cannot compile: the non-select base path uses `.selectAll(baseAlias)` assuming no further hoisting, but the pagination wrap does hoist → misleading `UnexpectedSelectAllError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Q6  | major (confirmed)                                     | `#toQuery` (`src/query-set.ts:3051`); pre-existing (introduced outside range)                                                                    | **`modifyFront()`/`modifyEnd()` are silently dropped on every query path except many-join + pagination** — all earlier `return` branches skip them. Reproduced: `.modifyEnd(sql\`/_ HINT _/\`)` absent with no joins, no joins + limit, one-join + limit, many-join without limit. Fix: apply the modifiers on every return path.                                                                                                                                                                                                                                                                                                                                                                                              |
+| Q6  | major (confirmed)                                     | `#toQuery` (`src/query-set.ts:3051`); pre-existing (introduced outside range)                                                                    | **`modifyFront()`/`modifyEnd()` are silently dropped on every query path except many-join + pagination** — all earlier `return` branches skip them. Reproduced: a `modifyEnd` SQL-comment hint is absent with no joins, no joins + limit, one-join + limit, many-join without limit. Fix: apply the modifiers on every return path.                                                                                                                                                                                                                                                                                                                                                                                            |
 | Q7  | major within claim (confirmed)                        | `sqlCompare` (`src/helpers/order-by.ts:83`); commit `025e650`                                                                                    | **The comparator is still not a total order.** (1) NaN: `a - b` returns `NaN`, and `[3, NaN, 1, NaN, 2].sort(sqlCompare)` comes back _completely unsorted_ — even the plain numbers. (2) Cross-type intransitivity: `2 < 10`, `10 ~ "10"`, but `2 > "10"` lexicographically — sort output depends on input order (`[2,"10",10]` → `["10",2,10]`; `[10,"10",2]` → `[10,"10",2]`). Fix: rank by type first (nil < boolean < numeric with NaN pinned to one end < Date < string < other), compare within rank. Only the equal-string-form case is tested.                                                                                                                                                                         |
 | Q8  | minor (confirmed)                                     | `src/query-set.ts:2997`; pre-existing                                                                                                            | Non-select base + pagination fast path double-selects: `select "user".*, * from …` (extra `.selectAll()` on a builder that already select-alls). Duplicate columns only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Q9  | note                                                  | `#asWrite` (`src/query-set.ts:3434`)                                                                                                             | Calling `.insert()`/`.update()`/`.delete()` after `.write()` keeps a stale `writeQueryCreator`: its CTEs are silently never emitted and the `ce044c4` fast-path exclusion forces unnecessary nesting. Reset `writeQueryCreator: null` in `#asWrite`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -278,8 +282,8 @@ as issues so the release notes can scope them.
 - The test restructuring is safe to ship: both audits found no lost
   coverage; assertions were generally strengthened and the old pg smoke
   suite now runs with exact-equality under both dialects.
-- Of the functional fixes, 15 of 19 commits are verified correct and
-  covered. The four partial ones (`fc8b9b5`, `f9db900`, `025e650`,
-  `ce044c4`) have concrete completions in §4.1/§4.2 — items 1–3 are the
-  release blockers, since each is a wrong-result or unsafe behavior in the
-  very feature the commit advertises as fixed.
+- Of the functional fixes, 13 of 19 commits are verified correct and
+  covered. The six partial ones (`fc8b9b5`, `f9db900`, `025e650`, `ce044c4`,
+  `90d201c`, `6618f09`) have concrete completions in §4.1–§4.3 — items 1–3
+  are the release blockers, since each is a wrong-result or unsafe behavior
+  in the very feature the commit advertises as fixed.
