@@ -29,6 +29,7 @@ import {
 import {
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
+	hasWildcardSelections,
 	hoistAndPrefixSelections,
 } from "./helpers/select-renamer.ts";
 import {
@@ -72,7 +73,7 @@ import {
 	DEFAULT_KEY_BY,
 	EnableAutoInclusion,
 } from "./hydrator.ts";
-import { InvalidJoinedQuerySetError } from "./index.ts";
+import { InvalidJoinedQuerySetError, UnsupportedReturningAllError } from "./index.ts";
 
 /**
  * A stateless Kysely plugin that strips the WITH clause from a
@@ -2782,34 +2783,48 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return qb.selectAll(baseAlias);
 		}
 
+		// As a local subquery (many-joins + limit/offset wrap the base in a
+		// derived table), the wrapper re-selects the base's columns by name, so
+		// they must be statically known: hoist them from the write's RETURNING
+		// clause.  `returningAll()` doesn't say what it returns, so it cannot be
+		// hoisted — reject it with a clear error rather than the generic
+		// UnexpectedSelectAllError from the hoisting internals.
+		if (hasWildcardSelections(baseQuery)) {
+			throw new UnsupportedReturningAllError(baseAlias);
+		}
+
 		return applyHoistedSelections(qb, baseQuery, baseAlias);
 	}
 
 	/**
-	 * Returns a query creator that attaches this query set's base CTEs — the
-	 * data-modifying CTEs captured by `.write()`/`writeAs()`, or the implicit
-	 * `__base` CTE that wraps a non-select base query — to whatever query it
-	 * creates, or null when the base carries no such CTEs.
+	 * Hoists this query set's base CTEs — the data-modifying CTEs captured by
+	 * `.write()`/`writeAs()`, or the implicit `__base` CTE that wraps a
+	 * non-select base query — out of the given inner query and onto a query
+	 * creator for the outer (wrapping) query.
 	 *
 	 * Postgres requires data-modifying CTEs to be attached to the top-level
 	 * statement, so whenever the base select gets wrapped (in a derived table
 	 * for pagination, or in an EXISTS subquery), the wrapper must strip the
-	 * CTEs from the inner subquery with {@link stripWithPlugin} and build the
-	 * outermost query from this creator instead, so the CTEs are emitted
-	 * exactly once, at the top level.
+	 * CTEs from the inner subquery (via {@link stripWithPlugin}) and build the
+	 * outermost query from the returned creator instead, so the CTEs are
+	 * emitted exactly once, at the top level.  When the base carries no such
+	 * CTEs, the inner query is returned untouched along with the plain `db`.
 	 */
-	#getBaseCteCreator(): k.QueryCreator<any> | null {
+	#hoistBaseCtes(inner: AnySelectQueryBuilder): {
+		queryCreator: k.QueryCreator<any>;
+		inner: AnySelectQueryBuilder;
+	} {
 		const { db, baseQuery, writeQueryCreator } = this.#props;
 
-		if (writeQueryCreator) {
-			return writeQueryCreator;
+		const queryCreator =
+			writeQueryCreator ??
+			(isSelectQueryBuilder(baseQuery) ? null : db.with("__base", () => baseQuery));
+
+		if (!queryCreator) {
+			return { queryCreator: db, inner };
 		}
 
-		if (!isSelectQueryBuilder(baseQuery)) {
-			return db.with("__base", () => baseQuery);
-		}
-
-		return null;
+		return { queryCreator, inner: inner.withPlugin(stripWithPlugin) };
 	}
 
 	/**
@@ -3104,7 +3119,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isNested: IsNested,
 		isLocalSubquery: boolean,
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
-		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
+		const { baseQuery, baseAlias, limit, offset, orderBy, orderByKeys, joinCollections } =
 			this.#props;
 
 		// Strict null checks: an explicit limit/offset of 0 must still be applied.
@@ -3177,9 +3192,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		// Pagination (and therefore ordering — see #toPaginatedCardinalityOneQuery)
 		// always applies here: we only reach this point with pagination set.
+		// This query always becomes a derived table of the wrapping query built
+		// below, so it is a local subquery even at the top level — in particular,
+		// a non-select base must hoist its RETURNING columns (which the wrapper
+		// re-selects by name) instead of using `.selectAll()`.
 		const cardinalityOneQuery = this.#toPaginatedCardinalityOneQuery(
 			isNested,
-			isLocalSubquery,
+			true,
 			orderByJoinKeys,
 		);
 
@@ -3188,11 +3207,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// data-modifying CTEs that are not attached to the top-level statement.
 		// (Writes cannot be nested, so when a creator exists this wrapper IS the
 		// top-level statement.)
-		const baseCteCreator = this.#getBaseCteCreator();
-		const aliasedCardinalityOneQuery = (
-			baseCteCreator ? cardinalityOneQuery.withPlugin(stripWithPlugin) : cardinalityOneQuery
-		).as(baseAlias);
-		let qb = (baseCteCreator ?? db).selectFrom(aliasedCardinalityOneQuery);
+		const hoisted = this.#hoistBaseCtes(cardinalityOneQuery);
+		let qb = hoisted.queryCreator.selectFrom(hoisted.inner.as(baseAlias));
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
 		// hoisted further by parent queries.  EXCEPT: skip the selections of joins that were included
@@ -3244,15 +3260,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// (write CTEs / `__base`) must be hoisted to the outer statement:
 		// Postgres rejects data-modifying CTEs that are not attached to the
 		// top-level statement.
-		const baseCteCreator = this.#getBaseCteCreator();
-
-		const inner = this.#toCardinalityOneQuery(false, false)
-			.clearSelect()
-			.select((eb) => eb.lit(1).as("_"));
-
-		return (baseCteCreator ?? this.#props.db).selectNoFrom(({ exists }) =>
-			exists(baseCteCreator ? inner.withPlugin(stripWithPlugin) : inner).as("exists"),
+		const hoisted = this.#hoistBaseCtes(
+			this.#toCardinalityOneQuery(false, false)
+				.clearSelect()
+				.select((eb) => eb.lit(1).as("_")),
 		);
+
+		return hoisted.queryCreator.selectNoFrom(({ exists }) => exists(hoisted.inner).as("exists"));
 	}
 
 	compile() {
