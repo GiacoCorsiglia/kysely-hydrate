@@ -152,6 +152,11 @@ function isExecutable<Output>(value: unknown): value is Executable<Output> {
  * matching: deduplication keeps an arbitrary representative row per entity
  * key, so when duplicates disagree on a non-key `toParent` column, which
  * row's value is used for fetching and matching is unspecified.
+ *
+ * The returned objects are attached by reference: "many"-mode arrays are
+ * per-parent copies, but the objects inside them are shared across every
+ * parent that matches the same value, and "one"/"oneOrThrow" modes attach
+ * the shared object itself — mutate attached objects with care.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
@@ -665,6 +670,11 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * Replaces any collection — nested or attached — previously registered
 	 * under the same key.
 	 *
+	 * The fetched objects are attached by reference: "many"-mode arrays are
+	 * per-parent copies, but the objects inside them are shared across every
+	 * parent that matches the same value, and "one"/"oneOrThrow" modes attach
+	 * the shared object itself — mutate attached objects with care.
+	 *
 	 * For convenience, you may prefer to use the shorthand methods:
 	 * {@link attachMany}, {@link attachOne}, or {@link attachOneOrThrow}.
 	 *
@@ -707,6 +717,10 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	/**
 	 * Shorthand for `attach("many", ...)` - configures an attached array collection.
 	 *
+	 * Each parent receives its own copy of the array, but the objects inside it
+	 * are shared across every parent that matches the same value — mutate them
+	 * with care.
+	 *
 	 * @param key - The property name for the collection in the output.
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
 	 * @param keys.matchChild - The key(s) on the attached output to use for matching to parents.
@@ -721,6 +735,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 
 	/**
 	 * Shorthand for `attach("one", ...)` - configures an attached nullable single entity.
+	 *
+	 * The attached object is shared across every parent that matches the same
+	 * value — mutate it with care.
 	 *
 	 * @param key - The property name for the entity in the output.
 	 * @param fetchFn - A function that fetches and hydrates the attached data.
@@ -737,6 +754,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	/**
 	 * Shorthand for `attach("oneOrThrow", ...)` - configures an attached non-nullable single entity.
 	 * Throws an error if the entity is not found during hydration.
+	 *
+	 * The attached object is shared across every parent that matches the same
+	 * value — mutate it with care.
 	 *
 	 * @param key - The property name for the entity in the output
 	 * @param fetchFn - A function that fetches and hydrates the attached data

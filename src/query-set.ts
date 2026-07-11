@@ -1348,6 +1348,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * array. The `fetchFn` is called exactly once per query execution with all
 	 * parent rows to avoid N+1 queries.
 	 *
+	 * Each parent receives its own copy of the array, but the objects inside it
+	 * are shared across every parent that matches the same value — mutate them
+	 * with care.
+	 *
 	 * The `fetchFn` can return either:
 	 * - An `Iterable<T>` (e.g., array, Set)
 	 * - An `Executable` (an object with `execute(): Promise<Iterable<T>>`)
@@ -1425,6 +1429,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * Attaches data from an external source (not via SQL joins) as a single
 	 * nested object. The object will be nullable. The `fetchFn` is called
 	 * exactly once per query execution with all parent rows to avoid N+1 queries.
+	 *
+	 * The attached object is shared across every parent that matches the same
+	 * value — mutate it with care.
 	 *
 	 * The `fetchFn` can return either:
 	 * - An `Iterable<T>` (e.g., array, Set)
