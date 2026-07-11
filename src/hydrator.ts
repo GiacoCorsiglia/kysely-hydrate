@@ -1252,7 +1252,17 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			if (extenders) {
 				for (const extender of extenders) {
-					Object.assign(entity, extender(accessor as Input));
+					const extension = extender(accessor as Input);
+					// Extender keys are only known at call time, so there is no
+					// precomputed flag like the paths above. Object.assign would
+					// funnel an own enumerable "__proto__" key through
+					// Object.prototype's setter; pre-shadowing it with an own data
+					// property makes the subsequent [[Set]] a plain write while
+					// keeping Object.assign's semantics for every other key.
+					if (Object.prototype.propertyIsEnumerable.call(extension, "__proto__")) {
+						defineProtoShadowedKey(entity, undefined);
+					}
+					Object.assign(entity, extension);
 				}
 			}
 		}
