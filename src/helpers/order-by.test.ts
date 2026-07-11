@@ -62,24 +62,127 @@ describe("sqlCompare", () => {
 		assert.equal(sqlCompare(date1, date3), 0);
 	});
 
-	it("should handle mixed types with string fallback", () => {
-		// When comparing different types, falls back to string comparison
-		assert.ok(sqlCompare(1, "2") !== 0);
+	it("should resolve mixed types by type rank", () => {
+		// Cross-type pairs resolve by type rank (boolean < numeric < Date <
+		// string < other), never by stringification — comparing 10 vs "10" as
+		// equal while 2 vs "10" compares lexicographically breaks transitivity
+		// (2 < 10 numerically but "10" < "2" lexicographically), making sort
+		// output depend on input order.
+		assert.ok(sqlCompare(1, "1") < 0);
+		assert.ok(sqlCompare("1", 1) > 0);
+		assert.ok(sqlCompare(1, "2") < 0);
+		assert.ok(sqlCompare("2", 1) > 0);
+		assert.ok(sqlCompare(true, 0) < 0);
+		assert.ok(sqlCompare(new Date(0), "a") < 0);
+		assert.ok(sqlCompare(new Date(0), 1) > 0);
+		assert.ok(sqlCompare("a", {}) < 0);
+
+		// Objects fall back to comparing String() forms.
 		assert.ok(sqlCompare({}, []) !== 0);
+
+		// number and bigint are the same rank and compare numerically.
+		assert.equal(sqlCompare(1, 1n), 0);
+		assert.equal(sqlCompare(1n, 2), -1);
+		assert.equal(sqlCompare(2, 1n), 1);
 	});
 
-	it("should be a total order on the mixed-type fallback", () => {
-		// Mixed-type values with equal string forms must compare equal — NOT
-		// return 1 for both argument orders, which violates the comparator
-		// contract (sign(cmp(a, b)) === -sign(cmp(b, a))) and makes Array.sort
-		// behavior implementation-defined.
-		assert.equal(sqlCompare(1, "1"), 0);
-		assert.equal(sqlCompare("1", 1), 0);
-		assert.equal(sqlCompare(1, 1n), 0);
+	it("should pin NaN after all other numerics", () => {
+		assert.equal(sqlCompare(NaN, NaN), 0);
+		assert.ok(sqlCompare(NaN, 3) > 0);
+		assert.ok(sqlCompare(3, NaN) < 0);
+		assert.ok(sqlCompare(NaN, Infinity) > 0);
+		assert.ok(sqlCompare(NaN, 9007199254740993n) > 0);
 
-		// Antisymmetry holds when the string forms differ.
-		assert.equal(sqlCompare(1, "2"), -1);
-		assert.equal(sqlCompare("2", 1), 1);
+		const values = [3, NaN, 1, NaN, 2];
+		values.sort(sqlCompare);
+		assert.deepEqual(values.slice(0, 3), [1, 2, 3]);
+		assert.ok(Number.isNaN(values[3]));
+		assert.ok(Number.isNaN(values[4]));
+	});
+
+	it("should pin invalid Dates after all valid Dates", () => {
+		const invalid1 = new Date(NaN);
+		const invalid2 = new Date("nope");
+		const valid = new Date("2024-01-01");
+
+		assert.equal(sqlCompare(invalid1, invalid2), 0);
+		assert.ok(sqlCompare(invalid1, valid) > 0);
+		assert.ok(sqlCompare(valid, invalid1) < 0);
+	});
+
+	// A pool of every value family the comparator must total-order together.
+	const mixedPool = [
+		null,
+		undefined,
+		false,
+		true,
+		-Infinity,
+		-5,
+		0,
+		2,
+		9.5,
+		10,
+		Infinity,
+		NaN,
+		3n,
+		9007199254740993n,
+		new Date("2020-06-15"),
+		new Date("2024-01-01"),
+		new Date(NaN),
+		"10",
+		"2",
+		"apple",
+		{},
+		[1, 2],
+	];
+
+	it("should produce the same sorted order for any input permutation", () => {
+		// The real total-order property: sort output must not depend on input
+		// order. Hardcoded shuffles (no randomness) covering the failure modes
+		// from the intransitive string fallback.
+		const evens = mixedPool.filter((_, i) => i % 2 === 0);
+		const odds = mixedPool.filter((_, i) => i % 2 === 1);
+		const permutations = [
+			[...mixedPool],
+			[...mixedPool].reverse(),
+			[...mixedPool.slice(11), ...mixedPool.slice(0, 11)],
+			[...evens, ...odds].reverse(),
+		];
+
+		const baseline = [...mixedPool].sort(sqlCompare);
+		for (const permutation of permutations) {
+			assert.deepEqual([...permutation].sort(sqlCompare), baseline);
+		}
+	});
+
+	it("should satisfy the comparator contract on all mixed-pool pairs", () => {
+		// Antisymmetry: sign(cmp(a, b)) === -sign(cmp(b, a)) for every pair.
+		for (const a of mixedPool) {
+			for (const b of mixedPool) {
+				// Compare with === rather than assert.equal: -Math.sign(0) is -0,
+				// which strict deep equality distinguishes from 0.
+				assert.ok(
+					Math.sign(sqlCompare(a, b)) === -Math.sign(sqlCompare(b, a)),
+					`antisymmetry failed for ${String(a)} vs ${String(b)}`,
+				);
+			}
+		}
+
+		// Consistency of the sorted order: every earlier element compares <= 0
+		// against every later element (a transitivity spot-check). undefined is
+		// excluded because Array.prototype.sort always moves undefined elements
+		// to the end without consulting the comparator, so its position does not
+		// reflect sqlCompare's ordering (the antisymmetry loop above still
+		// exercises undefined against every other value).
+		const sorted = mixedPool.filter((value) => value !== undefined).sort(sqlCompare);
+		for (let i = 0; i < sorted.length; i++) {
+			for (let j = i + 1; j < sorted.length; j++) {
+				assert.ok(
+					sqlCompare(sorted[i], sorted[j]) <= 0,
+					`sorted[${i}] (${String(sorted[i])}) should be <= sorted[${j}] (${String(sorted[j])})`,
+				);
+			}
+		}
 	});
 });
 
