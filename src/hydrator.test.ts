@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 
 import {
+	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
@@ -349,6 +350,16 @@ test("hydrate: rejects when the hydrator factory throws", async () => {
 		});
 	});
 	await assert.rejects(promise!, /factory failed/);
+});
+
+test("hydrate: rejects when the hydrator factory returns a non-hydrator", async () => {
+	// A factory returning something without a .hydrate() method must reject
+	// (like every other failure mode) rather than throw synchronously.
+	let promise: Promise<unknown> | undefined;
+	assert.doesNotThrow(() => {
+		promise = hydrate([], () => ({}) as any);
+	});
+	await assert.rejects(promise!, TypeError);
 });
 
 test("grouping: attachOne throws CardinalityViolationError for multiple matching children", async () => {
@@ -1030,6 +1041,211 @@ test("attach: fetchFn receives deduplicated inputs with null-key rows dropped", 
 			{ id: 1, name: "Alice" },
 			{ id: 2, name: "Bob" },
 		],
+	]);
+});
+
+test("attach: fetchFn is not called when all parent keys are nil", async () => {
+	// Every row is a left-join phantom with a nil key, so no parent entity
+	// exists to attach to.  The fetchFn must be skipped entirely: user code
+	// building `WHERE x IN (...)` from the inputs would otherwise generate
+	// invalid or pointless SQL.
+	const rows = [
+		{ id: null as unknown as number, name: null as unknown as string },
+		{ id: null as unknown as number, name: null as unknown as string },
+	];
+
+	let fetchCount = 0;
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				fetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, []);
+	assert.strictEqual(fetchCount, 0);
+});
+
+test("attach: fetchFn is not called when there are no input rows", async () => {
+	let fetchCount = 0;
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				fetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate([]);
+
+	assert.deepStrictEqual(result, []);
+	assert.strictEqual(fetchCount, 0);
+});
+
+test("attach: nested attach fetchFn is not called when all nested keys are nil", async () => {
+	// The empty-input skip must apply per nesting level: the parents exist (so
+	// their fetch runs), but every nested profile is a matchless left join, so
+	// the profile-level attach fetch must be skipped.
+	interface UserWithProfile extends User {
+		profile$$id: number | null;
+	}
+
+	const rows: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: null },
+		{ id: 2, name: "Bob", profile$$id: null },
+	];
+
+	let parentFetchCount = 0;
+	let nestedFetchCount = 0;
+
+	const hydrator = createHydrator<UserWithProfile>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				parentFetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		)
+		.hasOne("profile", "profile$$", (h) =>
+			h("id")
+				.fields(["id"])
+				.attachMany(
+					"badges",
+					() => {
+						nestedFetchCount++;
+						return [];
+					},
+					{ matchChild: "profileId" },
+				),
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [], profile: null },
+		{ id: 2, name: "Bob", posts: [], profile: null },
+	]);
+	assert.strictEqual(parentFetchCount, 1);
+	assert.strictEqual(nestedFetchCount, 0);
+});
+
+test("attach: duplicate-keyed parent rows with consistent toParent values match under sorting", async () => {
+	// Raw joined rows repeat each parent (row explosion) and arrive in a
+	// different order than the hydrator's orderBy.  As long as duplicates agree
+	// on the toParent column (the documented requirement — see FetchFn), the
+	// attach lookup must find the fetched rows regardless of which duplicate
+	// ends up representing the entity.
+	interface OrgUser {
+		id: number;
+		orgId: number;
+		name: string;
+		rank: number;
+	}
+
+	const rows: OrgUser[] = [
+		{ id: 2, orgId: 20, name: "Bob", rank: 2 },
+		{ id: 1, orgId: 10, name: "Alice", rank: 1 },
+		{ id: 2, orgId: 20, name: "Bob", rank: 2 },
+		{ id: 1, orgId: 10, name: "Alice", rank: 1 },
+	];
+
+	const received: OrgUser[][] = [];
+
+	const hydrator = createHydrator<OrgUser>("id")
+		.fields({ id: true, name: true })
+		.orderBy("rank", "desc")
+		.attachMany(
+			"orgs",
+			(inputs: OrgUser[]) => {
+				received.push(inputs);
+				return inputs.map((input) => ({ orgId: input.orgId, label: `org-${input.orgId}` }));
+			},
+			{ matchChild: "orgId", toParent: "orgId" },
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, [
+		{ id: 2, name: "Bob", orgs: [{ orgId: 20, label: "org-20" }] },
+		{ id: 1, name: "Alice", orgs: [{ orgId: 10, label: "org-10" }] },
+	]);
+	assert.strictEqual(received.length, 1);
+	assert.deepStrictEqual(received[0], [
+		{ id: 2, orgId: 20, name: "Bob", rank: 2 },
+		{ id: 1, orgId: 10, name: "Alice", rank: 1 },
+	]);
+});
+
+test("attach: throws AttachedKeysArityMismatchError for mismatched key arity", () => {
+	const hydrator = createHydrator<User>("id").fields({ id: true, name: true });
+	const fetchFn = () => [] as Array<{ a: number; b: number }>;
+
+	// Composite matchChild vs single toParent.
+	assert.throws(
+		() => hydrator.attachMany("posts", fetchFn, { matchChild: ["a", "b"], toParent: "id" }),
+		AttachedKeysArityMismatchError,
+	);
+
+	// Composite matchChild vs single-element-array toParent (normalized to
+	// the plain form, so still arity 1).
+	assert.throws(
+		() => hydrator.attachMany("posts", fetchFn, { matchChild: ["a", "b"], toParent: ["id"] }),
+		AttachedKeysArityMismatchError,
+	);
+
+	// Composite matchChild vs the default toParent (the parent's single keyBy).
+	assert.throws(
+		() => hydrator.attachMany("posts", fetchFn, { matchChild: ["a", "b"] }),
+		AttachedKeysArityMismatchError,
+	);
+});
+
+test("attach: single-element array keys are equivalent to plain string keys", async () => {
+	// ["userId"] / ["id"] must be normalized to the plain form so both sides
+	// use the same key encoding regardless of which shape the caller picked.
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const posts = [
+		{ id: 10, userId: 1, title: "Alice Post" },
+		{ id: 12, userId: 2, title: "Bob Post" },
+	];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany("arrayChildPosts", () => posts, { matchChild: ["userId"], toParent: "id" })
+		.attachMany("arrayParentPosts", () => posts, { matchChild: "userId", toParent: ["id"] });
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			name: "Alice",
+			arrayChildPosts: [{ id: 10, userId: 1, title: "Alice Post" }],
+			arrayParentPosts: [{ id: 10, userId: 1, title: "Alice Post" }],
+		},
+		{
+			id: 2,
+			name: "Bob",
+			arrayChildPosts: [{ id: 12, userId: 2, title: "Bob Post" }],
+			arrayParentPosts: [{ id: 12, userId: 2, title: "Bob Post" }],
+		},
 	]);
 });
 

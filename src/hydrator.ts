@@ -1,4 +1,5 @@
 import {
+	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
@@ -144,7 +145,13 @@ function isExecutable<Output>(value: unknown): value is Executable<Output> {
  * with one input per parent entity, to avoid N+1 queries.  Parent inputs are
  * deduplicated by the parent's `keyBy`, and rows with nil keys (e.g. phantom
  * all-null rows produced by matchless left joins) are excluded.  Should return
- * already-hydrated data.
+ * already-hydrated data.  Never called with zero inputs: when every parent row
+ * is dropped, the fetch is skipped entirely.
+ *
+ * Duplicate-keyed parent rows must agree on the `toParent` columns used for
+ * matching: deduplication keeps an arbitrary representative row per entity
+ * key, so when duplicates disagree on a non-key `toParent` column, which
+ * row's value is used for fetching and matching is unspecified.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
@@ -1019,6 +1026,23 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
+		// Normalize each side independently so that ["id"] and "id" are
+		// equivalent: getKey encodes single keys as raw values but arrays as
+		// composite token strings, and collapsing single-element arrays to the
+		// plain form on both sides guarantees matching encodings.
+		const matchChild = normalizeAttachKey(keys.matchChild);
+		const toParent = normalizeAttachKey(keys.toParent ?? this.#props.keyBy);
+
+		// After normalization, mismatched arity means the two sides encode
+		// differently (raw value vs composite tokens, or different part counts)
+		// and could never match at hydration time.  Fail fast at registration
+		// instead of silently attaching nothing.
+		const matchChildArity = typeof matchChild === "string" ? 1 : matchChild.length;
+		const toParentArity = typeof toParent === "string" ? 1 : toParent.length;
+		if (matchChildArity !== toParentArity) {
+			throw new AttachedKeysArityMismatchError(key, matchChildArity, toParentArity);
+		}
+
 		return new HydratorImpl({
 			...this.#props,
 
@@ -1028,8 +1052,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
-				matchChild: keys.matchChild,
-				toParent: keys.toParent ?? this.#props.keyBy,
+				matchChild,
+				toParent,
 			} satisfies AttachedCollection<any, any>),
 		});
 	}
@@ -1076,6 +1100,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// keyBy and drop rows with nil keys.  We also need to convert the input
 			// to prefixed accessors if we are nested, because the fetchFn expects
 			// unprefixed inputs.
+			//
+			// Note: dedupe keeps the first row in input order, while hydration's
+			// representative row for an entity is chosen after sorting (and per
+			// parent group at nested levels).  When duplicate-keyed rows disagree
+			// on a non-key toParent column the two can therefore differ; see the
+			// FetchFn doc for the resulting constraint.
 			const { keyBy } = this.#props;
 			const seen = new Set<unknown>();
 			const inputArray: any[] = [];
@@ -1088,30 +1118,38 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
 			}
 
-			for (const [key, attachedCollection] of attachedCollections) {
-				// Use prefixed key for the map
-				const mapKey = prefix ? applyPrefix(prefix, key) : key;
+			// When there are no inputs left (no rows at all, or every row dropped
+			// by the nil-key filter), skip the fetch entirely: user fetchFns
+			// commonly build `WHERE x IN (...)` from the inputs, which is invalid
+			// or pointless SQL for zero inputs.  Leaving attachedDataMap without
+			// an entry behaves identically to storing an empty group — lookups go
+			// through `groupedData?.get(...)`, which yields undefined either way.
+			if (inputArray.length > 0) {
+				for (const [key, attachedCollection] of attachedCollections) {
+					// Use prefixed key for the map
+					const mapKey = prefix ? applyPrefix(prefix, key) : key;
 
-				// Create fetch promise
-				fetchPromises.push(
-					Promise.resolve(attachedCollection.fetchFn(inputArray))
-						.then((result) => {
-							if (isExecutable(result)) {
-								return result.execute();
-							}
-							return result as Iterable<any>;
-						})
-						.then((attachedOutputs) => {
-							// Group fetched rows by their match key
-							const grouped = groupByKey(
-								"", // Always unprefixed.
-								attachedOutputs,
-								attachedCollection.matchChild,
-							);
+					// Create fetch promise
+					fetchPromises.push(
+						Promise.resolve(attachedCollection.fetchFn(inputArray))
+							.then((result) => {
+								if (isExecutable(result)) {
+									return result.execute();
+								}
+								return result as Iterable<any>;
+							})
+							.then((attachedOutputs) => {
+								// Group fetched rows by their match key
+								const grouped = groupByKey(
+									"", // Always unprefixed.
+									attachedOutputs,
+									attachedCollection.matchChild,
+								);
 
-							ctx.attachedDataMap.set(mapKey, grouped);
-						}),
-				);
+								ctx.attachedDataMap.set(mapKey, grouped);
+							}),
+					);
+				}
 			}
 		}
 
@@ -1526,14 +1564,15 @@ export function hydrate<Input, Output>(
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
 	// The factory is user code; catch synchronous errors and turn them into
-	// rejections so this function never throws.
+	// rejections so this function never throws.  The hydrate() call stays
+	// inside the try for the same reason: a factory that returns a
+	// non-hydrator would otherwise throw a synchronous TypeError.
 	try {
 		hydrator = typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator;
+		return hydrator.hydrate(input);
 	} catch (error) {
 		return Promise.reject(error);
 	}
-
-	return hydrator.hydrate(input);
 }
 
 /**
@@ -1601,6 +1640,17 @@ function applyGroupedCollectionMode<T>(
 	}
 
 	return mode === "many" ? [grouped] : grouped;
+}
+
+/**
+ * Normalizes an attach matching key: collapses a single-element array to the
+ * plain string form.  The two shapes are semantically equivalent, but they
+ * encode differently in {@link getKey} (raw value vs composite token), so each
+ * side of an attach match is normalized independently to keep the encodings
+ * aligned.
+ */
+function normalizeAttachKey<T>(keyBy: KeyBy<T>): KeyBy<T> {
+	return typeof keyBy !== "string" && keyBy.length === 1 ? keyBy[0]! : keyBy;
 }
 
 /**

@@ -97,6 +97,20 @@ export class KeyByMismatchError extends KyselyHydrateError {
 }
 
 /**
+ * Error thrown when configuring an attached collection whose `matchChild` and
+ * `toParent` keys have different arity (one composite, the other single, or
+ * composite keys of different lengths).  Such keys encode differently and
+ * could never match at hydration time, so this fails fast at registration.
+ */
+export class AttachedKeysArityMismatchError extends KyselyHydrateError {
+	constructor(key: string, matchChildArity: number, toParentArity: number) {
+		super(
+			`Attached collection "${key}" has mismatched key arity: matchChild has ${matchChildArity} key(s) but toParent has ${toParentArity}`,
+		);
+	}
+}
+
+/**
  * Error thrown when a `QuerySet` whose base is a write query (INSERT, UPDATE,
  * or DELETE) combines `returningAll()` with cardinality-many joins and
  * limit/offset.  Paginating past row explosion wraps the base in a derived
