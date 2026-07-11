@@ -542,6 +542,89 @@ describe("query-set: attach", () => {
 		]);
 	});
 
+	test("leftJoinMany: replaces an attach collection previously defined under the same key", async () => {
+		// Regression test: joins registered only their own collection on the
+		// hydrator, so the same-key stale attach fetchFn still ran (a spurious
+		// query) and its output clobbered the join's data during hydration
+		let fetchCount = 0;
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.attachMany(
+				"posts",
+				() => {
+					fetchCount++;
+					return [{ ownerId: 2, title: "FROM STALE ATTACH" }];
+				},
+				{ matchChild: "ownerId" },
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1)),
+				"posts.user_id",
+				"user.id",
+			);
+
+		assert.deepStrictEqual(await qs.execute(), [
+			{ id: 2, username: "bob", posts: [{ id: 1, title: "Post 1", user_id: 2 }] },
+		]);
+		assert.strictEqual(fetchCount, 0);
+	});
+
+	test("attachMany: replaces a oneOrThrow join collection previously defined under the same key", async () => {
+		// Regression test: the overridden join's SQL was correctly removed, but
+		// its stale oneOrThrow hydrator spec remained, read the now-nonexistent
+		// prefixed columns, and threw ExpectedOneItemError during hydration
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.leftJoinOneOrThrow(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("id", "=", 1)),
+				"posts.user_id",
+				"user.id",
+			)
+			.attachMany("posts", () => [{ ownerId: 2, title: "attached" }], { matchChild: "ownerId" })
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 2, username: "bob", posts: [{ ownerId: 2, title: "attached" }] },
+		]);
+	});
+
+	test("attachMany: overriding a join also drops the join's nested attach fetches", async () => {
+		// Regression test: an attach nested inside an overridden join's query set
+		// still ran its fetchFn (a stale side effect) even though the join itself
+		// was replaced
+		let nestedFetchCount = 0;
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "=", 2)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).attachMany(
+						"comments",
+						() => {
+							nestedFetchCount++;
+							return [];
+						},
+						{ matchChild: "post_id", toParent: "id" },
+					),
+				"posts.user_id",
+				"user.id",
+			)
+			.attachMany("posts", () => [{ ownerId: 2, title: "attached" }], { matchChild: "ownerId" })
+			.execute();
+
+		assert.strictEqual(nestedFetchCount, 0);
+		assert.deepStrictEqual(users, [
+			{ id: 2, username: "bob", posts: [{ ownerId: 2, title: "attached" }] },
+		]);
+	});
+
 	test("attachMany: modify attached external values via .modify(key, fn)", async () => {
 		const fetchBadges = async () => [
 			{ ownerId: 2, badge: "founder" },
