@@ -2786,6 +2786,33 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
+	 * Returns a query creator that attaches this query set's base CTEs — the
+	 * data-modifying CTEs captured by `.write()`/`writeAs()`, or the implicit
+	 * `__base` CTE that wraps a non-select base query — to whatever query it
+	 * creates, or null when the base carries no such CTEs.
+	 *
+	 * Postgres requires data-modifying CTEs to be attached to the top-level
+	 * statement, so whenever the base select gets wrapped (in a derived table
+	 * for pagination, or in an EXISTS subquery), the wrapper must strip the
+	 * CTEs from the inner subquery with {@link stripWithPlugin} and build the
+	 * outermost query from this creator instead, so the CTEs are emitted
+	 * exactly once, at the top level.
+	 */
+	#getBaseCteCreator(): k.QueryCreator<any> | null {
+		const { db, baseQuery, writeQueryCreator } = this.#props;
+
+		if (writeQueryCreator) {
+			return writeQueryCreator;
+		}
+
+		if (!isSelectQueryBuilder(baseQuery)) {
+			return db.with("__base", () => baseQuery);
+		}
+
+		return null;
+	}
+
+	/**
 	 * Checks (recursively) if this query set is subject to row explosion (which also means it
 	 * would cause row explosion if nested).
 	 */
@@ -3156,8 +3183,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			orderByJoinKeys,
 		);
 
-		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
-		let qb = db.selectFrom(aliasedCardinalityOneQuery);
+		// The base select becomes a derived table here, so its base CTEs (write
+		// CTEs / `__base`) must be hoisted to the outer query: Postgres rejects
+		// data-modifying CTEs that are not attached to the top-level statement.
+		// (Writes cannot be nested, so when a creator exists this wrapper IS the
+		// top-level statement.)
+		const baseCteCreator = this.#getBaseCteCreator();
+		const aliasedCardinalityOneQuery = (
+			baseCteCreator ? cardinalityOneQuery.withPlugin(stripWithPlugin) : cardinalityOneQuery
+		).as(baseAlias);
+		let qb = (baseCteCreator ?? db).selectFrom(aliasedCardinalityOneQuery);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
 		// hoisted further by parent queries.  EXCEPT: skip the selections of joins that were included
@@ -3205,12 +3240,18 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toExistsQuery(): OpaqueExistsQueryBuilder {
-		return this.#props.db.selectNoFrom(({ exists }) =>
-			exists(
-				this.#toCardinalityOneQuery(false, false)
-					.clearSelect()
-					.select((eb) => eb.lit(1).as("_")),
-			).as("exists"),
+		// The base select becomes an EXISTS subquery here, so its base CTEs
+		// (write CTEs / `__base`) must be hoisted to the outer statement:
+		// Postgres rejects data-modifying CTEs that are not attached to the
+		// top-level statement.
+		const baseCteCreator = this.#getBaseCteCreator();
+
+		const inner = this.#toCardinalityOneQuery(false, false)
+			.clearSelect()
+			.select((eb) => eb.lit(1).as("_"));
+
+		return (baseCteCreator ?? this.#props.db).selectNoFrom(({ exists }) =>
+			exists(baseCteCreator ? inner.withPlugin(stripWithPlugin) : inner).as("exists"),
 		);
 	}
 
@@ -3569,6 +3610,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	#asWrite(query: AnyQueryBuilderOrFactory): any {
 		return this.#clone({
 			baseQuery: typeof query === "function" ? query(this.#props.db) : query,
+			// The new base query fully replaces the old one, so any CTEs captured
+			// by a previous `.write()` call must not leak into the new query.
+			writeQueryCreator: null,
 		});
 	}
 
