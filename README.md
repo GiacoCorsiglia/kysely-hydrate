@@ -559,7 +559,10 @@ rows: The fetch function you provide to `attach*()` will be called exactly once
 per execution, no matter how deeply it is nested. It receives **one input per
 parent entity**: even when SQL joins multiply or pad the underlying rows, the
 inputs are deduplicated (by the parent's `keyBy`), and phantom all-null rows
-(from matchless left joins) are excluded.
+(from matchless left joins) are excluded. Attached entities are shared by
+reference: `attachMany` gives each parent its own array, but parents that match
+the same value receive the **same** attached objects (including the object
+attached by `attachOne`/`attachOneOrThrow`)—so mutate them with care.
 
 ```ts
 const posts = await querySet(db)
