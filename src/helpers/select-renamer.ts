@@ -19,6 +19,22 @@ function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefi
 	}
 }
 
+/**
+ * Whether any of the query's selections is a wildcard — `selectAll()` /
+ * `returningAll()` (`SELECT *`) or `selectAll(table)` (`SELECT table.*`) —
+ * whose column names cannot be statically extracted for hoisting.
+ */
+export function hasWildcardSelections(qb: AnyQueryBuilder): boolean {
+	const selections = getSelections(qb);
+	return (
+		selections?.some(
+			({ selection }) =>
+				k.SelectAllNode.is(selection) ||
+				(k.ReferenceNode.is(selection) && k.SelectAllNode.is(selection.column)),
+		) ?? false
+	);
+}
+
 export function applyHoistedSelections(
 	toQb: AnySelectQueryBuilder,
 	fromQb: AnyQueryBuilder,
