@@ -1403,6 +1403,60 @@ test("mixing has and attach collections", async () => {
 	assert.strictEqual(result[1]?.posts.length, 1);
 });
 
+test("collection override: has after attach with the same key drops the attach", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Joined Post" },
+	];
+
+	let fetchCount = 0;
+	const fetchPosts = async () => {
+		fetchCount++;
+		return [{ id: 999, userId: 1, title: "FROM STALE ATTACH" }];
+	};
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" })
+		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(fetchCount, 0);
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, title: "Joined Post" }] },
+	]);
+});
+
+test("collection override: attach after has with the same key drops the nested spec", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	// No prefixed child columns exist in the data — as when a query set removes
+	// an overridden join's SQL.  A stale oneOrThrow spec would throw
+	// ExpectedOneItemError here.
+	const rows: UserWithPosts[] = [{ id: 1, name: "Alice", posts$$id: null, posts$$title: null }];
+
+	const fetchPosts = async () => [{ id: 10, userId: 1, title: "Attached Post" }];
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.hasOneOrThrow("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }))
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, userId: 1, title: "Attached Post" }] },
+	]);
+});
+
 test("complex nesting: has and attach at multiple levels", async () => {
 	let authorsFetchCount = 0;
 	let tagsFetchCount = 0;
@@ -1634,6 +1688,63 @@ test("with: other hydrator's collections take precedence", async () => {
 			name: "Alice",
 			posts: [{ id: 10, title: "POST TITLE" }],
 		},
+	]);
+});
+
+test("with: other hydrator's nested collection overrides own attach with the same key", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Joined Post" },
+	];
+
+	let fetchCount = 0;
+	const fetchPosts = async () => {
+		fetchCount++;
+		return [{ id: 999, userId: 1, title: "FROM STALE ATTACH" }];
+	};
+
+	const baseHydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const otherHydrator = createHydrator<UserWithPosts>("id").hasMany("posts", "posts$$", (h) =>
+		h("id").fields({ id: true, title: true }),
+	);
+
+	const result = await hydrate(rows, baseHydrator.with(otherHydrator));
+
+	assert.strictEqual(fetchCount, 0);
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, title: "Joined Post" }] },
+	]);
+});
+
+test("with: other hydrator's attach overrides own nested collection with the same key", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [{ id: 1, name: "Alice", posts$$id: null, posts$$title: null }];
+
+	const fetchPosts = async () => [{ id: 10, userId: 1, title: "Attached Post" }];
+
+	const baseHydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.hasOneOrThrow("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
+
+	const otherHydrator = createHydrator<UserWithPosts>("id").attachMany("posts", fetchPosts, {
+		matchChild: "userId",
+	});
+
+	const result = await hydrate(rows, baseHydrator.with(otherHydrator));
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, userId: 1, title: "Attached Post" }] },
 	]);
 });
 
