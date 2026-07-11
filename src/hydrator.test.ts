@@ -2430,3 +2430,68 @@ test("extras: an extra named __proto__ hydrates as a normal own property", async
 	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: "proto-Alice" }]);
 	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
 });
+
+test("extend: an object-valued __proto__ key does not replace the entity prototype", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extend(() => JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>);
+
+	const result = await hydrate(users, hydrator);
+
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: { polluted: true } }]);
+	// Without own-property shadowing, Object.assign would have made the object
+	// value the entity's prototype: invisible to Object.keys but reachable by
+	// lookup on the entity (and, worse, attacker-controlled).
+	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
+	assert.strictEqual((result[0] as Record<string, unknown>).polluted, undefined);
+	assert.strictEqual(({} as Record<string, unknown>).polluted, undefined);
+});
+
+test("extend: a scalar-valued __proto__ key hydrates as a normal own property", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true })
+		.extend(
+			(input) => JSON.parse(`{"__proto__":"proto-${input.name}"}`) as Record<string, unknown>,
+		);
+
+	const result = await hydrate(users, hydrator);
+
+	// A plain Object.assign would silently drop the scalar via the setter.
+	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: "proto-Alice" }]);
+	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+});
+
+test("extend: normal keys still merge with later keys winning", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.extend((input) => ({ name: input.name.toUpperCase(), greeting: `Hi ${input.name}` }))
+		.extend(() => ({ greeting: "Hello" }));
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, name: "ALICE", greeting: "Hello" }]);
+	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+});
+
+test("extend: a nullish extension is a no-op, matching Object.assign", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	// The Extender type forbids nullish returns, but untyped callers relied on
+	// Object.assign tolerating them; the __proto__ guard must not throw first.
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.extend(() => undefined as any)
+		.extend(() => null as any);
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
+});
