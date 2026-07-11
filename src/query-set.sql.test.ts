@@ -4,7 +4,11 @@ import { describe, test } from "node:test";
 import { sql } from "kysely";
 
 import { dialect, getDbForTest } from "./__tests__/db.ts";
-import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./helpers/errors.ts";
+import {
+	UnexpectedComplexAliasError,
+	UnexpectedSelectAllError,
+	UnsupportedReturningAllError,
+} from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
@@ -1504,6 +1508,91 @@ describe("query-set: sql", () => {
 			) as "exists"
 		`,
 		);
+	});
+
+	test("SQL: insertAs() with many-join and pagination - hoists RETURNING columns and the __base CTE", async () => {
+		const qs = querySet(db)
+			.insertAs("newUser", (db) =>
+				db
+					.insertInto("users")
+					.values({ username: "user1", email: "user1@example.com" })
+					.returning(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"newUser.id",
+			)
+			.limit(1);
+
+		const sql = qs.toQuery().compile().sql;
+
+		// Pagination with many-joins wraps the base in a derived table whose
+		// columns are hoisted by name from the explicit RETURNING list; the
+		// data-modifying __base CTE must sit at the top level of the statement —
+		// exactly once.
+		assert.ok(sql.startsWith("with"));
+		assert.strictEqual(sql.match(/with /g)?.length, 1);
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?)
+				returning "id", "username", "email"
+			)
+			select
+				"newUser"."id" as "id",
+				"newUser"."username" as "username",
+				"newUser"."email" as "email",
+				"posts"."id" as "posts$$id",
+				"posts"."title" as "posts$$title",
+				"posts"."user_id" as "posts$$user_id"
+			from (
+				select
+					"newUser"."id" as "id",
+					"newUser"."username" as "username",
+					"newUser"."email" as "email"
+				from "__base" as "newUser"
+				order by "newUser"."id" asc
+				limit ?
+			) as "newUser"
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."title" as "title",
+					"posts"."user_id" as "user_id"
+				from (
+					select "id", "title", "user_id" from "posts"
+				) as "posts"
+			) as "posts" on "posts"."user_id" = "newUser"."id"
+			order by "newUser"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: error: insertAs() with returningAll(), many-join, and pagination throws UnsupportedReturningAllError", () => {
+		const qs = querySet(db)
+			.insertAs("newUser", (db) =>
+				db
+					.insertInto("users")
+					.values({ username: "user1", email: "user1@example.com" })
+					.returningAll(),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"newUser.id",
+			)
+			.limit(1);
+
+		// The wrapping query must re-select the base's columns by name, which
+		// returningAll() does not make statically known — this must be reported
+		// clearly, not as the internal UnexpectedSelectAllError.
+		assert.throws(() => qs.toQuery(), UnsupportedReturningAllError);
 	});
 
 	test("SQL: insert() after write() discards the stale write CTEs", async () => {
