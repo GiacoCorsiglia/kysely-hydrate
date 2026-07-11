@@ -73,7 +73,28 @@ Docs-only commits in the range: `42ef7bc`, `b5ce0c7`, `0b766fa`, `f2ec40f`,
 
 ## 2. Correctness findings
 
-_(populated below)_
+Severity scale: **major** = wrong results / unsafe behavior reachable from the
+public API; **minor** = wrong results on exotic inputs; **note** = residual
+sharp edge or documentation gap. Findings marked _confirmed_ were reproduced
+with executed probes against HEAD.
+
+### 2.1 Hydrator (`src/hydrator.ts`)
+
+Per-commit verdict: all ten hydrator commits do what they claim and are
+covered by named tests, with two partial verdicts — `f9db900` (finding H1)
+and `90d201c` (finding H2).
+
+| # | Severity | Where | Finding |
+|---|---|---|---|
+| H1 | **major** (confirmed) | `#hydrateOne` extender merge (`Object.assign`), ~`src/hydrator.ts:1224`; commit `f9db900` | **`.extend()` is still a live prototype-replacement vector.** Fields, extras, auto-include, collections, and attaches all route `__proto__` keys through `defineProtoShadowedKey`, but extender results are merged with `Object.assign(entity, extender(...))`, which uses `[[Set]]` and therefore triggers `Object.prototype`'s `__proto__` setter. Reproduced: an extender returning `JSON.parse('{"__proto__": {"polluted": true}}')` silently drops the key from own properties and **replaces the entity's prototype** (`entity.polluted === true`). This is the exact bug class the commit fixed elsewhere. No test covers extend + `__proto__`. Fix: copy extender results with a manual loop that routes `"__proto__"` through `defineProtoShadowedKey`. |
+| H2 | minor (confirmed) | `getKey`, `src/hydrator.ts:1587`; commit `90d201c` | **The JSON-encoded composite key introduces new collision classes** while fixing separator collisions: (1) bigint `123n` vs string `"123n"` (replacer maps bigint to `"123n"`); (2) `NaN` vs `Infinity` (both serialize to `null` — and the nil check runs on the raw value, so they aren't skipped); (3) `Date` vs its ISO string (`toJSON`). Each pair silently merges two distinct rows into one entity. The old `"::"` join kept all three distinct. Fix: type-tag parts in the encoder (e.g. serialize bigints as `["bigint","123"]` or prefix parts with a type char) and encode NaN/±Infinity distinctly. |
+| H3 | minor (confirmed) | `#hydrateMany` sort, `src/hydrator.ts:1295`; adjacent to `87c8b3e` | **`hydrate()` sorts the caller's input array in place.** Top-level arrays are passed through by reference (deliberate, post-`87c8b3e`), and any `orderBy`/`orderByKeys` hydrator with the default `sort: "all"` then does `inputsArray.sort(...)` on the caller's array. Reproduced. Pre-existing, but `87c8b3e` was specifically about not corrupting caller inputs. Fix: copy before sorting when the array is caller-owned. |
+| H4 | note (confirmed) | attach lookups; commit `297e363` | Arrays are now referentially distinct per parent, but **child objects inside attach arrays remain shared across parents** with the same match value (`one`-mode attaches return the shared object itself). Matches the commit's literal claim; worth documenting on `FetchFn`/`attach`. |
+| H5 | note (plausible) | `#fetchAllAttachedCollections` vs `#hydrateOne`; commit `9f6dad0` | Attach-input dedupe keeps the first row in *input* order while hydration's representative row is the first *after sorting*. If duplicate-keyed rows disagree on a non-key `toParent` column, fetch and lookup can use different values → silent no-match. Requires internally inconsistent data + `orderBy`. Fix: derive the representative row once for both. |
+| H6 | note (confirmed) | `src/hydrator.ts:1066`; commit `9f6dad0` | When all parent rows have nil keys, the attach `fetchFn` is still called with `[]`. User code building `WHERE x IN (...)` from inputs will produce invalid or pointless SQL. Fix: skip the fetch when the deduped input array is empty. |
+| H7 | note (confirmed) | `getKey` single- vs composite-key paths; surfaced by `00d7a0b` | Single `keyBy: "k"` uses raw Map-key identity (two equal `Date` PKs → two entities) while `keyBy: ["k"]` JSON-encodes (same Dates merge). Pre-existing inconsistency, now applies to every hydration since dedupe is unconditional. Document or normalize. |
+| H8 | note (confirmed) | attach `matchChild`/`toParent`; pre-existing | Arity mismatch (`matchChild: ["userId"]` with `toParent: "id"`) silently never matches — composite side is JSON-encoded, single side raw. Consider a runtime arity check in `attach()`. |
+| H9 | note | standalone `hydrate()`, `src/hydrator.ts:1488`; commit `5061543` | The factory call is wrapped in try/catch but the trailing `hydrator.hydrate(input)` is not — a factory returning a non-hydrator still throws synchronously, contradicting the "never throws" contract. Move it inside the try. |
 
 ---
 
