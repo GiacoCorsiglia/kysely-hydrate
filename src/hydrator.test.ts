@@ -711,6 +711,23 @@ test("composite keys: part boundaries cannot shift", async () => {
 	assert.deepStrictEqual(result[2], { key1: "", key2: "ab", items: [{ id: 3 }] });
 });
 
+test("composite keys: values without a primitive conversion do not reject", async () => {
+	// String() throws for null-prototype objects; the fallback encoding must
+	// still produce a deterministic key rather than rejecting hydration.
+	const weird = Object.create(null);
+	const rows = [
+		{ key1: weird, key2: 1 },
+		{ key1: weird, key2: 1 },
+		{ key1: weird, key2: 2 },
+	];
+
+	const hydrator = createHydrator<any>(["key1", "key2"]).fields({ key2: true });
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ key2: 1 }, { key2: 2 }]);
+});
+
 test("composite keys: values with equal string forms are separated by type", async () => {
 	interface CompositeRow {
 		key1: boolean | string | { toString(): string };
@@ -3020,6 +3037,21 @@ test("extend: normal keys still merge with later keys winning", async () => {
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "ALICE", greeting: "Hello" }]);
 	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+});
+
+test("extend: a nullish extension is a no-op, matching Object.assign", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	// The Extender type forbids nullish returns, but untyped callers relied on
+	// Object.assign tolerating them; the __proto__ guard must not throw first.
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.extend(() => undefined as any)
+		.extend(() => null as any);
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
 });
 
 //

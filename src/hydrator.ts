@@ -1317,7 +1317,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					// Object.prototype's setter; pre-shadowing it with an own data
 					// property makes the subsequent [[Set]] a plain write while
 					// keeping Object.assign's semantics for every other key.
-					if (Object.prototype.propertyIsEnumerable.call(extension, "__proto__")) {
+					// The nullish check preserves Object.assign's tolerance for
+					// nullish sources (propertyIsEnumerable would throw on them).
+					if (
+						extension !== null &&
+						extension !== undefined &&
+						Object.prototype.propertyIsEnumerable.call(extension, "__proto__")
+					) {
 						defineProtoShadowedKey(entity, undefined);
 					}
 					Object.assign(entity, extension);
@@ -1755,7 +1761,14 @@ function encodeKeyPart(value: unknown): string {
 			if (value instanceof Uint8Array) {
 				return `u"${value.join(",")}"`;
 			}
-			return `x${JSON.stringify(String(value))}`;
+			// String() throws for values with no primitive conversion (e.g.
+			// null-prototype objects); fall back to the tagged toString form so
+			// such keys still group deterministically instead of rejecting.
+			try {
+				return `x${JSON.stringify(String(value))}`;
+			} catch {
+				return `x${JSON.stringify(Object.prototype.toString.call(value))}`;
+			}
 	}
 }
 
