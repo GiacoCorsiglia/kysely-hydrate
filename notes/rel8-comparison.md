@@ -129,6 +129,55 @@ makes the SQL deterministic and debuggable but also why `SELECT *` must be
 rejected (`UnexpectedSelectAllError` — names must be statically extractable
 for prefixing).
 
+### Runtime vs. erased schema knowledge
+
+A structural difference that in-database nesting makes load-bearing: **both
+rel8s maintain a runtime, value-level model of the schema; Kysely's is erased
+at compile time.** The runtime model is still *declared in code* — nobody
+introspects the live database — the difference is reification: Haskell
+typeclass instances and Rust trait impls survive to runtime as actual values,
+TypeScript types don't.
+
+rel8 carries a `TypeInformation` record per column type
+(`rel8-internal/src/Rel8/Internal/Type/Information.hs:27-37`):
+
+```haskell
+data TypeInformation a = TypeInformation
+  { encode    :: Encoder a   -- serialize a Haskell value to PostgreSQL
+  , decode    :: Decoder a   -- deserialize a result back to Haskell
+  , delimiter :: Char        -- delimiter in PG's text format for arrays of this type
+  , typeName  :: TypeName    -- the name of the SQL type
+  }
+```
+
+plus a value-level `TableSchema` (table/column names) and the generic
+`Rel8able`/`HTable` traversal over a table's columns — which is literally how
+`listAgg` rewrites each column into its own `ARRAY_AGG`. Every field earns
+its keep in the nesting pipeline: `typeName` generates the typed
+empty-collection fallback (`CAST(ARRAY[] AS int8[])` — impossible without the
+SQL type name at runtime) and the `CAST(… AS int8[])` on aggregation outputs;
+`decode` supplies the per-element binary array decoders at read time; and
+`delimiter` exists solely for the nested-lists hack, which re-parses
+Postgres's array *text* format per element type. rust-rel8 carries a thinner
+version (a `SCHEMA` const of column names, per-type sqlx `Decode` impls, and
+the `Table::visit` order as the positional decoding contract) — and it gets
+away with less metadata precisely because it lacks the features that need it:
+no typed empty-array literals (empty ⇒ NULL ⇒ `unwrap_or_default()`), no
+nested lists.
+
+Kysely knows only column *names* at runtime (from its operation nodes — the
+one sliver of runtime schema understanding kysely-hydrate exploits for `$$`
+prefixing); column types exist only in the erased layer. That is sufficient
+for the flat-JOIN strategy because the driver returns natively-typed scalar
+values per column and hydration just regroups them — no per-type marshaling
+step exists anywhere. In-database aggregation is exactly the feature that
+breaks this: values start moving through a wrapper representation (typed
+arrays or JSON), and *something* must know how to unwrap element types. rel8
+answers with runtime type dictionaries; it chose typed arrays over JSON
+despite the nested-list pain because binary arrays preserve exact wire types
+— but only if you have runtime decoders to receive them. JSON is the
+strategy you pick precisely when you don't. See §6.1.
+
 ---
 
 ## 3. Query composition
@@ -438,8 +487,22 @@ so this is a decode-path addition, not a rewrite). Notes from the two rel8s:
 - Prefer `jsonb_agg(to_jsonb(row))` over rel8's per-column parallel arrays.
   The arrays choice preserves binary wire types but forced rel8's
   text-cast hack for nested lists and capped rust-rel8 at depth 1; JSON nests
-  arbitrarily and decodes as one column. The cost — JSON stringification of
-  dates/numerics — can be handled by the existing `mapFields` machinery.
+  arbitrarily and decodes as one column. More fundamentally (see §2, "Runtime
+  vs. erased schema knowledge"): rel8's typed-array route *requires* runtime
+  per-column type dictionaries to emit typed empty-array literals and to
+  decode array elements, and kysely-hydrate has no runtime type channel —
+  Kysely's types are erased and only column names survive to runtime. JSON is
+  the representation that needs no runtime type knowledge to decode, which
+  makes it the only strategy compatible with kysely-hydrate's architecture
+  as-is. The cost is that in-DB-nested values arrive JSON-typed, not
+  wire-typed: dates/numerics/bytea come back as strings/numbers, differing
+  from what the same query returns today via flat joins. Two ways to pay it:
+  (a) accept the lossy defaults and delegate repair to user-supplied
+  `mapFields` on the collection; (b) an opt-in per-collection decode spec — a
+  small explicit runtime type hint (e.g. `{ createdAt: "timestamptz" }`) —
+  which would be kysely-hydrate's first deliberate step away from "types are
+  erased, names are enough." Start with (a); (b) can layer on later without
+  breaking anything.
 - Emit the *plain* `LEFT JOIN LATERAL … ON TRUE` form. rel8's
   `(SELECT 0) LEFT JOIN … ON TRUE` encoding is the documented planner
   pessimization (issue #72); kysely-hydrate controls its SQL directly and can
