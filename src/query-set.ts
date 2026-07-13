@@ -18,17 +18,25 @@
 
 import * as k from "kysely";
 
+import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./helpers/errors.ts";
+import {
+	type IdentifierRenames,
+	computeIdentifierRenames,
+	restoreRowLogicalNames,
+} from "./helpers/identifier-renames.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
 	type ApplyPrefixWithSep,
 	type MakeInitialPrefix,
+	applyPrefix,
 	makePrefix,
 	SEP,
 } from "./helpers/prefixes.ts";
 import {
+	type HoistOptions,
 	applyHoistedPrefixedSelections,
-	applyHoistedSelections,
+	getSelectionNames,
 } from "./helpers/select-renamer.ts";
 import {
 	type AnySelectQueryBuilder,
@@ -47,6 +55,7 @@ import {
 	type StrictSubset,
 	type TypeErrorMessage,
 	assertNever,
+	isIterable,
 	isSelectQueryBuilder,
 	mapWithDeleted,
 } from "./helpers/utils.ts";
@@ -2733,8 +2742,16 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#props.baseQuery;
 	}
 
-	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+	#getSelectFromBase(
+		isNested: boolean,
+		isLocalSubquery: boolean,
+		columns?: string[],
+	): AnySelectQueryBuilder {
 		const { db, baseQuery, baseAlias, writeQueryCreator } = this.#props;
+
+		// The base query's selections are hoisted under their own names (no
+		// prefix), applying any renames for (pathological) over-long names.
+		const hoistOptions = this.#hoistOptions(undefined, columns);
 
 		// We always inline SELECT queries.
 		if (isSelectQueryBuilder(baseQuery)) {
@@ -2747,12 +2764,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				}
 				const qc = writeQueryCreator;
 				let qb = qc.selectFrom(baseQuery.as(baseAlias));
-				qb = applyHoistedSelections(qb, baseQuery, baseAlias);
+				qb = applyHoistedPrefixedSelections("", qb, baseQuery, baseAlias, hoistOptions);
 				return qb;
 			}
 
 			const qb = db.selectFrom(baseQuery.as(baseAlias));
-			return applyHoistedSelections(qb, baseQuery, baseAlias);
+			return applyHoistedPrefixedSelections("", qb, baseQuery, baseAlias, hoistOptions);
 		}
 
 		// Non-select queries must be converted to a CTE.  Also, they cannot be nested.
@@ -2774,7 +2791,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return qb.selectAll(baseAlias);
 		}
 
-		return applyHoistedSelections(qb, baseQuery, baseAlias);
+		return applyHoistedPrefixedSelections("", qb, baseQuery, baseAlias, hoistOptions);
 	}
 
 	/**
@@ -2806,6 +2823,79 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
+	 * Cached alias renames for this query set's SELECT list; see
+	 * {@link #getRenames}.  Safe to cache because query sets are immutable
+	 * (every modification clones).
+	 */
+	#renames: IdentifierRenames | undefined;
+
+	/**
+	 * The logical output column names of this query set's joined SELECT list,
+	 * in canonical order: the base query's selections first, then each join
+	 * collection's (prefixed) columns, in insertion order.
+	 *
+	 * This enumerates the same set of columns every query built from this query
+	 * set hoists, without building any query — so all build paths (`toQuery`,
+	 * `toJoinedQuery`, count/exists) and `hydrate` agree on the renames.
+	 */
+	#getLogicalColumns(): string[] {
+		const names: string[] = [];
+
+		try {
+			names.push(...getSelectionNames(this.#props.baseQuery));
+		} catch (error) {
+			// A top-level write base query may use `returningAll()` (or an alias we
+			// can't statically name). Its columns are never prefixed — and thus
+			// never renamed or hoisted — so they are only missing from the
+			// collision-avoidance set here.  Nested query sets still fail at hoist
+			// time, exactly as before.
+			if (
+				!(error instanceof UnexpectedSelectAllError) &&
+				!(error instanceof UnexpectedComplexAliasError)
+			) {
+				throw error;
+			}
+		}
+
+		for (const [key, collection] of this.#props.joinCollections) {
+			const prefix = makePrefix("", key);
+			for (const childName of collection.querySet.#getLogicalColumns()) {
+				names.push(applyPrefix(prefix, childName));
+			}
+		}
+
+		return names;
+	}
+
+	/**
+	 * The alias renames for this query set's SELECT list: any generated
+	 * (prefixed) alias that could exceed the database's identifier length limit
+	 * is renamed to a short `$cN` alias in the SQL, and translated back to its
+	 * logical name before hydration.  Derived purely from the query set's
+	 * structure, so it is stable across builds and re-executions.
+	 */
+	#getRenames(): IdentifierRenames {
+		return (this.#renames ??= computeIdentifierRenames(this.#getLogicalColumns()));
+	}
+
+	/**
+	 * Options for hoisting selections into a query built by THIS query set.
+	 * Always sources aliases from this query set's renames so that every build
+	 * path (and hence `hydrate`) agrees on them.
+	 *
+	 * @param sourceColumns - The hoisted subquery's logical column names by
+	 *   select-list position (omit when hoisting a query whose SQL aliases are
+	 *   already the logical names, e.g. the base query).
+	 * @param columnsOut - Receives the hoisted (prefixed) logical names.
+	 */
+	#hoistOptions(
+		sourceColumns: readonly string[] | undefined,
+		columnsOut: string[] | undefined,
+	): HoistOptions {
+		return { sourceColumns, toShort: this.#getRenames().toShort, columnsOut };
+	}
+
+	/**
 	 * Adds a single join to the query.
 	 *
 	 * @param isForSelection - If true, selections will be hoisted and prefixed.
@@ -2818,16 +2908,27 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		qb: AnySelectQueryBuilder,
 		key: string,
 		collection: JoinCollection,
+		columns?: string[],
 	): AnySelectQueryBuilder {
 		// Add the join to the parent query.
-		const nestedQuery = collection.querySet.#toQuery(true, true);
+		const childColumns: string[] = [];
+		const nestedQuery = collection.querySet.#toQuery(true, true, childColumns);
 		const from = nestedQuery.as(key);
 		// This cast to a single method helps TypeScript follow the overloads.
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
 		// Add the (prefixed) selections from the subquery to the parent query.
+		// Over-long prefixed aliases are renamed (`$cN`) so the database doesn't
+		// truncate them; the subquery's logical column names are threaded through
+		// (positionally) because its actual SQL aliases may themselves be renames.
 		const prefix = makePrefix("", key);
-		qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
+		qb = applyHoistedPrefixedSelections(
+			prefix,
+			qb,
+			nestedQuery,
+			key,
+			this.#hoistOptions(childColumns, columns),
+		);
 
 		return qb;
 	}
@@ -2854,11 +2955,23 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			let orderExpr: string | k.Expression<any>;
 			if (expr.includes(SEP)) {
 				if (isOuter) {
-					// For outer queries with pagination + many-joins, use hoisted column reference
-					orderExpr = eb.ref(`${baseAlias}.${expr}`);
+					// For outer queries with pagination + many-joins, use the hoisted
+					// column reference.  The hoisted alias may have been renamed if it
+					// would exceed the identifier length limit.
+					const hoistedAlias = this.#getRenames().toShort.get(expr) ?? expr;
+					orderExpr = eb.ref(`${baseAlias}.${hoistedAlias}`);
 				} else {
-					// For inner queries, convert $$ to .
-					orderExpr = expr.replace(SEP, ".");
+					// For inner queries, reference the join subquery's output column
+					// directly (`key$$rest` → `key.rest`).  Within the subquery, `rest`
+					// may have been renamed if it would exceed the identifier limit.
+					const sepIndex = expr.indexOf(SEP);
+					const key = expr.slice(0, sepIndex);
+					const rest = expr.slice(sepIndex + SEP.length);
+					const nested = this.#props.joinCollections.get(key);
+					const nestedAlias = nested
+						? (nested.querySet.#getRenames().toShort.get(rest) ?? rest)
+						: rest;
+					orderExpr = `${key}.${nestedAlias}`;
 				}
 			} else {
 				// No $$, it's a base column
@@ -2890,10 +3003,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 *   to WHERE EXISTS to avoid row explosion
 	 * - Cardinality-many non-filtering joins (leftJoinMany) - excluded entirely
 	 */
-	#toCardinalityOneQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+	#toCardinalityOneQuery(
+		isNested: boolean,
+		isLocalSubquery: boolean,
+		columns?: string[],
+	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
 
-		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery, columns);
 
 		for (const [key, collection] of joinCollections) {
 			// For count/exists queries:
@@ -2905,7 +3022,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 			if (this.#isCollectionCardinalityOne(collection)) {
 				// All cardinality-one joins are safe to include directly (no row explosion)
-				qb = this.#addCollectionAsJoin(qb, key, collection);
+				qb = this.#addCollectionAsJoin(qb, key, collection, columns);
 			} else if (isFilteringJoin(collection)) {
 				// Cardinality-many filtering joins must be converted to WHERE EXISTS
 				// to avoid row explosion in count queries
@@ -2931,13 +3048,17 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#toJoinedQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+	#toJoinedQuery(
+		isNested: boolean,
+		isLocalSubquery: boolean,
+		columns?: string[],
+	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
 
-		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery, columns);
 
 		for (const [key, collection] of joinCollections) {
-			qb = this.#addCollectionAsJoin(qb, key, collection);
+			qb = this.#addCollectionAsJoin(qb, key, collection, columns);
 		}
 
 		// NOTE: Limit and offset cannot be applied here because of row explosion.
@@ -2961,6 +3082,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	#toQuery<IsNested extends boolean>(
 		isNested: IsNested,
 		isLocalSubquery: boolean,
+		columns?: string[],
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
 		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
 			this.#props;
@@ -2983,11 +3105,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				if (isNested && !isSelectQueryBuilder(baseQuery)) {
 					throw new InvalidJoinedQuerySetError(baseAlias);
 				}
+				columns?.push(...getSelectionNames(baseQuery));
 				return baseQuery as IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder;
 			}
 
 			// If it's a SELECT, we can just apply the limit and offset to the base query.
 			if (isSelectQueryBuilder(baseQuery)) {
+				columns?.push(...getSelectionNames(baseQuery));
 				return this.#applyLimitAndOffset(baseQuery);
 			}
 
@@ -3001,13 +3125,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		// If no pagination, just return the joined query, even if it has row explosion.
 		if (!hasPagination) {
-			return this.#toJoinedQuery(isNested, isLocalSubquery);
+			return this.#toJoinedQuery(isNested, isLocalSubquery, columns);
 		}
 
 		// If only cardinality-one joins, we can safely apply limit/offset to the
 		// joined query.
 		if (this.#isCardinalityOne()) {
-			let qb = this.#toJoinedQuery(isNested, isLocalSubquery);
+			let qb = this.#toJoinedQuery(isNested, isLocalSubquery, columns);
 			// #toJoinedQuery skips ORDER BY inside subqueries (where it would be
 			// meaningless on its own), but with pagination the ordering determines
 			// WHICH rows the limit keeps — e.g. a lateral "top N per group" — so it
@@ -3019,7 +3143,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return this.#applyLimitAndOffset(qb);
 		}
 
-		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery);
+		const cardinalityOneColumns: string[] = [];
+		let cardinalityOneQuery = this.#toCardinalityOneQuery(
+			isNested,
+			isLocalSubquery,
+			cardinalityOneColumns,
+		);
 
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
@@ -3030,13 +3159,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		let qb = db.selectFrom(aliasedCardinalityOneQuery);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
-		// hoisted further by parent queries.
-		qb = applyHoistedSelections(qb, cardinalityOneQuery, baseAlias);
+		// hoisted further by parent queries.  Renamed (over-long) aliases keep their renames.
+		qb = applyHoistedPrefixedSelections(
+			"",
+			qb,
+			cardinalityOneQuery,
+			baseAlias,
+			this.#hoistOptions(cardinalityOneColumns, columns),
+		);
 
 		// Add any cardinality-many joins.
 		for (const [key, collection] of joinCollections) {
 			if (!this.#isCollectionCardinalityOne(collection)) {
-				qb = this.#addCollectionAsJoin(qb, key, collection);
+				qb = this.#addCollectionAsJoin(qb, key, collection, columns);
 			}
 		}
 
@@ -3091,8 +3226,31 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Execution.
 	////////////////////////////////////////////////////////////
 
+	/**
+	 * Translates raw result rows from the SQL aliases actually used in the
+	 * query back to their logical (full-length, prefixed) names, undoing the
+	 * `$cN` renames applied to over-long aliases.  A no-op (returning the input
+	 * unchanged) when nothing was renamed.
+	 */
+	#restoreLogicalNames(input: any): any {
+		const { toLogical } = this.#getRenames();
+		if (toLogical.size === 0) {
+			return input;
+		}
+
+		if (isIterable(input)) {
+			const out: unknown[] = [];
+			for (const row of input) {
+				out.push(restoreRowLogicalNames(row, toLogical));
+			}
+			return out;
+		}
+
+		return restoreRowLogicalNames(input, toLogical);
+	}
+
 	async hydrate(input: any): Promise<any> {
-		return this.#props.hydrator.hydrate(await input, {
+		return this.#props.hydrator.hydrate(this.#restoreLogicalNames(await input), {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.

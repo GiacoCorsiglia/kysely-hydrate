@@ -1,7 +1,7 @@
 import * as k from "kysely";
 
 import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./errors.ts";
-import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
+import { applyPrefix } from "./prefixes.ts";
 import { type AnyQueryBuilder, type AnySelectQueryBuilder, assertNever } from "./utils.ts";
 
 function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefined {
@@ -19,12 +19,34 @@ function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefi
 	}
 }
 
-export function applyHoistedSelections(
-	toQb: AnySelectQueryBuilder,
-	fromQb: AnyQueryBuilder,
-	alias: string,
-): AnySelectQueryBuilder {
-	return applyHoistedPrefixedSelections("", toQb, fromQb, alias);
+/**
+ * Options for renaming over-long aliases while hoisting a subquery's
+ * selections into a parent query.  See the `identifier-renames` module:
+ * aliases that could exceed the database identifier length limit are replaced
+ * with short `$cN` aliases.
+ *
+ * Logical names are passed positionally (rather than re-parsed out of the
+ * subquery's operation node) because `toOperationNode()` applies the query's
+ * plugins: with e.g. CamelCasePlugin installed, the extracted names are
+ * snake_cased and would no longer match the logical names used elsewhere.
+ */
+export interface HoistOptions {
+	/**
+	 * The logical names of the subquery's output columns, by select-list
+	 * position, used to recover each column's logical name (its SQL alias may
+	 * be a `$cN` rename, and plugins may have transformed the extracted name).
+	 */
+	sourceColumns?: readonly string[] | undefined;
+	/**
+	 * The hoisting query's renames (logical name → short SQL alias), applied to
+	 * the prefixed logical name to pick the final alias.
+	 */
+	toShort?: ReadonlyMap<string, string> | undefined;
+	/**
+	 * If provided, receives the (prefixed) logical name of each hoisted
+	 * selection, by select-list position.
+	 */
+	columnsOut?: string[] | undefined;
 }
 
 export function applyHoistedPrefixedSelections(
@@ -32,16 +54,23 @@ export function applyHoistedPrefixedSelections(
 	toQb: AnySelectQueryBuilder,
 	fromQb: AnyQueryBuilder,
 	alias: string,
+	options?: HoistOptions,
 ) {
-	const hoistedSelections = hoistAndPrefixSelections(prefix, fromQb, alias);
+	const hoistedSelections = hoistAndPrefixSelections(prefix, fromQb, alias, options);
 	return toQb.select(hoistedSelections);
 }
 
 /**
  * Produces selections for a parent query to select everything selected in a
- * subquery, but aliased with the given prefix.
+ * subquery, but aliased with the given prefix (further shortened per
+ * `options.toShort`, when provided).
  */
-export function hoistAndPrefixSelections(prefix: string, qb: AnyQueryBuilder, alias: string) {
+export function hoistAndPrefixSelections(
+	prefix: string,
+	qb: AnyQueryBuilder,
+	alias: string,
+	options?: HoistOptions,
+) {
 	const selections = getSelections(qb);
 	if (!selections) {
 		return [];
@@ -49,24 +78,35 @@ export function hoistAndPrefixSelections(prefix: string, qb: AnyQueryBuilder, al
 
 	const eb = k.expressionBuilder<any, any>();
 
-	return selections.map((selectionNode) => {
+	return selections.map((selectionNode, index) => {
 		const name = extractSelectionName(selectionNode);
 
 		const referenceExpression = eb.ref(`${alias}.${name}`);
 
-		return new PrefixedAliasedExpression(referenceExpression, prefix, name);
+		// Recover the column's logical name before prefixing, then apply the
+		// hoisting query's own rename (if any) to pick the final SQL alias.
+		const logicalName = applyPrefix(prefix, options?.sourceColumns?.[index] ?? name);
+		const sqlAlias = options?.toShort?.get(logicalName) ?? logicalName;
+
+		options?.columnsOut?.push(logicalName);
+
+		return new HoistedAliasedExpression(referenceExpression, sqlAlias, name);
 	});
 }
 
-class PrefixedAliasedExpression<
-	T,
-	Prefix extends string,
-	OriginalName extends string,
-> extends k.AliasedExpressionWrapper<T, ApplyPrefix<Prefix, OriginalName>> {
+/**
+ * Returns the output column names of a query builder's select (or returning)
+ * list.
+ */
+export function getSelectionNames(qb: AnyQueryBuilder): string[] {
+	const selections = getSelections(qb);
+	return selections ? selections.map(extractSelectionName) : [];
+}
+
+class HoistedAliasedExpression<T> extends k.AliasedExpressionWrapper<T, string> {
 	readonly originalName: string;
 
-	constructor(expression: k.Expression<any>, prefix: Prefix, originalName: OriginalName) {
-		const alias = applyPrefix(prefix, originalName);
+	constructor(expression: k.Expression<T>, alias: string, originalName: string) {
 		super(expression, alias);
 		this.originalName = originalName;
 	}
