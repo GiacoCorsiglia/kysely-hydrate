@@ -165,6 +165,69 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		]);
 	});
 
+	test("orderBy on a nested column whose generated alias exceeds 63 bytes", async () => {
+		// The generated alias
+		// "organizationalDepartmentAssignmentForThisEmployeeRecord$$department_name"
+		// (72 chars) exceeds 63 bytes, so both the SELECT alias and the ORDER BY
+		// handling must survive shortening consistently.
+		const employees = await querySet(snakeDb)
+			.selectAs(
+				"employee",
+				snakeDb
+					.selectFrom("departmental_employee_records")
+					.select(["id", "organizational_department_id", "employee_preferred_full_display_name"]),
+			)
+			.innerJoinOne(
+				"organizationalDepartmentAssignmentForThisEmployeeRecord",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("organizational_departments").select(["id", "department_name"])),
+				"organizationalDepartmentAssignmentForThisEmployeeRecord.id",
+				"employee.organizational_department_id",
+			)
+			.orderBy("organizationalDepartmentAssignmentForThisEmployeeRecord$$department_name", "desc")
+			.orderBy("employee_preferred_full_display_name", "asc")
+			.execute();
+
+		assert.deepStrictEqual(employees, [
+			{
+				id: 3,
+				organizational_department_id: 2,
+				employee_preferred_full_display_name: "Carol Chen",
+				organizationalDepartmentAssignmentForThisEmployeeRecord: {
+					id: 2,
+					department_name: "Marketing",
+				},
+			},
+			{
+				id: 4,
+				organizational_department_id: 2,
+				employee_preferred_full_display_name: "Dave Diaz",
+				organizationalDepartmentAssignmentForThisEmployeeRecord: {
+					id: 2,
+					department_name: "Marketing",
+				},
+			},
+			{
+				id: 1,
+				organizational_department_id: 1,
+				employee_preferred_full_display_name: "Alice Anderson",
+				organizationalDepartmentAssignmentForThisEmployeeRecord: {
+					id: 1,
+					department_name: "Engineering",
+				},
+			},
+			{
+				id: 2,
+				organizational_department_id: 1,
+				employee_preferred_full_display_name: "Bob Barker",
+				organizationalDepartmentAssignmentForThisEmployeeRecord: {
+					id: 1,
+					department_name: "Engineering",
+				},
+			},
+		]);
+	});
+
 	//
 	// With CamelCasePlugin
 	//
@@ -292,6 +355,88 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 						organizationalDepartmentId: 1,
 						employeePreferredFullDisplayName: "Bob Barker",
 						employeeSecondaryContactEmailAddress: "bob.barker@example.com",
+					},
+				],
+			},
+		]);
+	});
+
+	test("with CamelCasePlugin: orderBy + pagination on a nested alias exceeding 63 bytes", async () => {
+		// Pagination combined with a many-join wraps the cardinality-one part in
+		// a subquery and re-hoists its selections, so the outer ORDER BY
+		// references the over-long generated alias
+		// "parentOrganizationRegistrationForThisDepartmentRecord$$organizationName"
+		// (snake_cased to 79 bytes). Both the subquery's SELECT alias and the
+		// outer reference must be shortened to the same identifier for the query
+		// to be valid — and the hydrated output must still use full-length keys.
+		const departments = await querySet(camelDb)
+			.selectAs(
+				"department",
+				camelDb
+					.selectFrom("organizationalDepartments")
+					.select(["id", "organizationId", "departmentName"]),
+			)
+			.innerJoinOne(
+				"parentOrganizationRegistrationForThisDepartmentRecord",
+				({ eb, qs }) => qs(eb.selectFrom("organizations").select(["id", "organizationName"])),
+				"parentOrganizationRegistrationForThisDepartmentRecord.id",
+				"department.organizationId",
+			)
+			.innerJoinMany(
+				"departmentalEmployeeRecords",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("departmentalEmployeeRecords")
+							.select(["id", "organizationalDepartmentId", "employeePreferredFullDisplayName"]),
+					),
+				"departmentalEmployeeRecords.organizationalDepartmentId",
+				"department.id",
+			)
+			.orderBy("parentOrganizationRegistrationForThisDepartmentRecord$$organizationName", "desc")
+			.limit(2)
+			.execute();
+
+		assert.deepStrictEqual(departments, [
+			{
+				id: 2,
+				organizationId: 2,
+				departmentName: "Marketing",
+				parentOrganizationRegistrationForThisDepartmentRecord: {
+					id: 2,
+					organizationName: "Zenith Systems",
+				},
+				departmentalEmployeeRecords: [
+					{
+						id: 3,
+						organizationalDepartmentId: 2,
+						employeePreferredFullDisplayName: "Carol Chen",
+					},
+					{
+						id: 4,
+						organizationalDepartmentId: 2,
+						employeePreferredFullDisplayName: "Dave Diaz",
+					},
+				],
+			},
+			{
+				id: 1,
+				organizationId: 1,
+				departmentName: "Engineering",
+				parentOrganizationRegistrationForThisDepartmentRecord: {
+					id: 1,
+					organizationName: "Acme Corporation",
+				},
+				departmentalEmployeeRecords: [
+					{
+						id: 1,
+						organizationalDepartmentId: 1,
+						employeePreferredFullDisplayName: "Alice Anderson",
+					},
+					{
+						id: 2,
+						organizationalDepartmentId: 1,
+						employeePreferredFullDisplayName: "Bob Barker",
 					},
 				],
 			},

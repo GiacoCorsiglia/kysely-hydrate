@@ -26,13 +26,17 @@ CREATE TABLE IF NOT EXISTS departmental_employee_records (
 );
 
 INSERT INTO organizations (id, organization_name) VALUES
-  (1, 'Acme Corporation');
+  (1, 'Acme Corporation'),
+  (2, 'Zenith Systems');
 
 INSERT INTO organizational_departments (id, organization_id, department_name) VALUES
-  (1, 1, 'Engineering');
+  (1, 1, 'Engineering'),
+  (2, 2, 'Marketing');
 
 INSERT INTO departmental_employee_records
   (id, organizational_department_id, employee_preferred_full_display_name, employee_secondary_contact_email_address)
 VALUES
   (1, 1, 'Alice Anderson', 'alice.anderson@example.com'),
-  (2, 1, 'Bob Barker', 'bob.barker@example.com');
+  (2, 1, 'Bob Barker', 'bob.barker@example.com'),
+  (3, 2, 'Carol Chen', 'carol.chen@example.com'),
+  (4, 2, 'Dave Diaz', 'dave.diaz@example.com');

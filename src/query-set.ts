@@ -18,6 +18,7 @@
 
 import * as k from "kysely";
 
+import { withIdentifierLengthGuard } from "./helpers/identifier-length.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -2733,14 +2734,43 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#props.baseQuery;
 	}
 
-	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+	/**
+	 * The db with the identifier-length plugin pair applied (see
+	 * `helpers/identifier-length.ts`).  Used to build the OUTERMOST query — the
+	 * one that is actually executed — so that generated aliases longer than
+	 * Postgres's 63-byte identifier limit survive the round trip.  Subqueries
+	 * must NOT be built from this db: only the executed builder's plugins run,
+	 * and embedding a builder applies its own plugins to the embedded node with
+	 * a queryId that never reaches execution, which would strand the recorded
+	 * renames.
+	 */
+	get #guardedDb(): k.Kysely<any> {
+		return withIdentifierLengthGuard(this.#props.db);
+	}
+
+	/**
+	 * @param isOutermost - True when the returned builder is the one that will
+	 * actually be executed (as opposed to being embedded in an outer query).
+	 */
+	#getSelectFromBase(
+		isNested: boolean,
+		isLocalSubquery: boolean,
+		isOutermost: boolean,
+	): AnySelectQueryBuilder {
 		const { db, baseQuery, baseAlias, writeQueryCreator } = this.#props;
+
+		const creator = isOutermost ? this.#guardedDb : db;
 
 		// We always inline SELECT queries.
 		if (isSelectQueryBuilder(baseQuery)) {
 			// When a writeQueryCreator is available, use it to build the outer
 			// query so CTEs live at the top level.  The base query (which has no
-			// CTEs) becomes a derived table.
+			// CTEs) becomes a derived table.  `isOutermost` is not consulted here:
+			// the creator was already built from the guarded db in
+			// write()/writeAs(), which is what we want whenever this query is
+			// executed directly — and a write query set embedded as a subquery
+			// (pagination + many-joins) is invalid regardless, since Postgres
+			// requires data-modifying CTEs at the top level.
 			if (writeQueryCreator) {
 				if (isNested) {
 					throw new InvalidJoinedQuerySetError(baseAlias);
@@ -2751,7 +2781,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				return qb;
 			}
 
-			const qb = db.selectFrom(baseQuery.as(baseAlias));
+			const qb = creator.selectFrom(baseQuery.as(baseAlias));
 			return applyHoistedSelections(qb, baseQuery, baseAlias);
 		}
 
@@ -2761,7 +2791,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			throw new InvalidJoinedQuerySetError(baseAlias);
 		}
 
-		const queryCreator = isLocalSubquery ? db : db.with("__base", () => baseQuery);
+		const queryCreator = isLocalSubquery ? db : creator.with("__base", () => baseQuery);
 
 		let qb = queryCreator.selectFrom(`__base as ${baseAlias}`);
 
@@ -2890,10 +2920,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 *   to WHERE EXISTS to avoid row explosion
 	 * - Cardinality-many non-filtering joins (leftJoinMany) - excluded entirely
 	 */
-	#toCardinalityOneQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+	#toCardinalityOneQuery(
+		isNested: boolean,
+		isLocalSubquery: boolean,
+		isOutermost: boolean,
+	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
 
-		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery, isOutermost);
 
 		for (const [key, collection] of joinCollections) {
 			// For count/exists queries:
@@ -2931,10 +2965,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#toJoinedQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
+	#toJoinedQuery(
+		isNested: boolean,
+		isLocalSubquery: boolean,
+		isOutermost: boolean,
+	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
 
-		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
+		let qb = this.#getSelectFromBase(isNested, isLocalSubquery, isOutermost);
 
 		for (const [key, collection] of joinCollections) {
 			qb = this.#addCollectionAsJoin(qb, key, collection);
@@ -2954,7 +2992,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return this.#toJoinedQuery(false, false);
+		return this.#toJoinedQuery(false, false, true);
 	}
 
 	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
@@ -2962,11 +3000,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isNested: IsNested,
 		isLocalSubquery: boolean,
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
-		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
+		const { baseQuery, baseAlias, limit, offset, orderBy, orderByKeys, joinCollections } =
 			this.#props;
 
 		// Strict null checks: an explicit limit/offset of 0 must still be applied.
 		const hasPagination = limit !== null || offset !== null;
+
+		// Only the outermost query — the one actually executed — gets the
+		// identifier-length plugin pair; see `#guardedDb`.
+		const isOutermost = !isNested && !isLocalSubquery;
 
 		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
 		// baseAlias) we can do less nesting.  Write query sets are excluded: their CTEs live on the
@@ -2995,19 +3037,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			// instead of hoisting, because these can't be nested anyway (so we will never need to hoist
 			// from here).
 			return this.#applyLimitAndOffset(
-				this.#getSelectFromBase(isNested, isLocalSubquery).selectAll(),
+				this.#getSelectFromBase(isNested, isLocalSubquery, isOutermost).selectAll(),
 			);
 		}
 
 		// If no pagination, just return the joined query, even if it has row explosion.
 		if (!hasPagination) {
-			return this.#toJoinedQuery(isNested, isLocalSubquery);
+			return this.#toJoinedQuery(isNested, isLocalSubquery, isOutermost);
 		}
 
 		// If only cardinality-one joins, we can safely apply limit/offset to the
 		// joined query.
 		if (this.#isCardinalityOne()) {
-			let qb = this.#toJoinedQuery(isNested, isLocalSubquery);
+			let qb = this.#toJoinedQuery(isNested, isLocalSubquery, isOutermost);
 			// #toJoinedQuery skips ORDER BY inside subqueries (where it would be
 			// meaningless on its own), but with pagination the ordering determines
 			// WHICH rows the limit keeps — e.g. a lateral "top N per group" — so it
@@ -3019,7 +3061,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return this.#applyLimitAndOffset(qb);
 		}
 
-		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery);
+		// The cardinality-one query becomes a subquery here, so it must not be
+		// built as an outermost query even when this query set is at the top
+		// level.
+		let cardinalityOneQuery = this.#toCardinalityOneQuery(isNested, isLocalSubquery, false);
 
 		cardinalityOneQuery = this.#applyLimitAndOffset(cardinalityOneQuery);
 		// Ordering in the subquery only matters if there is a limit or offset.
@@ -3027,7 +3072,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery, false);
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
-		let qb = db.selectFrom(aliasedCardinalityOneQuery);
+		const creator = isOutermost ? this.#guardedDb : this.#props.db;
+		let qb = creator.selectFrom(aliasedCardinalityOneQuery);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
 		// hoisted further by parent queries.
@@ -3064,15 +3110,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
-		return this.#toCardinalityOneQuery(false, false)
+		return this.#toCardinalityOneQuery(false, false, true)
 			.clearSelect()
 			.select((eb) => eb.fn.countAll().as("count"));
 	}
 
 	toExistsQuery(): OpaqueExistsQueryBuilder {
-		return this.#props.db.selectNoFrom(({ exists }) =>
+		return this.#guardedDb.selectNoFrom(({ exists }) =>
 			exists(
-				this.#toCardinalityOneQuery(false, false)
+				this.#toCardinalityOneQuery(false, false, false)
 					.clearSelect()
 					.select((eb) => eb.lit(1).as("_")),
 			).as("exists"),
@@ -3450,7 +3496,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	write(cteFn: (db: any) => any, selectFn: (qc: any) => AnySelectQueryBuilder): any {
-		const qc = cteFn(this.#props.db);
+		// The query creator builds the executed (outermost) query, so give it the
+		// identifier-length plugin pair up front; see `#guardedDb`.
+		const qc = cteFn(this.#guardedDb);
 		const baseQuery = selectFn(qc).withPlugin(stripWithPlugin);
 		return this.#clone({
 			baseQuery,
@@ -3791,7 +3839,9 @@ class QuerySetCreator<in out DB> {
 		keyBy: KeyBy<InferO<NoInfer<SQB>>>,
 	): InitialQuerySet<DB, Alias, InferTSelectQuery<SQB>>;
 	writeAs(alias: string, cteFn: any, selectFn: any, keyBy: KeyBy<any> = DEFAULT_KEY_BY): any {
-		const qc = cteFn(this.#db);
+		// The query creator builds the executed (outermost) query, so give it the
+		// identifier-length plugin pair up front (matches `QuerySetImpl.write`).
+		const qc = cteFn(withIdentifierLengthGuard(this.#db));
 		const baseQuery = selectFn(qc).withPlugin(stripWithPlugin);
 		return new QuerySetImpl({
 			db: this.#db,
