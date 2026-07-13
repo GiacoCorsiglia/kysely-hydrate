@@ -18,18 +18,22 @@
 
 import * as k from "kysely";
 
+import { IdentifierTooLongError } from "./helpers/errors.ts";
+import {
+	fitsWithinIdentifierLimit,
+	INDEX_PATH_SEP,
+	isIndexPath,
+} from "./helpers/identifier-limit.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
 	type ApplyPrefixWithSep,
 	type MakeInitialPrefix,
+	applyPrefix,
 	makePrefix,
 	SEP,
 } from "./helpers/prefixes.ts";
-import {
-	applyHoistedPrefixedSelections,
-	applyHoistedSelections,
-} from "./helpers/select-renamer.ts";
+import { applyHoistedSelections, tryGetSelectionNames } from "./helpers/select-renamer.ts";
 import {
 	type AnySelectQueryBuilder,
 	type AnyDeleteQueryBuilder,
@@ -47,6 +51,7 @@ import {
 	type StrictSubset,
 	type TypeErrorMessage,
 	assertNever,
+	isIterable,
 	isSelectQueryBuilder,
 	mapWithDeleted,
 } from "./helpers/utils.ts";
@@ -69,6 +74,7 @@ import {
 	asFullHydrator,
 	createHydrator,
 	DEFAULT_KEY_BY,
+	defineProtoShadowedKey,
 	EnableAutoInclusion,
 } from "./hydrator.ts";
 import { InvalidJoinedQuerySetError } from "./index.ts";
@@ -2664,6 +2670,93 @@ interface QuerySetProps {
 	writeQueryCreator: k.QueryCreator<any> | null;
 }
 
+////////////////////////////////////////////////////////////
+// Alias planning (SQL identifier length limit).
+////////////////////////////////////////////////////////////
+
+/**
+ * How one output column of a query set's joined query is named.
+ * See helpers/identifier-limit.ts for background.
+ */
+interface PlannedColumn {
+	/**
+	 * The full logical (`$$`-joined) name of the column relative to this level,
+	 * e.g. `"posts$$author$$name"`.  This is the name hydration expects.
+	 */
+	readonly logicalName: string;
+	/**
+	 * The hierarchical index path of the column relative to this level, e.g.
+	 * `"0/3/2"` (relation 0 → its relation 3 → that relation's column 2).
+	 * Relations are indexed by their position among the level's join
+	 * collections, columns by their position in the base query's select list.
+	 * Used as the SQL alias when the logical name would exceed the identifier
+	 * limit.
+	 */
+	readonly indexPath: string;
+}
+
+/**
+ * A deterministic naming plan for one query set's joined query, derived purely
+ * from the query definition (select-list order and join-collection order), so
+ * recomposing the same query always yields the same aliases.
+ */
+interface AliasPlan {
+	/**
+	 * Output (select-list) name at this level → planned column.  Base-query
+	 * columns keep their own names; nested columns appear under the alias
+	 * chosen by {@link pickAlias}.
+	 */
+	readonly columns: ReadonlyMap<string, PlannedColumn>;
+	/** Logical name → output (select-list) name at this level. */
+	readonly outputNames: ReadonlyMap<string, string>;
+	/** Collection key → (child output name → alias at this level). */
+	readonly hoistAliases: ReadonlyMap<string, ReadonlyMap<string, string>>;
+}
+
+/**
+ * Chooses the SQL alias for a hoisted nested column: the logical `$$`-joined
+ * name when it is guaranteed to survive the SQL identifier limit, otherwise
+ * the hierarchical index path.
+ */
+function pickAlias(logicalName: string, indexPath: string): string {
+	// A logical name that itself looks like an index path could collide with a
+	// generated one; force such (pathological) names onto the index-path scheme.
+	if (fitsWithinIdentifierLimit(logicalName) && !isIndexPath(logicalName)) {
+		return logicalName;
+	}
+
+	// Practically unreachable (see helpers/identifier-limit.ts for the math),
+	// but silent truncation is never acceptable.
+	if (!fitsWithinIdentifierLimit(indexPath)) {
+		throw new IdentifierTooLongError(logicalName, indexPath);
+	}
+
+	return indexPath;
+}
+
+/**
+ * Returns a copy of `row` with keys renamed per `renames`; keys not in the
+ * map are kept as-is.  A `"__proto__"` key must be defined as an own data
+ * property (see {@link defineProtoShadowedKey} for the rationale).
+ */
+function renameRowKeys(renames: ReadonlyMap<string, string>, row: unknown): unknown {
+	if (typeof row !== "object" || row === null) {
+		return row;
+	}
+
+	const renamed: Record<string, unknown> = {};
+	for (const key of Object.keys(row)) {
+		const name = renames.get(key) ?? key;
+		const value = (row as Record<string, unknown>)[key];
+		if (name === "__proto__") {
+			defineProtoShadowedKey(renamed, value);
+		} else {
+			renamed[name] = value;
+		}
+	}
+	return renamed;
+}
+
 /**
  * Implementation of the {@link QuerySet} interface as well as the
  * {@link MappedQuerySet} interface; there is no runtime distinction.
@@ -2733,6 +2826,24 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#props.baseQuery;
 	}
 
+	/**
+	 * The query creator used to assemble a query at the given nesting level.
+	 *
+	 * Subqueries are built plugin-free: plugins like CamelCasePlugin rewrite
+	 * identifiers in `toOperationNode()`, so a plugin-bound subquery would hand
+	 * back transformed selection names when its parent hoists them — a
+	 * different name space than the {@link AliasPlan} (which is derived from
+	 * the pre-transform query definitions).  Plugin-free subqueries keep every
+	 * name exactly as this class assigned it, at every nesting level.  The
+	 * top-level query keeps its plugins and transforms the whole assembled
+	 * tree once at compile time (plugin transforms are idempotent — Kysely
+	 * itself re-transforms embedded subquery nodes the same way).
+	 */
+	#getSubqueryDb(isNested: boolean, isLocalSubquery: boolean): k.Kysely<any> {
+		const { db } = this.#props;
+		return isNested || isLocalSubquery ? db.withoutPlugins() : db;
+	}
+
 	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
 		const { db, baseQuery, baseAlias, writeQueryCreator } = this.#props;
 
@@ -2751,7 +2862,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				return qb;
 			}
 
-			const qb = db.selectFrom(baseQuery.as(baseAlias));
+			const qb = this.#getSubqueryDb(isNested, isLocalSubquery).selectFrom(baseQuery.as(baseAlias));
 			return applyHoistedSelections(qb, baseQuery, baseAlias);
 		}
 
@@ -2806,10 +2917,68 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
+	 * Lazily computed {@link AliasPlan}; query set instances are immutable
+	 * (every modification clones), so the cache never invalidates.
+	 */
+	#aliasPlan: AliasPlan | undefined;
+
+	/**
+	 * Builds the naming plan for this query set's joined query: for every
+	 * output column, its logical (`$$`-joined) name and its hierarchical index
+	 * path, plus the alias each hoisted nested column receives at this level.
+	 *
+	 * The joined query's select list is always: the base query's own columns
+	 * (under their original names, so join ON conditions keep working), then
+	 * each join collection's hoisted columns (in collection order) under the
+	 * alias chosen by {@link pickAlias}.
+	 */
+	#getAliasPlan(): AliasPlan {
+		if (this.#aliasPlan) {
+			return this.#aliasPlan;
+		}
+
+		const columns = new Map<string, PlannedColumn>();
+		const outputNames = new Map<string, string>();
+		const hoistAliases = new Map<string, ReadonlyMap<string, string>>();
+
+		// The base query's own columns are never renamed; their index paths are
+		// their select-list positions.  Name extraction is best-effort here
+		// (e.g. `returningAll()` write queries have no extractable names); the
+		// strict errors for unhoistable selections still surface at hoist time.
+		const baseNames = tryGetSelectionNames(this.#props.baseQuery);
+		baseNames?.forEach((name, index) => {
+			if (!columns.has(name)) {
+				columns.set(name, { logicalName: name, indexPath: String(index) });
+				outputNames.set(name, name);
+			}
+		});
+
+		let relationIndex = 0;
+		for (const [key, collection] of this.#props.joinCollections) {
+			const childPlan = collection.querySet.#getAliasPlan();
+			const aliases = new Map<string, string>();
+
+			for (const [childOutputName, childColumn] of childPlan.columns) {
+				const logicalName = applyPrefix(makePrefix("", key), childColumn.logicalName);
+				const indexPath = `${relationIndex}${INDEX_PATH_SEP}${childColumn.indexPath}`;
+				const alias = pickAlias(logicalName, indexPath);
+
+				aliases.set(childOutputName, alias);
+				columns.set(alias, { logicalName, indexPath });
+				outputNames.set(logicalName, alias);
+			}
+
+			hoistAliases.set(key, aliases);
+			relationIndex++;
+		}
+
+		this.#aliasPlan = { columns, outputNames, hoistAliases };
+		return this.#aliasPlan;
+	}
+
+	/**
 	 * Adds a single join to the query.
 	 *
-	 * @param isForSelection - If true, selections will be hoisted and prefixed.
-	 * @param prefix - The prefix to use when hoisting selections.
 	 * @param qb - The query builder to add the join to.
 	 * @param key - The key of the join.
 	 * @param collection - The collection to add the join to.
@@ -2825,9 +2994,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// This cast to a single method helps TypeScript follow the overloads.
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
 
-		// Add the (prefixed) selections from the subquery to the parent query.
+		// Add the subquery's selections to the parent query, aliased per the
+		// alias plan (logical `$$`-prefixed names, or index paths when a logical
+		// name would exceed the SQL identifier limit).  The fallback covers
+		// names absent from the plan (the child's selection names may not be
+		// statically extractable) by applying the plain logical prefix.
+		const aliases = this.#getAliasPlan().hoistAliases.get(key);
 		const prefix = makePrefix("", key);
-		qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
+		qb = applyHoistedSelections(
+			qb,
+			nestedQuery,
+			key,
+			(name) => aliases?.get(name) ?? applyPrefix(prefix, name),
+		);
 
 		return qb;
 	}
@@ -2854,11 +3033,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			let orderExpr: string | k.Expression<any>;
 			if (expr.includes(SEP)) {
 				if (isOuter) {
-					// For outer queries with pagination + many-joins, use hoisted column reference
-					orderExpr = eb.ref(`${baseAlias}.${expr}`);
+					// For outer queries with pagination + many-joins, use the hoisted
+					// column reference.  The hoisted column may have been renamed to an
+					// index path if the logical alias exceeds the identifier limit.
+					const outputName = this.#getAliasPlan().outputNames.get(expr) ?? expr;
+					orderExpr = eb.ref(`${baseAlias}.${outputName}`);
 				} else {
-					// For inner queries, convert $$ to .
-					orderExpr = expr.replace(SEP, ".");
+					// For inner queries, reference the joined subquery's output column
+					// directly.
+					orderExpr = this.#nestedOrderByReference(expr);
 				}
 			} else {
 				// No $$, it's a base column
@@ -2879,6 +3062,25 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		return qb;
+	}
+
+	/**
+	 * Resolves an orderBy expression targeting a nested collection column
+	 * (`"posts$$author$$name"`) into a reference to the joined subquery's
+	 * output column: `"posts.author$$name"`, or `"posts.3/2"` if the alias was
+	 * renamed to an index path inside the subquery.
+	 */
+	#nestedOrderByReference(expr: string): string {
+		const sepIndex = expr.indexOf(SEP);
+		const key = expr.slice(0, sepIndex);
+		const rest = expr.slice(sepIndex + SEP.length);
+
+		const collection = this.#props.joinCollections.get(key);
+		const columnName = collection
+			? (collection.querySet.#getAliasPlan().outputNames.get(rest) ?? rest)
+			: rest;
+
+		return `${key}.${columnName}`;
 	}
 
 	/**
@@ -2962,7 +3164,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isNested: IsNested,
 		isLocalSubquery: boolean,
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
-		const { baseQuery, baseAlias, db, limit, offset, orderBy, orderByKeys, joinCollections } =
+		const { baseQuery, baseAlias, limit, offset, orderBy, orderByKeys, joinCollections } =
 			this.#props;
 
 		// Strict null checks: an explicit limit/offset of 0 must still be applied.
@@ -3027,7 +3229,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		cardinalityOneQuery = this.#applyOrderBy(cardinalityOneQuery, false);
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
-		let qb = db.selectFrom(aliasedCardinalityOneQuery);
+		let qb = this.#getSubqueryDb(isNested, isLocalSubquery).selectFrom(aliasedCardinalityOneQuery);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
 		// hoisted further by parent queries.
@@ -3091,8 +3293,47 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	// Execution.
 	////////////////////////////////////////////////////////////
 
+	/**
+	 * Lazily computed map from index-path row keys back to the logical
+	 * (`$$`-prefixed) names the hydrator expects; null when nothing was
+	 * renamed (the common case), so hydration pays no per-row cost.
+	 */
+	#logicalRowNames: ReadonlyMap<string, string> | null | undefined;
+
+	#getLogicalRowNames(): ReadonlyMap<string, string> | null {
+		if (this.#logicalRowNames === undefined) {
+			let renames: Map<string, string> | null = null;
+			for (const [outputName, column] of this.#getAliasPlan().columns) {
+				if (outputName !== column.logicalName) {
+					(renames ??= new Map()).set(outputName, column.logicalName);
+				}
+			}
+			this.#logicalRowNames = renames;
+		}
+		return this.#logicalRowNames;
+	}
+
+	/**
+	 * Restores the logical (`$$`-prefixed) key names on result rows whose
+	 * columns were renamed to index paths to fit the SQL identifier limit.
+	 * This is the single point where index paths are translated back, so the
+	 * hydrator's prefix machinery (and everything downstream: keyBy, extras,
+	 * attach, ordering) operates on logical names unchanged.
+	 */
+	#restoreLogicalRowNames(input: unknown): unknown {
+		const renames = this.#getLogicalRowNames();
+		if (!renames) {
+			return input;
+		}
+
+		if (isIterable(input)) {
+			return Array.from(input as Iterable<unknown>, (row) => renameRowKeys(renames, row));
+		}
+		return renameRowKeys(renames, input);
+	}
+
 	async hydrate(input: any): Promise<any> {
-		return this.#props.hydrator.hydrate(await input, {
+		return this.#props.hydrator.hydrate(this.#restoreLogicalRowNames(await input), {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.

@@ -818,7 +818,7 @@ interface AutoFields {
  * An own data property shadows the accessor, so subsequent reads and plain
  * writes behave normally.
  */
-function defineProtoShadowedKey(entity: object, value: unknown): void {
+export function defineProtoShadowedKey(entity: object, value: unknown): void {
 	Object.defineProperty(entity, "__proto__", {
 		value,
 		writable: true,

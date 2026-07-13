@@ -9,8 +9,10 @@
  * silently produces wrong output (mangled/missing fields, or collisions
  * between two distinct columns that share the same first 63 bytes).
  *
- * These tests REPRODUCE the bug: they currently FAIL against Postgres and
- * are written to PASS once the library handles long generated aliases.
+ * The library handles this by renaming over-limit generated aliases to
+ * hierarchical index paths (see helpers/identifier-limit.ts) and restoring
+ * the logical names at hydration time.  These tests exercise that renaming
+ * end-to-end against a real Postgres.
  *
  * Every identifier in the fixture DDL (identifier-length-fixture.sql) is
  * itself under 63 bytes — only the generated alias chains are over-long.
@@ -165,6 +167,192 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		]);
 	});
 
+	test("orderBy on a deeply-nested long-named column", async () => {
+		// The orderBy expression's logical alias
+		// "<49-char key>$$<51-char key>$$organization_name" (108 chars) exceeds
+		// 63 bytes — and so does the intermediate "<51-char key>$$organization_name"
+		// (70 chars) inside the department subquery — so the generated ORDER BY
+		// must reference the renamed (index-path) aliases instead.
+		const employees = await querySet(snakeDb)
+			.selectAs(
+				"emp",
+				snakeDb
+					.selectFrom("departmental_employee_records")
+					.select(["id", "organizational_department_id", "employee_preferred_full_display_name"]),
+			)
+			.innerJoinOne(
+				"organizationalDepartmentEmployingThisPersonRecord",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("organizational_departments")
+							.select(["id", "organization_id", "department_name"]),
+					).innerJoinOne(
+						"organizationOwningThisEntireDepartmentRecordVerbose",
+						({ eb, qs }) => qs(eb.selectFrom("organizations").select(["id", "organization_name"])),
+						"organizationOwningThisEntireDepartmentRecordVerbose.id",
+						"organizationalDepartmentEmployingThisPersonRecord.organization_id",
+					),
+				"organizationalDepartmentEmployingThisPersonRecord.id",
+				"emp.organizational_department_id",
+			)
+			.orderBy(
+				"organizationalDepartmentEmployingThisPersonRecord$$organizationOwningThisEntireDepartmentRecordVerbose$$organization_name",
+				"desc",
+			)
+			.execute();
+
+		// All four employees ordered by their organization's name descending
+		// ("Zenith Industries" before "Acme Corporation"), then by id.
+		assert.deepStrictEqual(employees, [
+			{
+				id: 3,
+				organizational_department_id: 2,
+				employee_preferred_full_display_name: "Yolanda Young",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 2,
+					organization_id: 2,
+					department_name: "Research",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 2,
+						organization_name: "Zenith Industries",
+					},
+				},
+			},
+			{
+				id: 4,
+				organizational_department_id: 2,
+				employee_preferred_full_display_name: "Zach Zimmerman",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 2,
+					organization_id: 2,
+					department_name: "Research",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 2,
+						organization_name: "Zenith Industries",
+					},
+				},
+			},
+			{
+				id: 1,
+				organizational_department_id: 1,
+				employee_preferred_full_display_name: "Alice Anderson",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 1,
+					organization_id: 1,
+					department_name: "Engineering",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 1,
+						organization_name: "Acme Corporation",
+					},
+				},
+			},
+			{
+				id: 2,
+				organizational_department_id: 1,
+				employee_preferred_full_display_name: "Bob Barker",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 1,
+					organization_id: 1,
+					department_name: "Engineering",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 1,
+						organization_name: "Acme Corporation",
+					},
+				},
+			},
+		]);
+	});
+
+	test("pagination + orderBy through over-limit aliases", async () => {
+		// Pagination with a cardinality-many join wraps the query: limit/offset
+		// and ORDER BY apply inside a cardinality-one subquery, and the outer
+		// query re-hoists its columns (including renamed ones) and re-applies
+		// ORDER BY against the hoisted aliases.  The one-join's 72-char logical
+		// alias "<55-char key>$$department_name" is over the limit, so both the
+		// inner and outer ORDER BY must reference the renamed alias.
+		const employees = await querySet(snakeDb)
+			.selectAs(
+				"emp",
+				snakeDb
+					.selectFrom("departmental_employee_records")
+					.select(["id", "organizational_department_id", "employee_preferred_full_display_name"]),
+			)
+			.innerJoinOne(
+				"organizationalDepartmentOwningThisEmployeeRecordVerbose",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("organizational_departments").select(["id", "department_name"])),
+				"organizationalDepartmentOwningThisEmployeeRecordVerbose.id",
+				"emp.organizational_department_id",
+			)
+			.leftJoinMany(
+				"allEmployeeRecordsBelongingToTheSameParentDepartment",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("departmental_employee_records")
+							.select([
+								"id",
+								"organizational_department_id",
+								"employee_preferred_full_display_name",
+							]),
+					),
+				"allEmployeeRecordsBelongingToTheSameParentDepartment.organizational_department_id",
+				"emp.organizational_department_id",
+			)
+			.orderBy("organizationalDepartmentOwningThisEmployeeRecordVerbose$$department_name", "desc")
+			.offset(1)
+			.limit(2)
+			.execute();
+
+		// All four employees ordered by department name desc, then id asc:
+		// [3 Yolanda, 4 Zach, 1 Alice, 2 Bob]; offset 1 + limit 2 => [4, 1].
+		assert.deepStrictEqual(employees, [
+			{
+				id: 4,
+				organizational_department_id: 2,
+				employee_preferred_full_display_name: "Zach Zimmerman",
+				organizationalDepartmentOwningThisEmployeeRecordVerbose: {
+					id: 2,
+					department_name: "Research",
+				},
+				allEmployeeRecordsBelongingToTheSameParentDepartment: [
+					{
+						id: 3,
+						organizational_department_id: 2,
+						employee_preferred_full_display_name: "Yolanda Young",
+					},
+					{
+						id: 4,
+						organizational_department_id: 2,
+						employee_preferred_full_display_name: "Zach Zimmerman",
+					},
+				],
+			},
+			{
+				id: 1,
+				organizational_department_id: 1,
+				employee_preferred_full_display_name: "Alice Anderson",
+				organizationalDepartmentOwningThisEmployeeRecordVerbose: {
+					id: 1,
+					department_name: "Engineering",
+				},
+				allEmployeeRecordsBelongingToTheSameParentDepartment: [
+					{
+						id: 1,
+						organizational_department_id: 1,
+						employee_preferred_full_display_name: "Alice Anderson",
+					},
+					{
+						id: 2,
+						organizational_department_id: 1,
+						employee_preferred_full_display_name: "Bob Barker",
+					},
+				],
+			},
+		]);
+	});
+
 	//
 	// With CamelCasePlugin
 	//
@@ -294,6 +482,99 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 						employeeSecondaryContactEmailAddress: "bob.barker@example.com",
 					},
 				],
+			},
+		]);
+	});
+
+	test("with CamelCasePlugin: orderBy on a deeply-nested long-named column", async () => {
+		// Same as the plain orderBy test, but the renamed index-path alias must
+		// also survive the plugin's snake_case/camelize round-trip (index paths
+		// contain only digits and slashes, which both transforms leave alone).
+		const employees = await querySet(camelDb)
+			.selectAs(
+				"emp",
+				camelDb
+					.selectFrom("departmentalEmployeeRecords")
+					.select(["id", "organizationalDepartmentId", "employeePreferredFullDisplayName"]),
+			)
+			.innerJoinOne(
+				"organizationalDepartmentEmployingThisPersonRecord",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("organizationalDepartments")
+							.select(["id", "organizationId", "departmentName"]),
+					).innerJoinOne(
+						"organizationOwningThisEntireDepartmentRecordVerbose",
+						({ eb, qs }) => qs(eb.selectFrom("organizations").select(["id", "organizationName"])),
+						"organizationOwningThisEntireDepartmentRecordVerbose.id",
+						"organizationalDepartmentEmployingThisPersonRecord.organizationId",
+					),
+				"organizationalDepartmentEmployingThisPersonRecord.id",
+				"emp.organizationalDepartmentId",
+			)
+			.orderBy(
+				"organizationalDepartmentEmployingThisPersonRecord$$organizationOwningThisEntireDepartmentRecordVerbose$$organizationName",
+				"desc",
+			)
+			.execute();
+
+		assert.deepStrictEqual(employees, [
+			{
+				id: 3,
+				organizationalDepartmentId: 2,
+				employeePreferredFullDisplayName: "Yolanda Young",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 2,
+					organizationId: 2,
+					departmentName: "Research",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 2,
+						organizationName: "Zenith Industries",
+					},
+				},
+			},
+			{
+				id: 4,
+				organizationalDepartmentId: 2,
+				employeePreferredFullDisplayName: "Zach Zimmerman",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 2,
+					organizationId: 2,
+					departmentName: "Research",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 2,
+						organizationName: "Zenith Industries",
+					},
+				},
+			},
+			{
+				id: 1,
+				organizationalDepartmentId: 1,
+				employeePreferredFullDisplayName: "Alice Anderson",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 1,
+					organizationId: 1,
+					departmentName: "Engineering",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 1,
+						organizationName: "Acme Corporation",
+					},
+				},
+			},
+			{
+				id: 2,
+				organizationalDepartmentId: 1,
+				employeePreferredFullDisplayName: "Bob Barker",
+				organizationalDepartmentEmployingThisPersonRecord: {
+					id: 1,
+					organizationId: 1,
+					departmentName: "Engineering",
+					organizationOwningThisEntireDepartmentRecordVerbose: {
+						id: 1,
+						organizationName: "Acme Corporation",
+					},
+				},
 			},
 		]);
 	});

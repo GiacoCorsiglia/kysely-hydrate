@@ -97,6 +97,21 @@ export class KeyByMismatchError extends KyselyHydrateError {
 }
 
 /**
+ * Error thrown when a generated column alias exceeds the 63-byte SQL
+ * identifier limit even after hierarchical index-path renaming.  Reaching this
+ * requires roughly 16 levels of nesting with 3-digit relation/column indices
+ * at every level, so this exists as a correctness guard rather than an
+ * expected failure mode.
+ */
+export class IdentifierTooLongError extends KyselyHydrateError {
+	constructor(logicalName: string, indexPath: string) {
+		super(
+			`Generated alias for "${logicalName}" exceeds the 63-byte SQL identifier limit even as an index path ("${indexPath}")`,
+		);
+	}
+}
+
+/**
  * Error thrown when attempting to nest a `QuerySet` with a write operation as a
  * join inside another `QuerySet`.
  */

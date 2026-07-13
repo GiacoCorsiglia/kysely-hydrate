@@ -4,7 +4,15 @@ import { test } from "node:test";
 import * as k from "kysely";
 
 import { type SeedDB } from "../__tests__/fixture.ts";
-import { hoistAndPrefixSelections } from "./select-renamer.ts";
+import { hoistSelections } from "./select-renamer.ts";
+
+// The historical prefixing behavior, expressed via the generalized rename
+// hook: exactly what QuerySet does for aliases within the identifier limit.
+const hoistAndPrefixSelections = (
+	prefix: string,
+	qb: k.SelectQueryBuilder<any, any, any>,
+	alias: string,
+) => hoistSelections(qb, alias, (name) => `${prefix}${name}`);
 
 // These tests only build and inspect query ASTs — they never execute SQL — so
 // use a no-op driver instead of spinning up a real database (which, under

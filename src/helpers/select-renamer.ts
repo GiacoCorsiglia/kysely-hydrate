@@ -1,10 +1,14 @@
 import * as k from "kysely";
 
 import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./errors.ts";
-import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
 import { type AnyQueryBuilder, type AnySelectQueryBuilder, assertNever } from "./utils.ts";
 
 function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefined {
+	// NOTE: `toOperationNode()` runs the builder's plugins (e.g.
+	// CamelCasePlugin), so the extracted names are in whatever name space the
+	// builder's executor produces.  QuerySet builds all internal subqueries
+	// plugin-free (see `#getSubqueryDb`) so this space stays consistent across
+	// nesting levels.
 	const node = qb.toOperationNode();
 
 	switch (node.kind) {
@@ -19,29 +23,29 @@ function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefi
 	}
 }
 
+/**
+ * Selects on `toQb` everything selected by the subquery `fromQb` (joined into
+ * `toQb` under `alias`), renaming each selection per the optional `rename`
+ * function (defaults to keeping the original names).
+ */
 export function applyHoistedSelections(
 	toQb: AnySelectQueryBuilder,
 	fromQb: AnyQueryBuilder,
 	alias: string,
+	rename: (name: string) => string = (name) => name,
 ): AnySelectQueryBuilder {
-	return applyHoistedPrefixedSelections("", toQb, fromQb, alias);
-}
-
-export function applyHoistedPrefixedSelections(
-	prefix: string,
-	toQb: AnySelectQueryBuilder,
-	fromQb: AnyQueryBuilder,
-	alias: string,
-) {
-	const hoistedSelections = hoistAndPrefixSelections(prefix, fromQb, alias);
-	return toQb.select(hoistedSelections);
+	return toQb.select(hoistSelections(fromQb, alias, rename));
 }
 
 /**
  * Produces selections for a parent query to select everything selected in a
- * subquery, but aliased with the given prefix.
+ * subquery, aliased per the given rename function.
  */
-export function hoistAndPrefixSelections(prefix: string, qb: AnyQueryBuilder, alias: string) {
+export function hoistSelections(
+	qb: AnyQueryBuilder,
+	alias: string,
+	rename: (name: string) => string,
+) {
 	const selections = getSelections(qb);
 	if (!selections) {
 		return [];
@@ -54,22 +58,43 @@ export function hoistAndPrefixSelections(prefix: string, qb: AnyQueryBuilder, al
 
 		const referenceExpression = eb.ref(`${alias}.${name}`);
 
-		return new PrefixedAliasedExpression(referenceExpression, prefix, name);
+		return new RenamedAliasedExpression(referenceExpression, rename(name), name);
 	});
 }
 
-class PrefixedAliasedExpression<
+class RenamedAliasedExpression<T, Alias extends string> extends k.AliasedExpressionWrapper<
 	T,
-	Prefix extends string,
-	OriginalName extends string,
-> extends k.AliasedExpressionWrapper<T, ApplyPrefix<Prefix, OriginalName>> {
+	Alias
+> {
 	readonly originalName: string;
 
-	constructor(expression: k.Expression<any>, prefix: Prefix, originalName: OriginalName) {
-		const alias = applyPrefix(prefix, originalName);
+	constructor(expression: k.Expression<any>, alias: Alias, originalName: string) {
 		super(expression, alias);
 		this.originalName = originalName;
 	}
+}
+
+/**
+ * Best-effort extraction of a query's selection names, in select-list order.
+ * Returns undefined if any selection's name cannot be determined (select-all
+ * or a complex alias); callers that require the names surface the strict
+ * error at hoist time instead.
+ */
+export function tryGetSelectionNames(qb: AnyQueryBuilder): readonly string[] | undefined {
+	const selections = getSelections(qb);
+	if (!selections) {
+		return undefined;
+	}
+
+	const names: string[] = [];
+	for (const selectionNode of selections) {
+		try {
+			names.push(extractSelectionName(selectionNode));
+		} catch {
+			return undefined;
+		}
+	}
+	return names;
 }
 
 function extractSelectionName(selectionNode: k.SelectionNode): string {
