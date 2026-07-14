@@ -107,3 +107,40 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 		);
 	}
 }
+
+/**
+ * Error thrown when two distinct generated column aliases encode to the same
+ * SQL identifier in the over-63-byte alias encoding.
+ *
+ * The realistic trigger is a canonical-form collision: the encoding is
+ * case- and underscore-insensitive (so it stays stable under
+ * CamelCasePlugin's snake_case/camelize round trip), which means two
+ * over-long sibling aliases that differ only by case or underscores (e.g.
+ * `created_at` vs `createdat` under the same relation path) encode
+ * identically. A hash collision between unrelated aliases is also possible
+ * but astronomically unlikely. Renaming one of the involved relation keys or
+ * columns resolves it.
+ */
+export class AliasCollisionError extends KyselyHydrateError {
+	constructor(encoded: string, logicalA: string, logicalB: string) {
+		super(
+			`Generated column aliases "${logicalA}" and "${logicalB}" both encode to the SQL identifier "${encoded}". Rename one of the involved relation keys or columns to resolve the collision.`,
+		);
+	}
+}
+
+/**
+ * Error thrown when the logical names of encoded (over-63-byte) column
+ * aliases cannot be restored on result rows because a plugin's
+ * `transformResult` altered the marker values used to track them. This
+ * happens when a plugin transforms values indiscriminately (e.g. converts
+ * every number) rather than based on column type or name. Without this
+ * check, hydration would silently drop the affected columns.
+ */
+export class AliasRestorationError extends KyselyHydrateError {
+	constructor() {
+		super(
+			"Cannot restore over-long generated column aliases: a plugin's transformResult altered the marker values used to map encoded aliases back to their logical names. Use plugins that transform values based on column type or name rather than indiscriminately, or shorten the involved relation keys or columns.",
+		);
+	}
+}

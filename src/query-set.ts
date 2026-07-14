@@ -18,6 +18,7 @@
 
 import * as k from "kysely";
 
+import { encodeAlias } from "./helpers/alias-encoding.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -29,6 +30,7 @@ import {
 import {
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
+	getSelectionNames,
 } from "./helpers/select-renamer.ts";
 import {
 	type AnySelectQueryBuilder,
@@ -47,6 +49,7 @@ import {
 	type StrictSubset,
 	type TypeErrorMessage,
 	assertNever,
+	isIterable,
 	isSelectQueryBuilder,
 	mapWithDeleted,
 } from "./helpers/utils.ts";
@@ -71,7 +74,7 @@ import {
 	DEFAULT_KEY_BY,
 	EnableAutoInclusion,
 } from "./hydrator.ts";
-import { InvalidJoinedQuerySetError } from "./index.ts";
+import { AliasCollisionError, AliasRestorationError, InvalidJoinedQuerySetError } from "./index.ts";
 
 /**
  * A stateless Kysely plugin that strips the WITH clause from a
@@ -2665,6 +2668,25 @@ interface QuerySetProps {
 }
 
 /**
+ * Returns a copy of a raw result row with encoded column names replaced by
+ * their full logical aliases (see helpers/alias-encoding.ts).  Keys not in
+ * the rename map pass through unchanged, so rows that already carry logical
+ * names (e.g. hand-built hydration input) are unaffected.
+ */
+function restoreRowAliases(row: unknown, renames: Map<string, string>): unknown {
+	if (typeof row !== "object" || row === null) {
+		return row;
+	}
+	// Null prototype so a column literally named "__proto__" is stored as a
+	// plain own property instead of hitting Object.prototype's accessor.
+	const restored: Record<string, unknown> = Object.create(null);
+	for (const key of Object.keys(row)) {
+		restored[renames.get(key) ?? key] = (row as Record<string, unknown>)[key];
+	}
+	return restored;
+}
+
+/**
  * Implementation of the {@link QuerySet} interface as well as the
  * {@link MappedQuerySet} interface; there is no runtime distinction.
  */
@@ -2844,7 +2866,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#applyOrderBy(qb: AnySelectQueryBuilder, isOuter: boolean = false): AnySelectQueryBuilder {
-		const { baseAlias, keyBy, orderBy } = this.#props;
+		const { baseAlias, keyBy, orderBy, joinCollections } = this.#props;
 		const eb = k.expressionBuilder<any, any>(qb);
 
 		let keyByArray: readonly string[] = typeof keyBy === "string" ? [keyBy] : keyBy;
@@ -2852,13 +2874,21 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Apply custom orderBy expressions
 		for (const { expr, modifiers } of orderBy) {
 			let orderExpr: string | k.Expression<any>;
-			if (expr.includes(SEP)) {
+			const sepIndex = expr.indexOf(SEP);
+			if (sepIndex !== -1) {
 				if (isOuter) {
-					// For outer queries with pagination + many-joins, use hoisted column reference
-					orderExpr = eb.ref(`${baseAlias}.${expr}`);
+					// For outer queries with pagination + many-joins, use hoisted
+					// column reference (encoded if the generated alias is over-long).
+					orderExpr = eb.ref(`${baseAlias}.${this.#actualSelectName(expr)}`);
 				} else {
-					// For inner queries, convert $$ to .
-					orderExpr = expr.replace(SEP, ".");
+					// For inner queries, reference the join's table alias and the
+					// column's name within that subquery's select list (which is
+					// encoded there if the nested alias is over-long).
+					const key = expr.slice(0, sepIndex);
+					const rest = expr.slice(sepIndex + SEP.length);
+					const collection = joinCollections.get(key);
+					const column = collection ? collection.querySet.#actualSelectName(rest) : rest;
+					orderExpr = `${key}.${column}`;
 				}
 			} else {
 				// No $$, it's a base column
@@ -2879,6 +2909,161 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		return qb;
+	}
+
+	////////////////////////////////////////////////////////////
+	// Alias encoding bookkeeping.
+	//
+	// Generated column aliases (`key$$nested$$column`) are encoded when they
+	// would exceed PostgreSQL's 63-byte identifier limit (see
+	// helpers/alias-encoding.ts).  Encoding happens level by level as
+	// selections are hoisted (see PrefixedAliasedExpression), so these methods
+	// mirror that composition to translate between logical aliases and the
+	// names that actually appear in the SQL and in raw result rows.
+	////////////////////////////////////////////////////////////
+
+	/**
+	 * Cache for {@link #getSelectListAliasMap}. Props are immutable after
+	 * construction (clone-on-write), so the map never goes stale.
+	 */
+	#selectListAliasMap: Map<string, string> | undefined;
+
+	/**
+	 * Maps each column name in this query set's select list — as it actually
+	 * appears in the SQL, i.e. after over-long generated aliases are encoded —
+	 * to its full logical alias (`key$$nested$$column`).  Mirrors the alias
+	 * construction in {@link #getSelectFromBase} and
+	 * {@link #addCollectionAsJoin}: base selections keep their own names, and
+	 * each nesting level prefixes the child's actual name with the collection
+	 * key and encodes the result.
+	 *
+	 * Column names here are in whatever spelling their query nodes carry
+	 * (camelCase for expression-builder queries, snake_case once a
+	 * CamelCasePlugin's transformQuery has run).  That's fine for the encoded
+	 * (actual) side because encodeAlias is invariant across those spellings;
+	 * the logical side is normalized to result-row spelling by
+	 * {@link #getAliasRestorationMap}.
+	 */
+	#getSelectListAliasMap(): Map<string, string> {
+		if (this.#selectListAliasMap) {
+			return this.#selectListAliasMap;
+		}
+
+		const map = new Map<string, string>();
+
+		const addEntry = (actual: string, logical: string) => {
+			const existing = map.get(actual);
+			if (existing !== undefined && existing !== logical) {
+				throw new AliasCollisionError(actual, existing, logical);
+			}
+			map.set(actual, logical);
+		};
+
+		// Base selections are hoisted with an empty prefix and keep their names.
+		for (const name of getSelectionNames(this.#props.baseQuery)) {
+			addEntry(name, name);
+		}
+
+		for (const [key, collection] of this.#props.joinCollections) {
+			for (const [childActual, childLogical] of collection.querySet.#getSelectListAliasMap()) {
+				addEntry(encodeAlias(`${key}${SEP}${childActual}`), `${key}${SEP}${childLogical}`);
+			}
+		}
+
+		this.#selectListAliasMap = map;
+		return map;
+	}
+
+	/**
+	 * Cache for {@link #getAliasRestorationMap} (null = no renames needed).
+	 */
+	#aliasRestorationMap: Promise<Map<string, string> | null> | undefined;
+
+	/**
+	 * The subset of {@link #getSelectListAliasMap} where encoding changed the
+	 * name: the renames to reverse on raw result rows before hydration, from
+	 * encoded name to the alias's result-row (logical) spelling.  Null when no
+	 * alias needed encoding (the common case), letting {@link hydrate} skip
+	 * row copying entirely.
+	 *
+	 * The logical names in the select-list alias map are spelled the way the
+	 * query nodes carry them, but result-row keys have additionally been
+	 * through the plugins' transformResult (e.g. CamelCasePlugin camelizes
+	 * them).  To restore exactly the keys that would have appeared had the
+	 * aliases not been encoded, we push a synthetic row keyed by the logical
+	 * names through the same transformResult pipeline.
+	 */
+	#getAliasRestorationMap(): Promise<Map<string, string> | null> {
+		return (this.#aliasRestorationMap ??= this.#buildAliasRestorationMap());
+	}
+
+	async #buildAliasRestorationMap(): Promise<Map<string, string> | null> {
+		// Collect the renamed entries into a synthetic row mapping each logical
+		// name to the index of its encoded name.  Indices are used as values
+		// because plugins leave numbers alone.
+		const encodedByIndex: string[] = [];
+		const syntheticRow: Record<string, number> = {};
+		for (const [actual, logical] of this.#getSelectListAliasMap()) {
+			if (actual !== logical) {
+				syntheticRow[logical] = encodedByIndex.length;
+				encodedByIndex.push(actual);
+			}
+		}
+
+		if (encodedByIndex.length === 0) {
+			return null;
+		}
+
+		// Give the logical names the exact same treatment real result-row keys
+		// get.  (For CamelCasePlugin, transformResult is stateless and ignores
+		// the query id.  A plugin that keeps per-queryId state from
+		// transformQuery and rejects unknown ids would throw here — loudly,
+		// which is the acceptable failure mode.)
+		let result: k.QueryResult<Record<string, unknown>> = { rows: [syntheticRow] };
+		for (const plugin of this.#props.db.getExecutor().plugins) {
+			result = await plugin.transformResult({ result, queryId: k.createQueryId() });
+		}
+
+		// Recover each marker index. A plugin that transforms values
+		// indiscriminately (e.g. converts every number) corrupts the markers;
+		// detect that and fail loudly rather than silently dropping renames
+		// (which would mangle hydration of the affected columns).
+		const renames = new Map<string, string>();
+		const seen = new Set<number>();
+		for (const [logical, value] of Object.entries(result.rows[0] ?? {})) {
+			if (typeof value !== "number") {
+				continue;
+			}
+			const encoded = encodedByIndex[value];
+			if (encoded !== undefined && !seen.has(value)) {
+				seen.add(value);
+				renames.set(encoded, logical);
+			}
+		}
+		if (seen.size !== encodedByIndex.length) {
+			throw new AliasRestorationError();
+		}
+		return renames;
+	}
+
+	/**
+	 * Returns the name under which a logical alias (e.g. `"a$$b$$col"`)
+	 * actually appears in this query set's select list, re-encoding each
+	 * nesting level exactly like {@link #addCollectionAsJoin} does.
+	 */
+	#actualSelectName(logical: string): string {
+		const sepIndex = logical.indexOf(SEP);
+		if (sepIndex === -1) {
+			return logical;
+		}
+		const key = logical.slice(0, sepIndex);
+		const collection = this.#props.joinCollections.get(key);
+		if (!collection) {
+			// Not a joined collection key; the alias is used as-is.
+			return logical;
+		}
+		const rest = logical.slice(sepIndex + SEP.length);
+		return encodeAlias(`${key}${SEP}${collection.querySet.#actualSelectName(rest)}`);
 	}
 
 	/**
@@ -3060,6 +3245,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toQuery(): any {
+		// Build the select-list alias map eagerly: it throws AliasCollisionError
+		// when two distinct generated aliases encode to the same SQL identifier,
+		// and that must surface here — before SQL containing duplicate column
+		// aliases can reach the database (where the columns would silently
+		// clobber each other) — not first at hydrate time.
+		this.#getSelectListAliasMap();
 		return this.#toQuery(false, false);
 	}
 
@@ -3092,7 +3283,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	////////////////////////////////////////////////////////////
 
 	async hydrate(input: any): Promise<any> {
-		return this.#props.hydrator.hydrate(await input, {
+		let rows = await input;
+
+		// If any generated alias was encoded to fit PostgreSQL's identifier
+		// limit, restore the full logical names on the raw rows so the hydrator
+		// (and all user-facing callbacks) only ever see logical aliases.
+		const renames = await this.#getAliasRestorationMap();
+		if (renames) {
+			rows = isIterable(rows)
+				? Array.from(rows, (row) => restoreRowAliases(row, renames))
+				: restoreRowAliases(rows, renames);
+		}
+
+		return this.#props.hydrator.hydrate(rows, {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.

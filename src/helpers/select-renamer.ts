@@ -1,5 +1,6 @@
 import * as k from "kysely";
 
+import { encodeAlias } from "./alias-encoding.ts";
 import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./errors.ts";
 import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
 import { type AnyQueryBuilder, type AnySelectQueryBuilder, assertNever } from "./utils.ts";
@@ -66,10 +67,45 @@ class PrefixedAliasedExpression<
 	readonly originalName: string;
 
 	constructor(expression: k.Expression<any>, prefix: Prefix, originalName: OriginalName) {
-		const alias = applyPrefix(prefix, originalName);
-		super(expression, alias);
+		// The runtime alias is encoded so it stays within PostgreSQL's 63-byte
+		// identifier limit.  The type-level alias remains the full logical name:
+		// hydration restores logical names on result rows before they are
+		// consumed (see QuerySetImpl.hydrate), so the encoding is invisible to
+		// both the type system and user code.  Prefix-less hoisting re-selects
+		// names that already appear in a select list (either user-authored or
+		// already encoded), so only prefixed (generated) aliases are encoded.
+		const logicalAlias = applyPrefix(prefix, originalName);
+		const alias = prefix === "" ? logicalAlias : encodeAlias(logicalAlias);
+		super(expression, alias as ApplyPrefix<Prefix, OriginalName>);
 		this.originalName = originalName;
 	}
+}
+
+/**
+ * Returns the output column names of a query builder's select (or returning)
+ * list.  Selections whose name cannot be determined (`SELECT *`, complex
+ * aliases) are skipped rather than throwing: callers use this to mirror the
+ * select list for alias bookkeeping, and unresolvable selections can never
+ * carry generated (encoded) aliases.
+ */
+export function getSelectionNames(qb: AnyQueryBuilder): string[] {
+	const selections = getSelections(qb) ?? [];
+	const names: string[] = [];
+	for (const selectionNode of selections) {
+		try {
+			names.push(extractSelectionName(selectionNode));
+		} catch (error) {
+			// Skip select-all and complex-alias selections; they map to
+			// themselves and never need alias restoration.
+			if (
+				!(error instanceof UnexpectedSelectAllError) &&
+				!(error instanceof UnexpectedComplexAliasError)
+			) {
+				throw error;
+			}
+		}
+	}
+	return names;
 }
 
 function extractSelectionName(selectionNode: k.SelectionNode): string {
