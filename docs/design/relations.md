@@ -8,6 +8,12 @@ were verified directly against `src/query-set.ts` and `src/hydrator.ts`. Spike
 IDs (S1–S11) appear throughout as evidence labels; see [§5](#5-validation) for
 the legend and what each spike proved.
 
+**Amended** by the map × relations design
+([map-relations.md](./map-relations.md)), which supersedes exactly one
+decision here (D6, `map()` terminality) and strengthens a handful of gates
+and error surfaces. Amendments are marked in place; M-labeled spike IDs
+(M1–M8) refer to that design's own compile/run validation round (its §5).
+
 ---
 
 ## 1. Motivation & goals
@@ -148,10 +154,27 @@ All spike-verified; land before or with the feature:
   (S10; behavior-preserving in the same-handle case, 538/538 tests).
 - **P3** — cross-type collection overwrite must delete from *both* hydrator
   maps (the pre-existing stale-attach-overwrites-join bug), with a regression
-  test. See [§7](#7-related-fixes-discovered).
+  test. **Extended (map design, M3): the cleanup must strip both key forms —
+  real and `$graft$$`-mangled — from both hydrator maps and both props maps
+  before re-registering.** The extension also fixes a pre-existing latent bug
+  on never-mapped chains: a pre-map cross-kind overwrite
+  (`attachMany("x", …).leftJoinMany("x", …)`) left the stale attach fetchFn
+  registered and running (spy-asserted on main) — release-note item. See
+  [§7](#7-related-fixes-discovered).
 - **P4** — count/exists exclusion of non-filtering one-joins, scoped by flag
   to the count/exists path only (S9; the paginated inner layer keeps them).
   See [§7](#7-related-fixes-discovered).
+- **P5** — packaging (map design, M2): the internal transform aliases that
+  appear in exported entity-module types — `TMapped`, `InitialJoinedQuery`,
+  `TWithOutput`, `TWithExtendedOutput`, `TWithOmit`, `TQuerySetWithRelation`,
+  plus the `TMappedQuerySetWith*` family — must be exported (or
+  d.ts-rolled-up), or every consumer entity module compiled under
+  `--declaration` fails TS4023. Exporting user entity *classes* is advisory
+  only (nameability; the emitter synthesizes a local `declare class`
+  otherwise — M6).
+
+P1 and P3 are additionally **hard prerequisites of the map × relations
+design** ([map-relations.md](./map-relations.md)), not merely of relations.
 
 ### 3.2 Standing type-authoring rules
 
@@ -174,6 +197,17 @@ Spike-derived, normative for implementation:
    explicitly. S3/S6.
 5. **`NoInfer` stays in parameter positions only** — it survives into emitted
    declarations and doubles as an emission payload in stored types. S6.
+6. **Per-member union checks inside a conditional whose outer check is a
+   keyof-indexed `[Cs] extends [keyof …]` must be hoisted into a named
+   distributed alias** — the inline form compiles but evaluates
+   non-distributively, silently reopening the hole it guards (evaluation
+   correctness, not style). M4.
+7. **The shared tier's (`ExecutableQuerySet`) method returns must be
+   conditional-free in `IsMapped`** — `MaybeMappedQuerySet` is allowed in
+   dispatch positions only (stored child bags, callback parameters, keyed
+   `modify` params), which resolve against concrete discriminants; the
+   single gated exception is `$narrowType`
+   ([map-relations.md](./map-relations.md) §3.4). M1.
 
 ### 3.3 Vocabulary
 
@@ -185,8 +219,8 @@ Spike-derived, normative for implementation:
 | Declaration-site default | `options: { defaultStrategy?: … }` (default `"join"`; must be a literal or a union that collapses to `"attach"`, [§3.4](#34-declaration-api)) |
 | Relation entry fields | `Prototype`, `Mode`, `Strategies`, `Default`, `ChildColumns`, `Value` |
 | Collection kinds after include | `Join` (existing), `AttachedQuery` (new — query-backed attach), `Attach` (existing — fetch-backed) |
-| Errors | `UnknownRelationError`, `StrategyUnavailableError`, `InvalidRelationReferenceError`, `RelationMatchColumnMissingError`, `UnsupportedChildPaginationError`, `RelationAlreadyIncludedError` |
-| Debug | `relations()` → declared keys; `includedRelations()` → tree of `{ key, strategy, children }` |
+| Errors | `UnknownRelationError`, `StrategyUnavailableError`, `InvalidRelationReferenceError`, `RelationMatchColumnMissingError`, `UnsupportedChildPaginationError`, `RelationAlreadyIncludedError`; from the map design: `GraftTargetError`, `GraftCollisionError`, `SharedMapOutputError`, `RelationKeyConsumedError` (two message branches), `RelationMatchIntegrityError`, `ReservedColumnNameError`, `RowShaperAfterMapError`. Demangling rule: every user-facing key-reporting surface reports real, demangled keys ([map-relations.md](./map-relations.md) §3.5) |
+| Debug | `relations()` → declared keys; `includedRelations()` → tree of `{ key, strategy, children }` — both report real (demangled) keys at every nesting level |
 | Type helpers | `InferRelations<T>` (= `keyof T["Relations"]`), existing `InferOutput<T>` |
 
 Naming rationale (all confirmed under review): `relate*` over `has*` (the
@@ -259,24 +293,41 @@ unclassifiable refs, `key === baseAlias`, or composite arity > 5.
 
 **Attach availability, computed at declaration** (S1-verified, with an
 `IsAny` guard so an `any`-typed match column never silently qualifies for
+attach; strengthened per the map design (M4) with the hydrated-vs-raw
+overlap conjunct — a child whose map re-types a match column must not offer
 attach):
 
 ```ts
 type IsAny<T> = 0 extends 1 & T ? true : false;
 
-/** Single-column: presence AND a KNOWN Map-safe value type. */
+/** M4 conjunct: hydrated (post-map) vs raw match-column value overlap. */
+type HydratedRawOverlapOk<C extends string, TNested extends TSelectQuerySet> = Overlaps<
+	NonNullable<TNested["HydratedOutput"][C & keyof TNested["HydratedOutput"]]>,
+	NonNullable<TNested["BaseQuery"]["O"][C & keyof TNested["BaseQuery"]["O"]]>
+>;
+
+/** Single-column: presence AND a KNOWN Map-safe value type AND hydrated/raw
+ * overlap — in this order: presence → IsAny → MapSafeKey → overlap (M4). */
 type SingleAttachOk<C extends string, TNested extends TSelectQuerySet> =
 	C extends keyof TNested["HydratedOutput"] & string
-		? IsAny<TNested["HydratedOutput"][C]> extends true
-			? never
-			: TNested["HydratedOutput"][C] extends MapSafeKey ? "attach" : never
+		? IsAny<TNested["HydratedOutput"][C]> extends true ? never
+		: TNested["HydratedOutput"][C] extends MapSafeKey
+			? HydratedRawOverlapOk<C, TNested> extends true ? "attach" : never
+			: never
 		: never;
 
-/** Composite: presence only (composite keys are JSON-encoded; per-member
- * value compatibility is enforced at declaration by ComparableParentRef and
- * at include time by DeclaredMatchShape, §3.5). */
+/** REQUIRED: per-member distribution hoisted into a NAMED alias (standing
+ * rule 6) — the inline form compiles and silently reopens the hole (M4). */
+type EachHydratedRawOverlapOk<Cs extends string, TNested extends TSelectQuerySet> =
+	Cs extends unknown ? HydratedRawOverlapOk<Cs, TNested> : never;
+
+/** Composite: presence + per-member hydrated/raw overlap (composite keys are
+ * JSON-encoded; per-member value compatibility is enforced at declaration by
+ * ComparableParentRef and at include time by DeclaredMatchShape, §3.5). */
 type CompositeAttachOk<Cs extends string, TNested extends TSelectQuerySet> =
-	[Cs] extends [keyof TNested["HydratedOutput"] & string] ? "attach" : never;
+	[Cs] extends [keyof TNested["HydratedOutput"] & string]
+		? false extends EachHydratedRawOverlapOk<Cs, TNested> ? never : "attach"
+		: never;
 
 type FormAStrategies<ChildRefs, TNested extends TSelectQuerySet> =
 	| "join"
@@ -304,13 +355,31 @@ type ForbidRelationKey<T extends TQuerySet, Key extends string> =
 					: unknown;
 ```
 
+The overlap conjunct closes this design's own pre-existing hole for
+*terminally-mapped declared children* (a child whose `.map()` re-types the
+match column previously kept attach and produced silently-empty
+collections). M4-validated: no false positives — nullable widening, literal
+narrowing, non-match-column re-typings, and branded-same-representation
+columns all keep attach; unmapped children are byte-unaffected (S1/S11/S7
+fixtures re-run identical), so the amendment is safe to land ahead of the
+map feature. Failing children compute `Strategies: "join"` — the fixture-(c)
+error surface. The honest residual — same-type value transforms (`id + 1`)
+— is backstopped at runtime by the zero-match integrity check
+([§3.7](#37-runtime-design) step 7b).
+
 **Signatures** (`Many` variant; `One`/`OneOrThrow` identical but for `Mode`).
 Form A embeds three spike repairs verbatim: the S1 `defaultStrategy`
 constraint shape, the S6 printer-rule intersection on `Strategies`, and the
 S11 comparable parent refs.
 
 ```ts
-interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
+// Tier hierarchy (amended per the map design, M1): ExecutableQuerySet<in out T>
+// is today's MappedQuerySet body minus the seven MaybeMappedQuerySet-returning
+// members ($castTo/$narrowType/$assertType/insert/update/delete/write),
+// which are redeclared per tier with tier-exact returns;
+// MappedQuerySet<in out T> extends ExecutableQuerySet<T>;
+// QuerySet<in out T> extends ExecutableQuerySet<T> — siblings.
+interface QuerySet<in out T extends TQuerySet> extends ExecutableQuerySet<T> {
 	// ── Form A: positional column pair(s) → dual strategy when derivable ──
 	relateMany<
 		Key extends string,
@@ -405,6 +474,10 @@ Notes:
 - **Overwrite**: re-declaring a key overwrites the *declaration*; declaring a
   key that is already a materialized collection is a compile error
   (`ForbidRelationKey`) and a runtime throw.
+- **`relate*` additionally lives on the mapped tier** (`MappedQuerySet`, map
+  design): declaration is order-free relative to `map()` — declaring is
+  inert and refs still check `BaseQuery["O"]`, which maps never touch; full
+  `ChildRefs` precision is retained (M1).
 - **Form C inference caveat** (S2 incidental): an *unannotated*
   context-sensitive `fetch` arrow can fail to drive `FetchFnReturn` inference
   before the `NoInfer`'d `matchChild` is checked. Docs recommend annotating
@@ -420,11 +493,13 @@ overloads distinguished by *call* arity — Form A vs B vs C — remain safe).
 S5-validated:
 
 ```ts
-type NestedQuerySetThunk<TNested extends TSelectQuerySet> = () => MappedQuerySet<TNested>;
+// All three union members accept the shared tier (amended per the map
+// design, M1): ExecutableQuerySet — NestedQuerySetFn's return re-points too.
+type NestedQuerySetThunk<TNested extends TSelectQuerySet> = () => ExecutableQuerySet<TNested>;
 
 type NestedQuerySetThunkOrFactory<T extends TQuerySet, Alias extends string,
 	TNested extends TSelectQuerySet> =
-	| MappedQuerySet<TNested>                       // 1. pre-built query set (mapped children declarable)
+	| ExecutableQuerySet<TNested>                   // 1. pre-built query set (mapped children declarable)
 	| NestedQuerySetThunk<TNested>                  // 2. zero-arg thunk — resolved & cached at first include
 	| NestedQuerySetFn<T, Alias, TNested>;          // 3. ({eb, qs}) factory — resolved eagerly at declaration
 ```
@@ -449,9 +524,10 @@ type NestedQuerySetThunkOrFactory<T extends TQuerySet, Alias extends string,
   the headline idiom; (d) slim snapshots remain the back-reference idiom for
   type-level cycles *and* the emission-depth valve (S6: emitted d.ts grows
   ~2.5×/level; keep full-fat published menu chains ≲ 6 deep); (e) the
-  annotated escape hatch (`(): QuerySet<HandWrittenBag> => qs` with mutually
-  recursive bag interfaces) works for true cycles, at invariance-exactness
-  maintenance cost — one paragraph, not the mainline.
+  annotated escape hatch (`(): QuerySet<HandWrittenBag> => qs` — or
+  `(): MappedQuerySet<HandWrittenBag>` for mapped children (M1) — with
+  mutually recursive bag interfaces) works for true cycles, at
+  invariance-exactness maintenance cost — one paragraph, not the mainline.
 
 ### 3.5 Inclusion API
 
@@ -546,7 +622,11 @@ keys; form 4's conditional constrains whenever attach is *possible* — a
 union strategy must not fall to the permissive arm:
 
 ```ts
-interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
+// Tier hierarchy per the map design (M1): QuerySet<in out T> extends
+// ExecutableQuerySet<T>, sibling of MappedQuerySet<T> — see the §3.4 header.
+// include() also lives on MappedQuerySet (graft-mode, key branded, returning
+// via MappedIncludeReturn — map-relations.md §3.4).
+interface QuerySet<in out T extends TQuerySet> extends ExecutableQuerySet<T> {
 	/** 1. Default strategy, unmodified child (query- or fetch-backed).
 	 * Distributes over Key: literal keys (the 99% case) cost nothing; union
 	 * keys yield a union of per-key query sets — the honest lower bound —
@@ -570,14 +650,14 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	/** 3a. Callback on a join-default relation: unconstrained child modification. */
 	include<Key extends JoinDefaultKeys<T>, TNestedNew extends TSelectQuerySet>(
 		key: Key,
-		modify: (child: QuerySetFor<QueryRelOf<T, Key>["Value"]>) => MappedQuerySet<TNestedNew>,
+		modify: (child: QuerySetFor<QueryRelOf<T, Key>["Value"]>) => ExecutableQuerySet<TNestedNew>,
 	): IncludeReturn<T, Key, "join", TNestedNew>;
 
 	/** 3b. Callback on an attach-default relation: must keep the match
 	 * column(s), value-typed against the declared shape. */
 	include<Key extends AttachDefaultKeys<T>, TNestedNew extends KeepsMatchColumn<T, Key>>(
 		key: Key,
-		modify: (child: QuerySetFor<QueryRelOf<T, Key>["Value"]>) => MappedQuerySet<TNestedNew>,
+		modify: (child: QuerySetFor<QueryRelOf<T, Key>["Value"]>) => ExecutableQuerySet<TNestedNew>,
 	): IncludeReturn<T, Key, "attach", TNestedNew>;
 
 	/** 4. Strategy + callback. Polarity: constrain whenever attach is
@@ -591,7 +671,7 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	>(
 		key: Key,
 		strategy: Strategy,
-		modify: (child: QuerySetFor<QueryRelOf<T, Key>["Value"]>) => MappedQuerySet<TNestedNew>,
+		modify: (child: QuerySetFor<QueryRelOf<T, Key>["Value"]>) => ExecutableQuerySet<TNestedNew>,
 	): IncludeReturn<T, Key, Strategy, TNestedNew>;
 }
 ```
@@ -767,6 +847,15 @@ type IncludeReturn<
 	: IncludeReturnMap<T, Key, T["Relations"][Key]["Mode"], TNested>[Strategy];
 ```
 
+**Mapped twins (map design).** On the mapped tier, `IncludeReturn` gains a
+twin family: `MappedIncludeReturnMap`/`MappedIncludeReturn` — the same
+dispatch with the wrappers swapped for
+`MappedQuerySetWithJoin/WithAttach/WithAttachedRelation/WithRelation`, whose
+`TMappedQuerySetWith*` transforms land collections as **inline**
+intersections on `HydratedOutput` (printer-rule-safe by construction);
+`TQuerySetWithAttachedRelation` gains its `TMapped*` twin. Definitions in
+[map-relations.md](./map-relations.md) §3.4.
+
 **Keyed `modify` gains a third arm** — required machinery, and the one part
 of the include design that touches existing type machinery beyond threading:
 
@@ -864,7 +953,16 @@ batching, dedup, `hydrate()`) is inherited verbatim.
 include(key, a?, b?) {
 	const decl = this.#props.relations.get(key);
 	if (!decl) throw new UnknownRelationError(key);
-	if (this.#props.joinCollections.has(key) || this.#props.attachCollections.has(key))
+	// Checks BOTH key forms — real and $graft$$-mangled (map design): post-map
+	// grafted relations must not fall through to #addCollection under another
+	// name. RelationAlreadyIncludedError stays the include path's error;
+	// RelationKeyConsumedError (two message branches) is the sugar/graft
+	// path's — a deliberate, documented split.
+	const mangled = mangleGraftKey(key);
+	if (
+		this.#props.joinCollections.has(key) || this.#props.attachCollections.has(key) ||
+		this.#props.joinCollections.has(mangled) || this.#props.attachCollections.has(mangled)
+	)
 		throw new RelationAlreadyIncludedError(key);
 	const [strategy, cb] = normalizeIncludeArgs(a, b, decl);
 
@@ -939,7 +1037,8 @@ function deriveFetchFn(child /* already rebound (P2) */, columns, key) {
 		//    under join. orderByKeys() guarantees a deterministic tie-break,
 		//    keeping entity row-groups contiguous.
 		sortRawRows(rawRows, child.finalOrderings);
-		// 6. First-batch guard for residues the types can't see.
+		// 6. First-batch guard for residues the types can't see. (Minted with
+		//    the real, demangled relation key — map design's demangling rule.)
 		if (rawRows.length > 0 && rawRows.every((r) => isNilKey(r, columns)))
 			throw new RelationMatchColumnMissingError(key, columns);
 		// 7. Hydrate ONCE over the whole batch (dedup by child keyBy across
@@ -949,6 +1048,19 @@ function deriveFetchFn(child /* already rebound (P2) */, columns, key) {
 		//    entities, not raw rows (children with nested many-joins explode
 		//    raw rows; the child's own SQL pagination is entity-scoped too).
 		const entities = unpaginated.hydrate(rawRows);
+		// 7b. Zero-match integrity backstop (map design, M4) — BEFORE the
+		//     window, so a legitimate per-batch offset is never misread as
+		//     zero-match. If the batch is non-empty and zero hydrated children
+		//     match any parent key, SQL IN-selection and SameValueZero matching
+		//     disagree: throw RelationMatchIntegrityError naming the relation
+		//     key and ENUMERATING the cause classes — a child map() value
+		//     transform; collation-insensitive SQL equality (citext / COLLATE
+		//     NOCASE); driver decode divergence. Applies to ALL query-backed
+		//     attach relations, mapped or not — a release-noted loudness
+		//     upgrade to contract exception 3's documented-silent residual.
+		//     Non-firing arms (M4-proven): empty parent sets (the fetch is
+		//     never constructed), empty batches, per-batch offset windows.
+		throwIfZeroMatch(entities, parents, columns, key);
 		return applyWindow(entities, limit, offset);
 	};
 }
@@ -1017,15 +1129,20 @@ function deriveFetchFn(child /* already rebound (P2) */, columns, key) {
    | `Join` (join-strategy include, eager joins) | child query set | once, at build time | none extra |
    | `AttachedQuery` (attach-strategy include of a query relation) | child query set | once, at build time (re-derives the fetch) | `Columns`-based match-column keep, value-typed |
    | `Attach` (fetch relations, `attach*` sugar) | the fetchFn's return value (possibly a promise) | per execution, at hydration time | `SomeFetchFnReturn` |
+   | Post-map, `Join`/`AttachedQuery` (map design, M5) | child query set | once, at build time (re-derives on `AttachedQuery`) | `PreservesShape` — shape-preserving, subsuming the `Columns`-keep incl. composites; returns `this` |
+   | Post-map, `Attach` (map design, M5) | the declared element value(s) | per execution, at hydration time | bare `FetchReturnOf<Element>` union (never intersected with `SomeFetchFnReturn`); returns `this` |
 
    *Include* has one callback meaning; `modify`'s dialects follow the
    collection kind, as they do today. Pre-include `modify` on a declared key:
    compile error; runtime message `"posts" is declared but not included —
    call .include("posts") first`. Include callback = reset-from-declaration;
    `modify` = compose-on-current — documented pair.
-6. **`.map()` terminality.** Unchanged: `relate*`/`include` live on
-   `QuerySet`; mapped *children* are declarable and includable; map at the
-   call site after includes; deferred mapping stays out of scope (D6).
+6. **`.map()` — superseded (D6).** `map()` is a stage boundary, not
+   terminal; collections added after a map graft onto its output;
+   row-shapers remain pre-map-only. `relate*`/`include` additionally live on
+   the mapped tier; mapped *children* are declarable and includable as
+   before. See the map design record
+   ([map-relations.md](./map-relations.md)).
 7. **`keyBy` / app-level matching.** `toParent` is the declared parent
    column; parents deduped by `keyBy`; nil keys never match under either
    strategy; both strategies throw `CardinalityViolationError` on >1 match
@@ -1069,13 +1186,49 @@ function deriveFetchFn(child /* already rebound (P2) */, columns, key) {
 >    non-Map-safe and `any`-typed single-column keys; the include/modify
 >    layers enforce the declared key types; residual divergences (numeric
 >    strings vs numbers under DB coercion, collation-insensitive SQL equality
->    such as citext, same-type value transforms) are documented.
+>    such as citext, same-type value transforms) are documented. Composite
+>    caveat (map design): a `Date`-typed composite member matches at driver
+>    millisecond precision under attach but full DB precision under join — a
+>    match-set divergence (single-column `Date`/`Buffer` are already excluded
+>    by `MapSafeKey`; BLOB composite members are byte-deterministic). The
+>    zero-match integrity backstop (§3.7 step 7b) upgrades this exception's
+>    residual from documented-silent to loud.
 > 4. *Child pagination* — rejected under non-lateral join; per-batch (JS,
 >    entity-level) under attach; per-parent = lateral (join-only). Base-node
 >    pagination rejected under both.
 > 5. *Scale* — derived `IN` lists are chunked by parameter budget; chunking
 >    is invisible to results (ordering and windowing happen after the
 >    flatten).
+> 6. *Reference identity & invocation counts* (map design, M4). Child
+>    element **reference identity** and child-map **invocation counts** are
+>    strategy-dependent: attach hydrates the batch once and shares child
+>    instances across matching parents (`applyGroupedCollectionMode` copies
+>    the array, shares the elements — `src/hydrator.ts:1546`, `:1555`); join
+>    hydrates per parent row-group, minting distinct instances per
+>    (parent, child) pair (`:1236`). Guarantees are **value-level** (deep
+>    equality), never `===`-level. Attach's per-batch windowing runs the
+>    child pipeline on entities the window then discards. [M4 pinned this
+>    with exact numbers: 3×Author/5×Award under join vs 2×Author/3×Award
+>    under attach on the fixture graph, budget-independent.] This documents
+>    **pre-existing** sharing, not new sharing (release note).
+>
+> **Purity clause (map design).** Map functions must be pure and
+> deterministic per input row, must not return shared/memoized references
+> within an execution (enforced for graft-receiving stages:
+> `SharedMapOutputError`; backstopped by `GraftCollisionError`), and must
+> return a fresh extensible object per row when collections graft onto the
+> output (enforced: `GraftTargetError`/`GraftCollisionError`).
+> Value-equivalence is conditional on this clause. Consumers must not mutate
+> child instances (attach shares them) — this sentence is ALSO promoted into
+> the README attach docs.
+>
+> **Mapped-child gating (map design).** Attach availability for a declared
+> child additionally requires hydrated-vs-raw match-column value overlap
+> (§3.4's `HydratedRawOverlapOk` conjunct, named-alias composite form), with
+> the derived-fetch zero-match runtime backstop (§3.7 step 7b); same-type
+> value transforms that evade the gate are caught by the backstop when
+> total, and remain the documented residual when partial (M4-pinned). Form-C
+> fetch relations get no backstop.
 
 ### 3.9 Fate of the existing API
 
@@ -1084,8 +1237,8 @@ function deriveFetchFn(child /* already rebound (P2) */, columns, key) {
 | `leftJoinOne/OneOrThrow/Many`, left laterals | **Kept as sugar**, reimplemented internally as build-decl-record + immediate materialization — **bypassing the relations map** (no `Relations` entry, no debug-output pollution, no `ForbidRelationKey` interference) | Behavior changes, stated honestly: (a) §3.8 item 4's pagination rejection (D1); (b) include-independent counts (S9, release note); (c) **D9 (recommended: yes): refs become order-fixed (childRef first)** — one convention library-wide, loud compile-error migration, and "rename the method" refactors then actually work. There is no "zero behavior change" claim. |
 | `attachOne/OneOrThrow/Many` on `QuerySet` | **Kept as sugar** (fetch-backed `Attach` collections, order-preserving as today) | Positional-vs-options-object spelling difference vs Form C is deliberate (the object disambiguates from function-valued children) and documented; migration is not a rename. |
 | `innerJoin*`, `crossJoin*` (incl. laterals) | **Kept, unchanged, eager-only** | Filtering joins are SQL-shaping, not relations — this is what keeps the equivalence contract and the unconditional count invariant provable. |
-| Keyed `modify`, `where`, `orderBy`, pagination, counts, writes, `hydrate`, `toQuery` family, type helpers | Unchanged, except: `modify` gains the `AttachedQuery` arm (§3.8 item 5); `execute()` routes through `db.executeQuery` (P2); count/exists exclude non-filtering one-joins (P4) | |
-| Hydrator API | **Unchanged — zero changes** (ordering authority lives in the derived fetch, §3.7) | Fetch-backed attaches keep their documented fetch-order contract verbatim. |
+| Keyed `modify`, `where`, `orderBy`, pagination, counts, writes, `hydrate`, `toQuery` family, type helpers | Unchanged, except: `modify` gains the `AttachedQuery` arm (§3.8 item 5) and, post-map, the shape-preserving dialect (`PreservesShape`, §3.8 item 5; [map-relations.md](./map-relations.md) §3.4); `execute()` routes through `db.executeQuery` (P2); count/exists exclude non-filtering one-joins (P4) | |
+| Hydrator API | **Unchanged — zero changes** (ordering authority lives in the derived fetch, §3.7). Footnote (map design, M3/M7): the hydration hot loop stays untouched, but two **additive** changes land with the map feature — `FullHydrator.withoutCollection()` and `defineProtoShadowedKey` exported `@internal` | Fetch-backed attaches keep their documented fetch-order contract verbatim. |
 
 Prerequisite fixes P1 (type threading) and P3 (cross-type overwrite hydrator
 staleness) land with the feature.
@@ -1171,6 +1324,12 @@ match keys — collapses into a declaration plus two words at the call site.
 The canonical entity-module example ([§2](#2-api-overview)) is the second
 doc example, with the rule *"always thunk in entity modules."*
 
+Coordination with the map × relations design: its spikes passed, so the
+README examples may adopt the canonical-map flagship (entity module declares
+base + relations + `.map((row) => new User(row))`,
+[map-relations.md](./map-relations.md) §2) directly — there is no need to
+hold map guidance across releases.
+
 ### 3.10 Naming, error classes & type-error fixtures
 
 Naming per [§3.3](#33-vocabulary). Error-text discipline: CI fixtures assert
@@ -1179,9 +1338,13 @@ for all of a–g); no invented compiler prose in docs. The fixture list:
 
 - **(a)** typo'd key; **(b)** typo'd key + callback; **(c)** unavailable
   strategy — prints `'"attach"' is not assignable to … '"join"'`; **(d)**
-  same + callback — single clean error; **(e)** `include` after `.map()`;
-  **(f)** `modify` on a declared-but-not-included key; **(g)** re-inclusion —
-  prints the remaining menu. (All verified.)
+  same + callback — single clean error; **(e1)** `include` after an
+  object-producing `.map()` — a *positive* fixture (grafts; map design);
+  **(e2)** `include` after a primitive or non-object map — negative, with
+  the two branded message variants (primitive; non-object with the
+  `| null`/`| undefined` hint) (M2); **(f)** `modify` on a
+  declared-but-not-included key; **(g)** re-inclusion — prints the remaining
+  menu. (All verified; (e1)/(e2) under the map design's spikes.)
 - **(h)** `include(fetchKey, "attach")` — a *positive* fixture.
 - **(i)** non-literal `defaultStrategy` → `Default: "attach"`; non-literal
   include strategy → union-of-shapes return; the statement-level branching
@@ -1224,11 +1387,11 @@ evidence (legend in [§5](#5-validation)).
 | **D3** | Attach-strategy nested ordering: JS raw-row sort *inside the derived fetch*, using the child's `finalOrderings` comparator — **no hydrator change, no existing-user behavior change** (every existing attach is fetch-backed, so the "query-backed attach" category was empty). | Adopted; verified against `src/hydrator.ts` (`#hydrateMany` vs `groupByKey`; `AttachedCollection` carries no orderings). Sign-off downgraded to FYI. |
 | **D4** | Count/exists exclude non-filtering one-joins — making the count invariant unconditional. | **Adopted, spike-proven** (S9: count SQL strictEqual across include states; dirty-data inflation fixed, 1 vs the former 4). |
 | **D5** | No public rebinding API; `#withDb` stays internal. Document the `querySet(trx)` idiom, the derived-fetch handle guarantee, and user-fetchFn handle retention. | **Strengthened** by S10: a public `withDb` would need collection re-derivation machinery the internal path doesn't. |
-| **D6** | Deferred mapping (declaring `.map()`ped relations whose map applies lazily) — deferred to a future design round. | Unchanged. |
+| **D6** | Deferred mapping / `map()` terminality. | **Superseded** by the map × relations design ([map-relations.md](./map-relations.md)): `map()` is a stage boundary, not terminal; collections added after a map graft onto its output; row-shapers remain pre-map-only. |
 | **D7** | Derived `IN` chunking by **parameter budget** (default 500 params) divided by column count; no user knob initially. | Adopted; counting values instead of bind parameters is wrong for composites (SQLite caps at 999, PG at 65535). |
 | **D8** | Naming per §3.3; one delta: `includes()` renamed `includedRelations()`, returning a tree. | Adopted (see the debug-surface decision below). |
 | **D9** | Align `leftJoin*` sugar to order-fixed refs (childRef first) in the same release. | **New; recommended yes; author sign-off.** The library is pre-1.0 and breaking changes are sanctioned; one ref convention library-wide; the break is loud (compile errors on swapped-order calls); "migrate by renaming the method" then actually works. The alternative — two conventions for the same argument pair, forever — fails the coherence bar. |
-| **D10** | Debug surface: `includedRelations()` returns a **tree** `{ key, strategy, children: […] }`. | Resolved (not deferred): a flat list cannot answer "which endpoint runs N queries" once attach fetches nest; `relations()` keeps returning the declared key set. |
+| **D10** | Debug surface: `includedRelations()` returns a **tree** `{ key, strategy, children: […] }`. | Resolved (not deferred): a flat list cannot answer "which endpoint runs N queries" once attach fetches nest; `relations()` keeps returning the declared key set. Note (map design): `includedRelations()` demangles graft store keys — it reports real keys at every nesting level. |
 
 ### Type-level decisions
 
