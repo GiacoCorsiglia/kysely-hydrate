@@ -819,6 +819,104 @@ test("attach: fetchFn receives deduplicated inputs with null-key rows dropped", 
 	]);
 });
 
+test("attach: fetchFn is not called when all parent keys are nil", async () => {
+	// Every row is a left-join phantom with a nil key, so no parent entity
+	// exists to attach to.  The fetchFn must be skipped entirely: user code
+	// building `WHERE x IN (...)` from the inputs would otherwise generate
+	// invalid or pointless SQL.
+	const rows = [
+		{ id: null as unknown as number, name: null as unknown as string },
+		{ id: null as unknown as number, name: null as unknown as string },
+	];
+
+	let fetchCount = 0;
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				fetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, []);
+	assert.strictEqual(fetchCount, 0);
+});
+
+test("attach: fetchFn is not called when there are no input rows", async () => {
+	let fetchCount = 0;
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				fetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate([]);
+
+	assert.deepStrictEqual(result, []);
+	assert.strictEqual(fetchCount, 0);
+});
+
+test("attach: nested attach fetchFn is not called when all nested keys are nil", async () => {
+	// The empty-input skip must apply per nesting level: the parents exist (so
+	// their fetch runs), but every nested profile is a matchless left join, so
+	// the profile-level attach fetch must be skipped.
+	interface UserWithProfile extends User {
+		profile$$id: number | null;
+	}
+
+	const rows: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: null },
+		{ id: 2, name: "Bob", profile$$id: null },
+	];
+
+	let parentFetchCount = 0;
+	let nestedFetchCount = 0;
+
+	const hydrator = createHydrator<UserWithProfile>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				parentFetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		)
+		.hasOne("profile", "profile$$", (h) =>
+			h("id")
+				.fields(["id"])
+				.attachMany(
+					"badges",
+					() => {
+						nestedFetchCount++;
+						return [];
+					},
+					{ matchChild: "profileId" },
+				),
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [], profile: null },
+		{ id: 2, name: "Bob", posts: [], profile: null },
+	]);
+	assert.strictEqual(parentFetchCount, 1);
+	assert.strictEqual(nestedFetchCount, 0);
+});
+
 test("attachMany: calls fetchFn once", async () => {
 	let userPostsFetchCount = 0;
 	let postCommentsFetchCount = 0;
