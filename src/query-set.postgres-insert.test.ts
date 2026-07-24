@@ -257,6 +257,96 @@ describePg("query-set: postgres-insert", () => {
 	});
 
 	//
+	// Test 7b: Insert with has-many join and pagination (explicit RETURNING)
+	//
+
+	test("QuerySet.insert() - with has-many join and pagination (explicit RETURNING)", async () => {
+		await testInTransaction(db, async (trx) => {
+			// Pagination past row explosion wraps the base in a derived table, so
+			// the insert's RETURNING columns are hoisted by name.  The base rows
+			// are the inserted posts (limited to the first by id order), while the
+			// many-join sees the pre-existing posts of the same user (the outer
+			// SELECT does not see rows inserted by the data-modifying CTE).
+			const query = querySet(trx)
+				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
+				.leftJoinMany(
+					"existingPosts",
+					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+					"existingPosts.user_id",
+					"posts.user_id",
+				)
+				.insert(
+					trx
+						.insertInto("posts")
+						.values([
+							{ user_id: 2, title: "Paginated Post A", content: "content a" },
+							{ user_id: 2, title: "Paginated Post B", content: "content b" },
+						])
+						.returning(["id", "user_id", "title"]),
+				)
+				.limit(1);
+
+			const results = await query.execute();
+
+			assert.strictEqual(results.length, 1);
+			const result = results[0]!;
+			assert.ok(typeof result.id === "number");
+			assert.strictEqual(result.user_id, 2);
+			assert.strictEqual(result.title, "Paginated Post A");
+
+			// Bob (user 2) has 4 pre-existing posts.
+			assert.deepStrictEqual(result.existingPosts.map((post) => post.title).sort(), [
+				"Post 1",
+				"Post 12",
+				"Post 2",
+				"Post 5",
+			]);
+		});
+	});
+
+	//
+	// Test 7c: Insert with has-one join and pagination
+	//
+
+	test("QuerySet.insert() - with has-one join and pagination", async () => {
+		await testInTransaction(db, async (trx) => {
+			const query = querySet(trx)
+				.selectAs("posts", trx.selectFrom("posts").select(["id", "user_id", "title"]))
+				.leftJoinOne(
+					"user",
+					({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
+					"user.id",
+					"posts.user_id",
+				)
+				.insert(
+					trx
+						.insertInto("posts")
+						.values([
+							{ user_id: 1, title: "One Join A", content: "content a" },
+							{ user_id: 2, title: "One Join B", content: "content b" },
+						])
+						.returning(["id", "user_id", "title"]),
+				)
+				.limit(1);
+
+			const results = await query.execute();
+
+			assert.strictEqual(results.length, 1);
+			const result = results[0]!;
+			assert.ok(typeof result.id === "number");
+			delete (result as any).id;
+			assert.deepStrictEqual(result, {
+				user_id: 1,
+				title: "One Join A",
+				user: {
+					id: 1,
+					username: "alice",
+				},
+			});
+		});
+	});
+
+	//
 	// Test 8: Insert with nested joins
 	//
 
@@ -391,6 +481,36 @@ describePg("query-set: postgres-insert", () => {
 					usernameUpper: "ALICE",
 				},
 			});
+		});
+	});
+
+	//
+	// Test 10b: executeExists hoists the implicit __base CTE
+	//
+
+	test("insertAs() - executeExists hoists the __base CTE above the EXISTS wrap", async () => {
+		await testInTransaction(db, async (trx) => {
+			// The implicit __base CTE wrapping the INSERT is data-modifying, so it
+			// must be hoisted to the top level of the EXISTS statement or Postgres
+			// rejects the query (SQLSTATE 0A000).
+			const exists = await querySet(trx)
+				.insertAs("newUser", (db) =>
+					db
+						.insertInto("users")
+						.values({ username: "existsUser", email: "exists-insert@example.com" })
+						.returning(["id", "username", "email"]),
+				)
+				.executeExists();
+
+			assert.strictEqual(exists, true);
+
+			// The insert itself still executed.
+			const user = await trx
+				.selectFrom("users")
+				.select(["username"])
+				.where("email", "=", "exists-insert@example.com")
+				.executeTakeFirstOrThrow();
+			assert.strictEqual(user.username, "existsUser");
 		});
 	});
 
