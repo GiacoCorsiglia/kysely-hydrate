@@ -819,6 +819,53 @@ test("attach: fetchFn receives deduplicated inputs with null-key rows dropped", 
 	]);
 });
 
+test("attach: duplicate-keyed parent rows with consistent toParent values match under sorting", async () => {
+	// Raw joined rows repeat each parent (row explosion) and arrive in a
+	// different order than the hydrator's orderBy.  As long as duplicates agree
+	// on the toParent column (the documented requirement — see FetchFn), the
+	// attach lookup must find the fetched rows regardless of which duplicate
+	// ends up representing the entity.
+	interface OrgUser {
+		id: number;
+		orgId: number;
+		name: string;
+		rank: number;
+	}
+
+	const rows: OrgUser[] = [
+		{ id: 2, orgId: 20, name: "Bob", rank: 2 },
+		{ id: 1, orgId: 10, name: "Alice", rank: 1 },
+		{ id: 2, orgId: 20, name: "Bob", rank: 2 },
+		{ id: 1, orgId: 10, name: "Alice", rank: 1 },
+	];
+
+	const received: OrgUser[][] = [];
+
+	const hydrator = createHydrator<OrgUser>("id")
+		.fields({ id: true, name: true })
+		.orderBy("rank", "desc")
+		.attachMany(
+			"orgs",
+			(inputs: OrgUser[]) => {
+				received.push(inputs);
+				return inputs.map((input) => ({ orgId: input.orgId, label: `org-${input.orgId}` }));
+			},
+			{ matchChild: "orgId", toParent: "orgId" },
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, [
+		{ id: 2, name: "Bob", orgs: [{ orgId: 20, label: "org-20" }] },
+		{ id: 1, name: "Alice", orgs: [{ orgId: 10, label: "org-10" }] },
+	]);
+	assert.strictEqual(received.length, 1);
+	assert.deepStrictEqual(received[0], [
+		{ id: 2, orgId: 20, name: "Bob", rank: 2 },
+		{ id: 1, orgId: 10, name: "Alice", rank: 1 },
+	]);
+});
+
 test("attachMany: calls fetchFn once", async () => {
 	let userPostsFetchCount = 0;
 	let postCommentsFetchCount = 0;
