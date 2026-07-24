@@ -144,6 +144,11 @@ function isExecutable<Output>(value: unknown): value is Executable<Output> {
  * deduplicated by the parent's `keyBy`, and rows with nil keys (e.g. phantom
  * all-null rows produced by matchless left joins) are excluded.  Should return
  * already-hydrated data.
+ *
+ * Duplicate-keyed parent rows must agree on the `toParent` columns used for
+ * matching: deduplication keeps an arbitrary representative row per entity
+ * key, so when duplicates disagree on a non-key `toParent` column, which
+ * row's value is used for fetching and matching is unspecified.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
@@ -1045,6 +1050,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// keyBy and drop rows with nil keys.  We also need to convert the input
 			// to prefixed accessors if we are nested, because the fetchFn expects
 			// unprefixed inputs.
+			//
+			// Note: dedupe keeps the first row in input order, while hydration's
+			// representative row for an entity is chosen after sorting (and per
+			// parent group at nested levels).  When duplicate-keyed rows disagree
+			// on a non-key toParent column the two can therefore differ; see the
+			// FetchFn doc for the resulting constraint.
 			const { keyBy } = this.#props;
 			const seen = new Set<unknown>();
 			const inputArray: any[] = [];
