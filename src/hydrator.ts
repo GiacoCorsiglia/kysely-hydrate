@@ -1567,24 +1567,85 @@ function isKeyNil(key: unknown): key is null | undefined {
  *
  * Expected to return values that are good for use as a key in a Map, but not
  * guaranteed to do so depending on the input object.
+ *
+ * Note the semantics differ between the two `keyBy` shapes: single keys
+ * (`keyBy` is a string) return the raw column value, so entities are matched
+ * by SameValueZero identity in the `Map` (two equal-time `Date` objects are
+ * *different* keys).  Composite keys (`keyBy` is an array) are encoded to a
+ * string by {@link encodeKeyPart}, which compares parts by value (two
+ * equal-time `Date`s are the *same* key part).  This asymmetry is
+ * intentional; normalizing the single-key path was considered and deferred.
  */
 function getKey(prefix: string, input: unknown, keyBy: string | readonly string[]): unknown {
 	if (typeof keyBy !== "object") {
 		return getPrefixedValue(prefix, input, keyBy);
 	}
 
-	const values: unknown[] = [];
+	// Concatenate one self-delimiting token per part (see encodeKeyPart), so
+	// that distinct part sequences can never collide — neither across part
+	// boundaries nor across types.
+	let key = "";
 	for (const partKey of keyBy) {
 		const value = getPrefixedValue(prefix, input, partKey);
 		if (isKeyNil(value)) {
 			return null; // A null part invalidates the whole key for this entity
 		}
-		values.push(value);
+		key += encodeKeyPart(value);
 	}
-	// JSON-encode the parts (rather than joining them with a separator) so that
-	// values containing the separator cannot collide across part boundaries.
-	// Bigints are not JSON-serializable, so stringify them explicitly.
-	return JSON.stringify(values, (_key, value) => (typeof value === "bigint" ? `${value}n` : value));
+	return key;
+}
+
+/**
+ * Encodes one composite-key part as a self-delimiting token: a one-character
+ * type tag followed by a JSON string literal holding the part's canonical
+ * string form.
+ *
+ * Injectivity invariant: a concatenation of tokens decodes unambiguously left
+ * to right — each token is one tag character (never `"`), then a JSON string
+ * literal, which starts at the next `"` and ends at the first unescaped `"`.
+ * Distinct tags separate types, and within each type the canonical string
+ * form is injective, so distinct (type, value) part sequences — including
+ * sequences of different arity — always produce distinct keys.  The non-string
+ * canonical forms below never contain `"` or `\`, so interpolating them
+ * directly between quotes yields a valid JSON string literal; arbitrary
+ * strings go through JSON.stringify, which escapes those characters.
+ *
+ * Deliberate equivalences within a type:
+ * - Numbers: `-0` encodes as `0`.  SQL does not distinguish negative zero,
+ *   and this matches the SameValueZero semantics `Map` gives single keys.
+ *   `NaN`, `Infinity`, and `-Infinity` each encode distinctly.
+ * - Dates: compared by time value; all invalid dates are equal (their time
+ *   value is `NaN`), matching how `Date` equality is usually defined.
+ * - Buffers/`Uint8Array`s: compared by content.
+ * - Anything else falls back to its `String()` form under its own tag, so
+ *   exotic values still get stable (if not perfectly distinct) keys.
+ */
+function encodeKeyPart(value: unknown): string {
+	switch (typeof value) {
+		case "string":
+			return `s${JSON.stringify(value)}`;
+		case "number":
+			return `n"${value}"`;
+		case "bigint":
+			return `b"${value}"`;
+		case "boolean":
+			return `t"${value}"`;
+		default:
+			if (value instanceof Date) {
+				return `d"${value.getTime()}"`;
+			}
+			if (value instanceof Uint8Array) {
+				return `u"${value.join(",")}"`;
+			}
+			// String() throws for values with no primitive conversion (e.g.
+			// null-prototype objects); fall back to the tagged toString form so
+			// such keys still group deterministically instead of rejecting.
+			try {
+				return `x${JSON.stringify(String(value))}`;
+			} catch {
+				return `x${JSON.stringify(Object.prototype.toString.call(value))}`;
+			}
+	}
 }
 
 /**
