@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 
 import {
+	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
@@ -816,6 +817,66 @@ test("attach: fetchFn receives deduplicated inputs with null-key rows dropped", 
 			{ id: 1, name: "Alice" },
 			{ id: 2, name: "Bob" },
 		],
+	]);
+});
+
+test("attach: throws AttachedKeysArityMismatchError for mismatched key arity", () => {
+	const hydrator = createHydrator<User>("id").fields({ id: true, name: true });
+	const fetchFn = () => [] as Array<{ a: number; b: number }>;
+
+	// Composite matchChild vs single toParent.
+	assert.throws(
+		() => hydrator.attachMany("posts", fetchFn, { matchChild: ["a", "b"], toParent: "id" }),
+		AttachedKeysArityMismatchError,
+	);
+
+	// Composite matchChild vs single-element-array toParent (normalized to
+	// the plain form, so still arity 1).
+	assert.throws(
+		() => hydrator.attachMany("posts", fetchFn, { matchChild: ["a", "b"], toParent: ["id"] }),
+		AttachedKeysArityMismatchError,
+	);
+
+	// Composite matchChild vs the default toParent (the parent's single keyBy).
+	assert.throws(
+		() => hydrator.attachMany("posts", fetchFn, { matchChild: ["a", "b"] }),
+		AttachedKeysArityMismatchError,
+	);
+});
+
+test("attach: single-element array keys are equivalent to plain string keys", async () => {
+	// ["userId"] / ["id"] must be normalized to the plain form so both sides
+	// use the same key encoding regardless of which shape the caller picked.
+	const users: User[] = [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+	];
+
+	const posts = [
+		{ id: 10, userId: 1, title: "Alice Post" },
+		{ id: 12, userId: 2, title: "Bob Post" },
+	];
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany("arrayChildPosts", () => posts, { matchChild: ["userId"], toParent: "id" })
+		.attachMany("arrayParentPosts", () => posts, { matchChild: "userId", toParent: ["id"] });
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{
+			id: 1,
+			name: "Alice",
+			arrayChildPosts: [{ id: 10, userId: 1, title: "Alice Post" }],
+			arrayParentPosts: [{ id: 10, userId: 1, title: "Alice Post" }],
+		},
+		{
+			id: 2,
+			name: "Bob",
+			arrayChildPosts: [{ id: 12, userId: 2, title: "Bob Post" }],
+			arrayParentPosts: [{ id: 12, userId: 2, title: "Bob Post" }],
+		},
 	]);
 });
 

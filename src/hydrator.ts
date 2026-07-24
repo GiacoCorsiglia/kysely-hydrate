@@ -1,4 +1,5 @@
 import {
+	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
@@ -991,14 +992,31 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
+		// Normalize each side independently so that ["id"] and "id" are
+		// equivalent: getKey encodes single keys as raw values but arrays as
+		// composite token strings, and collapsing single-element arrays to the
+		// plain form on both sides guarantees matching encodings.
+		const matchChild = normalizeAttachKey(keys.matchChild);
+		const toParent = normalizeAttachKey(keys.toParent ?? this.#props.keyBy);
+
+		// After normalization, mismatched arity means the two sides encode
+		// differently (raw value vs composite tokens, or different part counts)
+		// and could never match at hydration time.  Fail fast at registration
+		// instead of silently attaching nothing.
+		const matchChildArity = typeof matchChild === "string" ? 1 : matchChild.length;
+		const toParentArity = typeof toParent === "string" ? 1 : toParent.length;
+		if (matchChildArity !== toParentArity) {
+			throw new AttachedKeysArityMismatchError(key, matchChildArity, toParentArity);
+		}
+
 		return new HydratorImpl({
 			...this.#props,
 
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
-				matchChild: keys.matchChild,
-				toParent: keys.toParent ?? this.#props.keyBy,
+				matchChild,
+				toParent,
 			} satisfies AttachedCollection<any, any>),
 		});
 	}
@@ -1553,6 +1571,17 @@ function applyGroupedCollectionMode<T>(
 	}
 
 	return mode === "many" ? [grouped] : grouped;
+}
+
+/**
+ * Normalizes an attach matching key: collapses a single-element array to the
+ * plain string form.  The two shapes are semantically equivalent, but they
+ * encode differently in {@link getKey} (raw value vs composite token), so each
+ * side of an attach match is normalized independently to keep the encodings
+ * aligned.
+ */
+function normalizeAttachKey<T>(keyBy: KeyBy<T>): KeyBy<T> {
+	return typeof keyBy !== "string" && keyBy.length === 1 ? keyBy[0]! : keyBy;
 }
 
 /**
