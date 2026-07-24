@@ -1478,14 +1478,15 @@ export function hydrate<Input, Output>(
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
 	// The factory is user code; catch synchronous errors and turn them into
-	// rejections so this function never throws.
+	// rejections so this function never throws.  The hydrate() call stays
+	// inside the try for the same reason: a factory that returns a
+	// non-hydrator would otherwise throw a synchronous TypeError.
 	try {
 		hydrator = typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator;
+		return hydrator.hydrate(input);
 	} catch (error) {
 		return Promise.reject(error);
 	}
-
-	return hydrator.hydrate(input);
 }
 
 /**
