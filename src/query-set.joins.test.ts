@@ -649,7 +649,8 @@ describe("query-set: joins", () => {
 	}
 
 	//
-	// Inner-join filtering and exists-false through a filtering join
+	// Inner-join filtering, exists-false through a filtering join, and
+	// exists-true through a matchless non-filtering (left) join
 	//
 
 	test("innerJoinOne: filters out base records without a match", async () => {
@@ -702,6 +703,42 @@ describe("query-set: joins", () => {
 			.executeExists();
 
 		assert.strictEqual(exists, false);
+	});
+
+	test("leftJoinOne: executeExists is true when nothing matches", async () => {
+		const exists = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOne(
+				"profile",
+				({ eb, qs }) =>
+					// No profile has this user_id
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "=", 999)),
+				"profile.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 5)
+			.executeExists();
+
+		// A left join never filters the base, even when it matches nothing
+		assert.strictEqual(exists, true);
+	});
+
+	test("leftJoinMany: executeExists is true when nothing matches", async () => {
+		const exists = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					// No post has this user_id
+					qs(eb.selectFrom("posts").select(["id", "title", "user_id"]).where("user_id", "=", 999)),
+				"posts.user_id",
+				"user.id",
+			)
+			.where("users.id", "<=", 5)
+			.executeExists();
+
+		// A left join never filters the base, even when it matches nothing
+		assert.strictEqual(exists, true);
 	});
 
 	//
