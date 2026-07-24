@@ -143,7 +143,8 @@ function isExecutable<Output>(value: unknown): value is Executable<Output> {
  * with one input per parent entity, to avoid N+1 queries.  Parent inputs are
  * deduplicated by the parent's `keyBy`, and rows with nil keys (e.g. phantom
  * all-null rows produced by matchless left joins) are excluded.  Should return
- * already-hydrated data.
+ * already-hydrated data.  Never called with zero inputs: when every parent row
+ * is dropped, the fetch is skipped entirely.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
@@ -1057,30 +1058,38 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
 			}
 
-			for (const [key, attachedCollection] of attachedCollections) {
-				// Use prefixed key for the map
-				const mapKey = prefix ? applyPrefix(prefix, key) : key;
+			// When there are no inputs left (no rows at all, or every row dropped
+			// by the nil-key filter), skip the fetch entirely: user fetchFns
+			// commonly build `WHERE x IN (...)` from the inputs, which is invalid
+			// or pointless SQL for zero inputs.  Leaving attachedDataMap without
+			// an entry behaves identically to storing an empty group — lookups go
+			// through `groupedData?.get(...)`, which yields undefined either way.
+			if (inputArray.length > 0) {
+				for (const [key, attachedCollection] of attachedCollections) {
+					// Use prefixed key for the map
+					const mapKey = prefix ? applyPrefix(prefix, key) : key;
 
-				// Create fetch promise
-				fetchPromises.push(
-					Promise.resolve(attachedCollection.fetchFn(inputArray))
-						.then((result) => {
-							if (isExecutable(result)) {
-								return result.execute();
-							}
-							return result as Iterable<any>;
-						})
-						.then((attachedOutputs) => {
-							// Group fetched rows by their match key
-							const grouped = groupByKey(
-								"", // Always unprefixed.
-								attachedOutputs,
-								attachedCollection.matchChild,
-							);
+					// Create fetch promise
+					fetchPromises.push(
+						Promise.resolve(attachedCollection.fetchFn(inputArray))
+							.then((result) => {
+								if (isExecutable(result)) {
+									return result.execute();
+								}
+								return result as Iterable<any>;
+							})
+							.then((attachedOutputs) => {
+								// Group fetched rows by their match key
+								const grouped = groupByKey(
+									"", // Always unprefixed.
+									attachedOutputs,
+									attachedCollection.matchChild,
+								);
 
-							ctx.attachedDataMap.set(mapKey, grouped);
-						}),
-				);
+								ctx.attachedDataMap.set(mapKey, grouped);
+							}),
+					);
+				}
 			}
 		}
 
