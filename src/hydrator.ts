@@ -1291,8 +1291,15 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		let sortedInputs: Iterable<Input> = inputs;
 		if (shouldSort) {
-			// Convert to array for sorting
-			const inputsArray = Array.isArray(inputs) ? inputs : Array.from(inputs);
+			// Sort a copy: when `inputs` is already an array, it is usually not
+			// owned by this call.  It may be the caller's own array (hydrate()
+			// passes top-level arrays through by reference) or a RowGroup's backing
+			// array (shared by every sibling collection at the same level), so
+			// sorting in place would leak the reordering as a side effect.  (The
+			// one owned case, the single-element `[input]` array built by
+			// #hydrateOne, doesn't merit avoiding the copy.)  Array.from already
+			// produces a fresh array for non-array iterables.
+			const inputsArray = Array.isArray(inputs) ? inputs.slice() : Array.from(inputs);
 
 			const comparator = this.#makePrefixedComparator(prefix, finalOrderings);
 			inputsArray.sort(comparator);
