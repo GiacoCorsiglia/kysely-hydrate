@@ -24,10 +24,11 @@
  * (or a nested collection as empty).
  *
  * Every test asserts the CORRECT observable behavior (full field names, no
- * lost data, correct ordering) and says nothing about how the library keeps
- * the SQL identifiers legal. Tests whose aliases fit in 63 bytes already
- * pass and guard the boundary; the rest reproduce the bug and are expected
- * to fail until the library handles over-long generated aliases.
+ * lost data, correct ordering) and says nothing about how the SQL identifiers
+ * are kept legal. The fix under test is the `fixLongAliases()` plugin,
+ * installed on the Kysely instance (wrapping `CamelCasePlugin` where one is
+ * used). Without it, every test whose alias exceeds 63 bytes fails with
+ * silently corrupted output.
  *
  * Every identifier in the fixture DDL (identifier-length-fixture.sql) is
  * itself under 63 bytes — only the generated alias chains are over-long.
@@ -42,6 +43,7 @@ import { CamelCasePlugin, type CamelCasePluginOptions } from "kysely";
 
 import { getDbForTest } from "./__tests__/db.ts";
 import { describePg } from "./__tests__/helpers.ts";
+import { fixLongAliases } from "./fix-long-aliases.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest({ fixture: "identifier-length-fixture" });
@@ -60,7 +62,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 	// Without CamelCasePlugin
 	//
 
-	const snakeDb = db.withTables<{
+	const snakeDb = db.withPlugin(fixLongAliases()).withTables<{
 		organizations: { id: number; organization_name: string };
 		organizational_departments: {
 			id: number;
@@ -717,7 +719,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 	};
 
 	function camelDbWith(options?: CamelCasePluginOptions) {
-		return db.withPlugin(new CamelCasePlugin(options)).withTables<CamelTables>();
+		return db.withPlugin(fixLongAliases(new CamelCasePlugin(options))).withTables<CamelTables>();
 	}
 
 	const camelDb = camelDbWith();

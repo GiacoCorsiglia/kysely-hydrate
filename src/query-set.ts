@@ -18,6 +18,7 @@
 
 import * as k from "kysely";
 
+import { POSTGRES_MAX_IDENTIFIER_BYTES } from "./fix-long-aliases.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -29,6 +30,7 @@ import {
 import {
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
+	assertAliasesFit,
 } from "./helpers/select-renamer.ts";
 import {
 	type AnySelectQueryBuilder,
@@ -72,6 +74,20 @@ import {
 	EnableAutoInclusion,
 } from "./hydrator.ts";
 import { InvalidJoinedQuerySetError } from "./index.ts";
+
+export interface QuerySetOptions {
+	/**
+	 * Maximum length, in UTF-8 bytes, of the column aliases a query set may
+	 * generate. Building a query (`toQuery()`, `execute()`, ...) whose aliases
+	 * exceed it throws {@link AliasTooLongError} instead of letting the database
+	 * silently truncate them. Measured after plugins, so installing the
+	 * `fixLongAliases()` plugin satisfies the check.
+	 *
+	 * Defaults to 63, PostgreSQL's limit. Pass `null` to disable the check (for
+	 * example on SQLite, which has no limit).
+	 */
+	maxAliasBytes?: number | null;
+}
 
 /**
  * A stateless Kysely plugin that strips the WITH clause from a
@@ -2662,6 +2678,7 @@ interface QuerySetProps {
 	frontModifiers: readonly k.Expression<any>[];
 	endModifiers: readonly k.Expression<any>[];
 	writeQueryCreator: k.QueryCreator<any> | null;
+	maxAliasBytes: number | null;
 }
 
 /**
@@ -2954,7 +2971,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return this.#toJoinedQuery(false, false);
+		return this.#assertAliasesFit(this.#toJoinedQuery(false, false));
 	}
 
 	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
@@ -3060,7 +3077,21 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toQuery(): any {
-		return this.#toQuery(false, false);
+		return this.#assertAliasesFit(this.#toQuery(false, false));
+	}
+
+	/**
+	 * Guards against PostgreSQL's silent truncation of identifiers over 63
+	 * bytes, which would corrupt hydration. Measures the aliases as the
+	 * database will see them (after plugins), so it passes when the
+	 * `fixLongAliases()` plugin is installed.
+	 */
+	#assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB): QB {
+		const { maxAliasBytes } = this.#props;
+		if (maxAliasBytes !== null) {
+			assertAliasesFit(qb, maxAliasBytes);
+		}
+		return qb;
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
@@ -3566,9 +3597,13 @@ type InferO<X> = X extends k.SelectQueryBuilder<any, any, infer O> ? O : never;
  */
 class QuerySetCreator<in out DB> {
 	#db: k.Kysely<DB>;
+	#maxAliasBytes: number | null;
 
-	constructor(db: k.Kysely<DB>) {
+	constructor(db: k.Kysely<DB>, options: QuerySetOptions) {
 		this.#db = db;
+		// `null` means "disabled", so `??` would be wrong here.
+		this.#maxAliasBytes =
+			options.maxAliasBytes === undefined ? POSTGRES_MAX_IDENTIFIER_BYTES : options.maxAliasBytes;
 	}
 
 	#createQuerySet(
@@ -3593,6 +3628,7 @@ class QuerySetCreator<in out DB> {
 			frontModifiers: [],
 			endModifiers: [],
 			writeQueryCreator: null,
+			maxAliasBytes: this.#maxAliasBytes,
 		}) as any;
 	}
 
@@ -3808,6 +3844,7 @@ class QuerySetCreator<in out DB> {
 			frontModifiers: [],
 			endModifiers: [],
 			writeQueryCreator: qc,
+			maxAliasBytes: this.#maxAliasBytes,
 		});
 	}
 }
@@ -3839,8 +3876,9 @@ class QuerySetCreator<in out DB> {
  * ```
  *
  * @param db - A Kysely database instance.
+ * @param options - See {@link QuerySetOptions}.
  * @returns A QuerySetCreator for building query sets.
  */
-export function querySet<DB>(db: k.Kysely<DB>): QuerySetCreator<DB> {
-	return new QuerySetCreator(db);
+export function querySet<DB>(db: k.Kysely<DB>, options: QuerySetOptions = {}): QuerySetCreator<DB> {
+	return new QuerySetCreator(db, options);
 }
