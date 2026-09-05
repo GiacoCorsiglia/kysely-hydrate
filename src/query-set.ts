@@ -2971,7 +2971,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return this.#assertAliasesFit(this.#toJoinedQuery(false, false));
+		return assertAliasesFit(this.#toJoinedQuery(false, false), this.#props.maxAliasBytes);
 	}
 
 	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
@@ -3077,21 +3077,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toQuery(): any {
-		return this.#assertAliasesFit(this.#toQuery(false, false));
-	}
-
-	/**
-	 * Guards against PostgreSQL's silent truncation of identifiers over 63
-	 * bytes, which would corrupt hydration. Measures the aliases as the
-	 * database will see them (after plugins), so it passes when the
-	 * `fixLongAliases()` plugin is installed.
-	 */
-	#assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB): QB {
-		const { maxAliasBytes } = this.#props;
-		if (maxAliasBytes !== null) {
-			assertAliasesFit(qb, maxAliasBytes);
-		}
-		return qb;
+		return assertAliasesFit(this.#toQuery(false, false), this.#props.maxAliasBytes);
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
@@ -3599,11 +3585,12 @@ class QuerySetCreator<in out DB> {
 	#db: k.Kysely<DB>;
 	#maxAliasBytes: number | null;
 
-	constructor(db: k.Kysely<DB>, options: QuerySetOptions) {
+	constructor(
+		db: k.Kysely<DB>,
+		{ maxAliasBytes = POSTGRES_MAX_IDENTIFIER_BYTES }: QuerySetOptions,
+	) {
 		this.#db = db;
-		// `null` means "disabled", so `??` would be wrong here.
-		this.#maxAliasBytes =
-			options.maxAliasBytes === undefined ? POSTGRES_MAX_IDENTIFIER_BYTES : options.maxAliasBytes;
+		this.#maxAliasBytes = maxAliasBytes;
 	}
 
 	#createQuerySet(
