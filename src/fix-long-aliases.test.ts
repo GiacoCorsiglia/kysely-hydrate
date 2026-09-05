@@ -7,35 +7,33 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { CamelCasePlugin, type Kysely, type KyselyPlugin, sql } from "kysely";
+import { CamelCasePlugin, type Compilable, type Kysely, type KyselyPlugin, sql } from "kysely";
 
 import { getDbForTest } from "./__tests__/db.ts";
 import { fixLongAliases } from "./fix-long-aliases.ts";
 
 const rawDb = getDbForTest();
 
-const utf8Bytes = (s: string) => Buffer.byteLength(s, "utf8");
+const bytes = (s: string) => Buffer.byteLength(s);
 
-/** Extracts the output aliases from compiled SQL, in order. */
-function outputAliases(sqlText: string): string[] {
-	return [...sqlText.matchAll(/ as "([^"]+)"/g)].map((m) => m[1]!);
-}
+/** `SELECT <value> AS "<alias>", ...` with no FROM clause. */
+const selectLiterals = (db: Kysely<any>, entries: Record<string, number | string>) =>
+	db.selectNoFrom(Object.entries(entries).map(([alias, value]) => sql.lit(value).as(alias)));
 
-/** `SELECT <value> AS "<alias>"` with no FROM clause, for every alias given. */
-function selectLiterals(db: Kysely<any>, entries: Record<string, number | string>) {
-	return db.selectNoFrom(Object.entries(entries).map(([alias, value]) => sql.lit(value).as(alias)));
-}
+/** The output aliases in the compiled SQL, in order. */
+const aliasesIn = (query: Compilable) =>
+	[...query.compile().sql.matchAll(/ as "([^"]+)"/g)].map((m) => m[1]!);
 
 const ALIAS_63 = "departmentalEmployeeRecords$$employee_preferred_full_display_na";
 const ALIAS_64 = "departmentalEmployeeRoster$$employee_preferred_full_display_name";
-const ALIAS_97 =
-	"departmentalEmployeeRecordsWithVerboseNamingConventions$$employee_secondary_contact_email_address";
 const ALIAS_93 =
 	"departmentalEmployeeRecordsWithVerboseNamingConventions$$employee_preferred_full_display_name";
+const ALIAS_97 =
+	"departmentalEmployeeRecordsWithVerboseNamingConventions$$employee_secondary_contact_email_address";
 
 describe("fix-long-aliases", () => {
-	assert.strictEqual(utf8Bytes(ALIAS_63), 63);
-	assert.strictEqual(utf8Bytes(ALIAS_64), 64);
+	assert.strictEqual(bytes(ALIAS_63), 63);
+	assert.strictEqual(bytes(ALIAS_64), 64);
 
 	const db = rawDb.withPlugin(fixLongAliases());
 
@@ -49,11 +47,11 @@ describe("fix-long-aliases", () => {
 	});
 
 	test("shortens a 64-byte alias to at most 63 bytes, keeping a readable head", () => {
-		const [alias] = outputAliases(selectLiterals(db, { [ALIAS_64]: 1 }).compile().sql);
+		const [alias] = aliasesIn(selectLiterals(db, { [ALIAS_64]: 1 }));
 
 		assert.ok(alias);
 		assert.notStrictEqual(alias, ALIAS_64);
-		assert.ok(utf8Bytes(alias) <= 63, `${alias} is ${utf8Bytes(alias)} bytes`);
+		assert.ok(bytes(alias) <= 63, `${alias} is ${bytes(alias)} bytes`);
 		assert.ok(alias.startsWith("departmentalEmployeeRoster$$employee_"), alias);
 	});
 
@@ -75,7 +73,7 @@ describe("fix-long-aliases", () => {
 	test("aliases sharing their first 63 bytes stay distinct", async () => {
 		const query = selectLiterals(db, { [ALIAS_93]: "name", [ALIAS_97]: "email" });
 
-		const [first, second] = outputAliases(query.compile().sql);
+		const [first, second] = aliasesIn(query);
 		assert.ok(first && second);
 		assert.notStrictEqual(first, second);
 
@@ -86,22 +84,19 @@ describe("fix-long-aliases", () => {
 	});
 
 	test("truncates the head on a character boundary, never splitting a multi-byte character", async () => {
-		// 40 two-byte characters: 80 bytes, 40 characters.
-		const alias = "ü".repeat(40) + "$$x";
+		const alias = "ü".repeat(40) + "$$x"; // 83 bytes, 43 characters
 		const query = selectLiterals(db, { [alias]: 1 });
 
-		const [shortAlias] = outputAliases(query.compile().sql);
+		const [shortAlias] = aliasesIn(query);
 		assert.ok(shortAlias);
 		assert.match(shortAlias, /^ü+~[a-z]{14}$/);
-		assert.ok(utf8Bytes(shortAlias) <= 63);
+		assert.ok(bytes(shortAlias) <= 63);
 
 		assert.deepStrictEqual(await query.executeTakeFirstOrThrow(), { [alias]: 1 });
 	});
 
 	test("restores rows executed from a compiled query via db.executeQuery()", async () => {
-		const compiled = selectLiterals(db, { [ALIAS_64]: 1 }).compile();
-
-		const { rows } = await db.executeQuery(compiled);
+		const { rows } = await db.executeQuery(selectLiterals(db, { [ALIAS_64]: 1 }).compile());
 
 		assert.deepStrictEqual(rows, [{ [ALIAS_64]: 1 }]);
 	});
@@ -117,18 +112,17 @@ describe("fix-long-aliases", () => {
 	});
 
 	test("an alias that embeds an already-shortened alias is shortened again and fully restored", async () => {
-		// The inner query is compiled (and shortened) on its own when it is
-		// embedded; the outer alias is then built from the shortened name.
+		// The inner query is compiled (and shortened) on its own when embedded,
+		// so the outer alias is built from the shortened name.
 		const inner = selectLiterals(db, { [ALIAS_64]: 1 });
-		const [innerAlias] = outputAliases(inner.compile().sql);
-		assert.ok(innerAlias && innerAlias.includes("~"));
+		assert.ok(aliasesIn(inner)[0]?.includes("~"));
 
 		const outerAlias = `organizationalDepartments$$${ALIAS_64}`;
 		const outer = db.selectFrom(inner.as("sub")).select(sql.ref(`sub.${ALIAS_64}`).as(outerAlias));
 
-		const [compiledOuterAlias] = outputAliases(outer.compile().sql).slice(-1);
+		const compiledOuterAlias = aliasesIn(outer).at(-1);
 		assert.ok(compiledOuterAlias);
-		assert.ok(utf8Bytes(compiledOuterAlias) <= 63);
+		assert.ok(bytes(compiledOuterAlias) <= 63);
 
 		assert.deepStrictEqual(await outer.executeTakeFirstOrThrow(), { [outerAlias]: 1 });
 	});
@@ -137,11 +131,11 @@ describe("fix-long-aliases", () => {
 		const tight = rawDb.withPlugin(fixLongAliases({ maxBytes: 30 }));
 		const alias = "a".repeat(31);
 
-		const [shortAlias] = outputAliases(selectLiterals(tight, { [alias]: 1 }).compile().sql);
+		const [shortAlias] = aliasesIn(selectLiterals(tight, { [alias]: 1 }));
 
 		assert.ok(shortAlias);
 		assert.notStrictEqual(shortAlias, alias);
-		assert.ok(utf8Bytes(shortAlias) <= 30);
+		assert.ok(bytes(shortAlias) <= 30);
 	});
 
 	test("instances with different maxBytes each keep their own limit for the same alias, and both restore", async () => {
@@ -152,12 +146,12 @@ describe("fix-long-aliases", () => {
 		const wide = rawDb.withPlugin(fixLongAliases({ maxBytes: 63 }));
 		const narrow = rawDb.withPlugin(fixLongAliases({ maxBytes: 40 }));
 
-		const [wideAlias] = outputAliases(selectLiterals(wide, { [alias]: 1 }).compile().sql);
-		const [narrowAlias] = outputAliases(selectLiterals(narrow, { [alias]: 1 }).compile().sql);
+		const [wideAlias] = aliasesIn(selectLiterals(wide, { [alias]: 1 }));
+		const [narrowAlias] = aliasesIn(selectLiterals(narrow, { [alias]: 1 }));
 
 		assert.ok(wideAlias && narrowAlias);
-		assert.strictEqual(utf8Bytes(wideAlias), 63);
-		assert.strictEqual(utf8Bytes(narrowAlias), 40);
+		assert.strictEqual(bytes(wideAlias), 63);
+		assert.strictEqual(bytes(narrowAlias), 40);
 
 		assert.deepStrictEqual(await selectLiterals(wide, { [alias]: 1 }).executeTakeFirstOrThrow(), {
 			[alias]: 1,
@@ -175,13 +169,13 @@ describe("fix-long-aliases", () => {
 		const SNAKE_64 = "employee_directory_entries$$employee_preferred_full_display_name";
 
 		test("measures the snake_cased alias, not the camelCase one", () => {
-			assert.strictEqual(utf8Bytes(CAMEL_58), 58);
-			assert.strictEqual(utf8Bytes(SNAKE_64), 64);
+			assert.strictEqual(bytes(CAMEL_58), 58);
+			assert.strictEqual(bytes(SNAKE_64), 64);
 
-			const [alias] = outputAliases(selectLiterals(camelDb, { [CAMEL_58]: 1 }).compile().sql);
+			const [alias] = aliasesIn(selectLiterals(camelDb, { [CAMEL_58]: 1 }));
 
 			assert.ok(alias);
-			assert.ok(utf8Bytes(alias) <= 63);
+			assert.ok(bytes(alias) <= 63);
 			assert.ok(alias.startsWith("employee_directory_entries$$"), alias);
 		});
 
@@ -203,12 +197,10 @@ describe("fix-long-aliases", () => {
 		test("accepts options alongside the wrapped plugin", () => {
 			const tight = rawDb.withPlugin(fixLongAliases(new CamelCasePlugin(), { maxBytes: 20 }));
 
-			const [alias] = outputAliases(
-				selectLiterals(tight, { someLongerAliasName: 1 }).compile().sql,
-			);
+			const [alias] = aliasesIn(selectLiterals(tight, { someLongerAliasName: 1 }));
 
 			assert.ok(alias);
-			assert.ok(utf8Bytes(alias) <= 20);
+			assert.ok(bytes(alias) <= 20);
 		});
 	});
 

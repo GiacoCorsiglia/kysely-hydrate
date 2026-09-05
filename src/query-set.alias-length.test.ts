@@ -16,7 +16,7 @@ import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
 
-const utf8Bytes = (s: string) => Buffer.byteLength(s, "utf8");
+const bytes = (s: string) => Buffer.byteLength(s);
 
 // The longest generated alias is "<key>$$user_id": 63 bytes for KEY_54 and
 // 64 bytes for KEY_55.
@@ -40,8 +40,8 @@ function selectUserWithPostsUnder(
 }
 
 describe("query-set: alias length guard", () => {
-	assert.strictEqual(utf8Bytes(`${KEY_54}$$user_id`), 63);
-	assert.strictEqual(utf8Bytes(`${KEY_55}$$user_id`), 64);
+	assert.strictEqual(bytes(`${KEY_54}$$user_id`), 63);
+	assert.strictEqual(bytes(`${KEY_55}$$user_id`), 64);
 
 	test("allows generated aliases of exactly 63 bytes", () => {
 		assert.doesNotThrow(() => selectUserWithPostsUnder(KEY_54).toQuery());
@@ -69,23 +69,16 @@ describe("query-set: alias length guard", () => {
 			posts: { id: number; title: string; userId: number };
 		}>();
 		const key = "employeeDirectoryEntries";
-		assert.strictEqual(utf8Bytes(`${key}$$employeePreferredFullDisplayName`), 58);
+		assert.strictEqual(bytes(`${key}$$employeePreferredFullDisplayName`), 58);
 
+		const posts = camelDb
+			.selectFrom("posts")
+			.select(["id", "userId", "title as employeePreferredFullDisplayName"]);
 		assert.throws(
 			() =>
 				querySet(camelDb)
 					.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
-					.leftJoinMany(
-						key,
-						({ eb, qs }) =>
-							qs(
-								eb
-									.selectFrom("posts")
-									.select(["id", "userId", "title as employeePreferredFullDisplayName"]),
-							),
-						`${key}.userId`,
-						"user.id",
-					)
+					.leftJoinMany(key, ({ qs }) => qs(posts), `${key}.userId`, "user.id")
 					.toQuery(),
 			AliasTooLongError,
 		);
@@ -121,7 +114,7 @@ describe("query-set: alias length guard", () => {
 		assert.doesNotThrow(() => qs.toQuery());
 	});
 
-	test("ignores returningAll() on write bases, which output real columns", async () => {
+	test("ignores returningAll() on write bases, which output real columns", () => {
 		// Write query sets cannot be built without a database round trip, so
 		// only assert that building the query does not throw.
 		const write = querySet(db).insertAs("user", (qc) =>
