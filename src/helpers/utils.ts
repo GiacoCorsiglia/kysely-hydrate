@@ -140,11 +140,14 @@ export function utf8Encode(input: string): Uint8Array {
 	return utf8Encoder.encode(input);
 }
 
+const PRINTABLE_ASCII = /^[ -~]*$/;
+
 /**
  * Length of a string in UTF-8 bytes, which is how databases measure identifiers.
  */
 export function utf8ByteLength(input: string): number {
-	return utf8Encode(input).length;
+	// Fast path: for ASCII, code units are bytes, so no encoding allocation.
+	return PRINTABLE_ASCII.test(input) ? input.length : utf8Encode(input).length;
 }
 
 /**

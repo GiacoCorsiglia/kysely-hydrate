@@ -132,10 +132,25 @@ function restoreRow(row: k.UnknownRow): k.UnknownRow {
 
 class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 	readonly #maxBytes: number;
+	/**
+	 * Memoizes `shorten()` per identifier, as `CamelCasePlugin` does for its
+	 * mapping: the transformer runs on every compilation, over every column
+	 * identifier, and the vocabulary of identifiers in a program is small.
+	 */
+	readonly #shortened = new Map<string, string>();
 
 	constructor(maxBytes: number) {
 		super();
 		this.#maxBytes = maxBytes;
+	}
+
+	#shorten(name: string): string {
+		let short = this.#shortened.get(name);
+		if (short === undefined) {
+			short = shorten(name, this.#maxBytes);
+			this.#shortened.set(name, short);
+		}
+		return short;
 	}
 
 	protected override transformSelection(
@@ -145,7 +160,7 @@ class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 		node = super.transformSelection(node, queryId);
 		const { selection } = node;
 		if (k.AliasNode.is(selection) && k.IdentifierNode.is(selection.alias)) {
-			const short = shorten(selection.alias.name, this.#maxBytes);
+			const short = this.#shorten(selection.alias.name);
 			if (short !== selection.alias.name) {
 				return {
 					...node,
@@ -158,7 +173,7 @@ class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 
 	protected override transformColumn(node: k.ColumnNode, queryId?: k.QueryId): k.ColumnNode {
 		node = super.transformColumn(node, queryId);
-		const short = shorten(node.column.name, this.#maxBytes);
+		const short = this.#shorten(node.column.name);
 		return short === node.column.name ? node : k.ColumnNode.create(short);
 	}
 }
