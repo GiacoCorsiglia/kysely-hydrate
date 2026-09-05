@@ -152,6 +152,7 @@ type Result = Array<{
     - [Counting](#counting)
     - [Existence](#existence)
     - [Inspecting the SQL](#inspecting-the-sql)
+    - [Long aliases and PostgreSQL's 63-byte identifier limit](#long-aliases-and-postgresqls-63-byte-identifier-limit)
     - [Hydrating pre-fetched rows with `.hydrate()`](#hydrating-pre-fetched-rows-with-hydrate)
     - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
     - [Computed properties with `.extras()`](#computed-properties-with-extras)
@@ -858,6 +859,53 @@ You can inspect the generated SQL using `.toQuery()`, `.toJoinedQuery()`, or `.t
 - `toExistsQuery()` Returns the exact query that `executeExists()` will run.
 - `toJoinedQuery()`: Returns the query with all joins applied (subject to row explosion).
 - `toBaseQuery()`: Returns the base query without any joins (but with modifications).
+
+### Long aliases and PostgreSQL's 63-byte identifier limit
+
+Query sets select joined columns under prefixed aliases like
+`posts$$comments$$author_id` (see [Isolation and prefixing](#isolation-and-prefixing)).
+PostgreSQL silently truncates any identifier longer than 63 bytes, so with deep
+nesting or long names a generated alias can come back from the database cut
+short, and hydration would then produce wrong output: mangled field names, or
+two columns collapsing into one.
+
+To prevent that, building a query (`.toQuery()`, `.execute()`, and so on) whose
+aliases would exceed 63 bytes throws an `AliasTooLongError`. The fix is to
+install the `fixLongAliases()` plugin on your Kysely instance. If you use
+`CamelCasePlugin`, wrap it, so that the length is measured on the snake_cased
+identifiers the database actually sees:
+
+```ts
+import { CamelCasePlugin, Kysely } from "kysely";
+import { fixLongAliases } from "kysely-hydrate";
+
+const db = new Kysely<DB>({
+	dialect,
+	plugins: [fixLongAliases(new CamelCasePlugin())],
+	// Without CamelCasePlugin: plugins: [fixLongAliases()]
+});
+```
+
+The plugin shortens any column alias over the limit to a form that fits
+(`<start of the name>~<hash>`), rewrites references to it in enclosing queries
+to match, and restores the original names in the result rows. It is
+deterministic, so rows can be hydrated by any equally built query set, and it
+does nothing at all to queries whose aliases already fit. It works for any
+Kysely query, not only query sets.
+
+Put `fixLongAliases()` last in the plugin list: plugins after it would see
+shortened names in queries but restored names in results.
+
+Two options tune the limit. `fixLongAliases({ maxBytes })` changes what the
+plugin shortens, and `querySet(db, { maxAliasBytes })` changes what the query
+set checks; pass `null` to disable the check entirely, for example on SQLite,
+which has no identifier limit.
+
+Two caveats. Rows executed through a Kysely instance that does not have the
+plugin (a compiled query run elsewhere) are not restored, exactly as with
+`CamelCasePlugin`. And `CamelCasePlugin({ upperCase: true })` is not
+supported: Kysely applies that transformation twice to embedded subqueries,
+which breaks nested queries on its own.
 
 ### Hydrating pre-fetched rows with `.hydrate()`
 
