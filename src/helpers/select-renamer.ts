@@ -86,23 +86,18 @@ class PrefixedAliasedExpression<
  * statically: `*`, `table.*`, or an alias that is not a plain identifier.
  */
 function getSelectionName({ selection }: k.SelectionNode): string | undefined {
-	if (k.ColumnNode.is(selection)) {
-		return selection.column.name;
+	switch (selection.kind) {
+		case "ColumnNode":
+			return selection.column.name;
+		case "ReferenceNode":
+			return k.SelectAllNode.is(selection.column) ? undefined : selection.column.column.name;
+		case "AliasNode":
+			return k.IdentifierNode.is(selection.alias) ? selection.alias.name : undefined;
+		case "SelectAllNode":
+			return undefined;
+		default:
+			assertNever(selection);
 	}
-
-	if (k.ReferenceNode.is(selection)) {
-		return k.SelectAllNode.is(selection.column) ? undefined : selection.column.column.name;
-	}
-
-	if (k.AliasNode.is(selection)) {
-		return k.IdentifierNode.is(selection.alias) ? selection.alias.name : undefined;
-	}
-
-	if (k.SelectAllNode.is(selection)) {
-		return undefined;
-	}
-
-	assertNever(selection);
 }
 
 /**
@@ -111,33 +106,30 @@ function getSelectionName({ selection }: k.SelectionNode): string | undefined {
  */
 function extractSelectionName(selectionNode: k.SelectionNode): string {
 	const name = getSelectionName(selectionNode);
-
 	if (name === undefined) {
 		throw k.AliasNode.is(selectionNode.selection)
 			? new UnexpectedComplexAliasError()
 			: new UnexpectedSelectAllError();
 	}
-
 	return name;
 }
 
 /**
- * Throws if any output column of the query (as the database will see it, after
- * plugins) is longer than `maxBytes`. PostgreSQL would silently truncate it.
- *
- * Selections without a statically known name are skipped: `selectAll()` /
- * `returningAll()` output real columns, which are the user's responsibility,
- * and a raw alias cannot be measured.
+ * Throws if any output column of the query, as the database will see it after
+ * plugins, is longer than `maxBytes` (PostgreSQL would silently truncate it).
+ * `null` disables the check. Selections without a statically known name are
+ * skipped: `selectAll()` outputs real columns, which are the user's
+ * responsibility, and a raw alias cannot be measured.
  */
-export function assertAliasesFit(qb: AnyQueryBuilder, maxBytes: number): void {
+export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB, maxBytes: number | null): QB {
+	if (maxBytes === null) {
+		return qb;
+	}
 	for (const selectionNode of getSelections(qb) ?? []) {
 		const name = getSelectionName(selectionNode);
-		if (name === undefined) {
-			continue;
-		}
-		const bytes = utf8ByteLength(name);
-		if (bytes > maxBytes) {
-			throw new AliasTooLongError(name, bytes, maxBytes);
+		if (name !== undefined && utf8ByteLength(name) > maxBytes) {
+			throw new AliasTooLongError(name, utf8ByteLength(name), maxBytes);
 		}
 	}
+	return qb;
 }

@@ -1,7 +1,7 @@
 import * as k from "kysely";
 
 import { AliasHashCollisionError } from "./helpers/errors.ts";
-import { truncateToBytes, utf8ByteLength, utf8Encode } from "./helpers/utils.ts";
+import { truncateToBytes, utf8ByteLength } from "./helpers/utils.ts";
 
 /**
  * PostgreSQL's identifier limit: NAMEDATALEN - 1.
@@ -16,127 +16,83 @@ export interface FixLongAliasesOptions {
 	maxBytes?: number;
 }
 
-/**
- * The shortened alias is `<head><MARKER><hash>`: the start of the original
- * name for readability, followed by a token from which the original can be
- * looked up. The token alphabet is lowercase letters (plus the marker) so it
- * is a fixed point of every `CamelCasePlugin` transformation in both
- * directions, which matters because nested subqueries pass through
- * `transformQuery` more than once.
- */
-const MARKER = "~";
+// A shortened alias is `<head>~<hash>`: the start of the original name for
+// readability, then a token the original can be looked up by. The token is
+// lowercase letters only so that CamelCasePlugin, which Kysely runs more than
+// once over nested subqueries, leaves it unchanged in both directions.
 const HASH_LENGTH = 14; // 26^14 > 2^64, so a 64-bit hash always fits.
 const TOKEN_LENGTH = 1 + HASH_LENGTH;
-const TOKEN_PATTERN = new RegExp(`${MARKER}[a-z]{${HASH_LENGTH}}`, "g");
+const TOKEN_PATTERN = /~[a-z]{14}/g;
 
-interface Shortened {
-	readonly original: string;
-	/**
-	 * Every shortened form of `original`: one per `maxBytes` it has been
-	 * shortened under (normally just one), longest first so that restoring
-	 * never matches a shorter form that is a suffix of a longer one.
-	 */
-	readonly shorts: string[];
-}
+// Module-level so any plugin instance can restore an alias any other instance
+// shortened. `shorts` holds one shortened form per `maxBytes` the name has
+// been shortened under, longest first so restoring never matches a shorter
+// form that is a suffix of a longer one.
+const shortenedByToken = new Map<string, { original: string; shorts: string[] }>();
 
-/**
- * Module-level so that any plugin instance can restore an alias any other
- * instance shortened (the hash is deterministic, so the token is the same
- * everywhere). Bounded by the number of distinct over-long aliases the program
- * ever generates.
- */
-const shortenedByToken = new Map<string, Shortened>();
-
-const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
-const FNV_PRIME = 0x100000001b3n;
-const U64 = 0xffffffffffffffffn;
-
-function fnv1a64(input: string): bigint {
-	let hash = FNV_OFFSET_BASIS;
-	for (const byte of utf8Encode(input)) {
-		hash ^= BigInt(byte);
-		hash = (hash * FNV_PRIME) & U64;
+function hashToken(name: string): string {
+	let hash = 0xcbf29ce484222325n; // FNV-1a 64
+	for (const byte of new TextEncoder().encode(name)) {
+		hash = ((hash ^ BigInt(byte)) * 0x100000001b3n) & 0xffffffffffffffffn;
 	}
-	return hash;
-}
-
-function toBase26(value: bigint): string {
-	let out = "";
+	let token = "";
 	for (let i = 0; i < HASH_LENGTH; i++) {
-		out = String.fromCharCode(97 + Number(value % 26n)) + out;
-		value /= 26n;
+		token = String.fromCharCode(97 + Number(hash % 26n)) + token;
+		hash /= 26n;
 	}
-	return out;
+	return "~" + token;
 }
 
 function shorten(name: string, maxBytes: number): string {
 	if (utf8ByteLength(name) <= maxBytes) {
 		return name;
 	}
-
-	const token = MARKER + toBase26(fnv1a64(name));
+	const token = hashToken(name);
 	const short = truncateToBytes(name, maxBytes - TOKEN_LENGTH) + token;
 
-	let shortened = shortenedByToken.get(token);
-	if (!shortened) {
-		shortened = { original: name, shorts: [] };
-		shortenedByToken.set(token, shortened);
-	} else if (shortened.original !== name) {
-		throw new AliasHashCollisionError(name, shortened.original);
+	let entry = shortenedByToken.get(token);
+	if (!entry) {
+		shortenedByToken.set(token, (entry = { original: name, shorts: [] }));
+	} else if (entry.original !== name) {
+		throw new AliasHashCollisionError(name, entry.original);
 	}
-	if (!shortened.shorts.includes(short)) {
-		shortened.shorts.push(short);
-		shortened.shorts.sort((a, b) => b.length - a.length);
+	if (!entry.shorts.includes(short)) {
+		entry.shorts.push(short);
+		entry.shorts.sort((a, b) => b.length - a.length);
 	}
 	return short;
 }
 
-/**
- * Expands every shortened alias embedded in a result key back to its original
- * name. Loops because an original may itself embed a token (an alias that was
- * hoisted, prefixed, and shortened again at an outer level).
- */
+// Loops because an original may itself embed a token: an alias that was
+// hoisted, prefixed, and shortened again at an outer level.
 function restoreKey(key: string): string {
-	let restored = key;
-	while (restored.includes(MARKER)) {
-		const before = restored;
+	for (let before = ""; before !== key; ) {
+		before = key;
 		for (const [token] of before.matchAll(TOKEN_PATTERN)) {
-			const shortened = shortenedByToken.get(token);
-			if (!shortened) {
+			const entry = shortenedByToken.get(token);
+			if (!entry) {
 				continue;
 			}
-			for (const short of shortened.shorts) {
-				// A replacer function, because "$$" in a replacement string is an
-				// escape sequence for String.prototype.replace.
-				restored = restored.replace(short, () => shortened.original);
+			for (const short of entry.shorts) {
+				// A replacer function: "$$" in a replacement string is an escape.
+				key = key.replace(short, () => entry.original);
 			}
 		}
-		if (restored === before) {
-			break;
-		}
 	}
-	return restored;
+	return key;
 }
 
 function restoreRow(row: k.UnknownRow): k.UnknownRow {
-	const keys = Object.keys(row);
-	if (!keys.some((key) => key.includes(MARKER))) {
+	if (!Object.keys(row).some((key) => key.includes("~"))) {
 		return row;
 	}
-	const restored: Record<string, unknown> = {};
-	for (const key of keys) {
-		restored[key.includes(MARKER) ? restoreKey(key) : key] = row[key];
-	}
-	return restored;
+	return Object.fromEntries(Object.entries(row).map(([key, value]) => [restoreKey(key), value]));
 }
 
 class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 	readonly #maxBytes: number;
-	/**
-	 * Memoizes `shorten()` per identifier, as `CamelCasePlugin` does for its
-	 * mapping: the transformer runs on every compilation, over every column
-	 * identifier, and the vocabulary of identifiers in a program is small.
-	 */
+	// Memoized per identifier, like CamelCasePlugin: this runs on every
+	// compilation, and a program's vocabulary of identifiers is small.
 	readonly #shortened = new Map<string, string>();
 
 	constructor(maxBytes: number) {
@@ -147,8 +103,7 @@ class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 	#shorten(name: string): string {
 		let short = this.#shortened.get(name);
 		if (short === undefined) {
-			short = shorten(name, this.#maxBytes);
-			this.#shortened.set(name, short);
+			this.#shortened.set(name, (short = shorten(name, this.#maxBytes)));
 		}
 		return short;
 	}
@@ -159,16 +114,13 @@ class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 	): k.SelectionNode {
 		node = super.transformSelection(node, queryId);
 		const { selection } = node;
-		if (k.AliasNode.is(selection) && k.IdentifierNode.is(selection.alias)) {
-			const short = this.#shorten(selection.alias.name);
-			if (short !== selection.alias.name) {
-				return {
-					...node,
-					selection: k.AliasNode.create(selection.node, k.IdentifierNode.create(short)),
-				};
-			}
+		if (!k.AliasNode.is(selection) || !k.IdentifierNode.is(selection.alias)) {
+			return node;
 		}
-		return node;
+		const short = this.#shorten(selection.alias.name);
+		return short === selection.alias.name
+			? node
+			: { ...node, selection: k.AliasNode.create(selection.node, k.IdentifierNode.create(short)) };
 	}
 
 	protected override transformColumn(node: k.ColumnNode, queryId?: k.QueryId): k.ColumnNode {
@@ -178,41 +130,33 @@ class ShortenAliasesTransformer extends k.OperationNodeTransformer {
 	}
 }
 
-class FixLongAliasesPlugin implements k.KyselyPlugin {
-	readonly #inner: k.KyselyPlugin | undefined;
-	readonly #transformer: ShortenAliasesTransformer;
-
-	constructor(inner: k.KyselyPlugin | undefined, options: FixLongAliasesOptions) {
-		this.#inner = inner;
-		this.#transformer = new ShortenAliasesTransformer(
-			options.maxBytes ?? POSTGRES_MAX_IDENTIFIER_BYTES,
-		);
-	}
-
-	transformQuery(args: k.PluginTransformQueryArgs): k.RootOperationNode {
-		// Shorten AFTER the inner plugin so we measure the identifiers the
-		// database will actually see.
-		const node = this.#inner ? this.#inner.transformQuery(args) : args.node;
-		return this.#transformer.transformNode(node, args.queryId);
-	}
-
-	async transformResult(args: k.PluginTransformResultArgs): Promise<k.QueryResult<k.UnknownRow>> {
-		// Restore BEFORE the inner plugin so it sees the names it produced.
-		let { result } = args;
-		if (shortenedByToken.size > 0) {
-			result = { ...result, rows: result.rows.map(restoreRow) };
-		}
-		return this.#inner ? this.#inner.transformResult({ ...args, result }) : result;
-	}
+function isPlugin(value: unknown): value is k.KyselyPlugin {
+	const plugin = value as Partial<k.KyselyPlugin> | undefined;
+	return (
+		typeof plugin?.transformQuery === "function" && typeof plugin.transformResult === "function"
+	);
 }
 
-function isPlugin(value: unknown): value is k.KyselyPlugin {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		typeof (value as k.KyselyPlugin).transformQuery === "function" &&
-		typeof (value as k.KyselyPlugin).transformResult === "function"
-	);
+function createPlugin(
+	inner: k.KyselyPlugin | undefined,
+	{ maxBytes = POSTGRES_MAX_IDENTIFIER_BYTES }: FixLongAliasesOptions = {},
+): k.KyselyPlugin {
+	const transformer = new ShortenAliasesTransformer(maxBytes);
+	return {
+		// After the inner plugin, so we measure the identifiers the database will see.
+		transformQuery(args) {
+			const node = inner ? inner.transformQuery(args) : args.node;
+			return transformer.transformNode(node, args.queryId);
+		},
+		// Before the inner plugin, so it sees the names it produced.
+		async transformResult(args) {
+			let { result } = args;
+			if (shortenedByToken.size > 0) {
+				result = { ...result, rows: result.rows.map(restoreRow) };
+			}
+			return inner ? inner.transformResult({ ...args, result }) : result;
+		},
+	};
 }
 
 /**
@@ -223,12 +167,13 @@ function isPlugin(value: unknown): value is k.KyselyPlugin {
  * builds prefixed aliases for nested relations (`parent$$child$$column`), so
  * deep nesting or long names can exceed the limit, and truncated aliases
  * corrupt hydration. This plugin shortens any over-long column alias (and any
- * reference to it) to a fixed-length form before the query is compiled, and
- * restores the original names in the result rows.
+ * reference to it) before the query is compiled, and restores the original
+ * names in the result rows.
  *
- * Install it on the Kysely instance. If you use `CamelCasePlugin` (or any other
- * plugin that renames identifiers), pass it as the argument so the shortening
- * measures the identifiers the database will actually see:
+ * Install it on the Kysely instance, last in the plugin list. If you use
+ * `CamelCasePlugin` (or any other plugin that renames identifiers), pass it as
+ * the argument so the shortening measures the identifiers the database will
+ * actually see:
  *
  * ```ts
  * const db = new Kysely<DB>({
@@ -236,9 +181,6 @@ function isPlugin(value: unknown): value is k.KyselyPlugin {
  *   plugins: [fixLongAliases(new CamelCasePlugin())],
  * });
  * ```
- *
- * Put it last in the plugin list. Other plugins that run after it would see the
- * shortened names in queries but the restored names in results.
  *
  * The plugin is not specific to kysely-hydrate: it fixes any over-long alias in
  * any Kysely query. It rewrites column identifiers only (aliases, references,
@@ -260,8 +202,7 @@ export function fixLongAliases(
 	innerOrOptions?: k.KyselyPlugin | FixLongAliasesOptions,
 	options?: FixLongAliasesOptions,
 ): k.KyselyPlugin {
-	if (isPlugin(innerOrOptions)) {
-		return new FixLongAliasesPlugin(innerOrOptions, options ?? {});
-	}
-	return new FixLongAliasesPlugin(undefined, innerOrOptions ?? {});
+	return isPlugin(innerOrOptions)
+		? createPlugin(innerOrOptions, options)
+		: createPlugin(undefined, innerOrOptions);
 }
