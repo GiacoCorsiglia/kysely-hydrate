@@ -3,7 +3,7 @@ import {
 	ExpectedOneItemError,
 	KeyByMismatchError,
 } from "./helpers/errors.ts";
-import { makeOrderByComparator, type OrderBy } from "./helpers/order-by.ts";
+import { type OrderBy, sortBy } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
@@ -1325,10 +1325,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// Convert to array for sorting
 			const inputsArray = Array.isArray(inputs) ? inputs : Array.from(inputs);
 
-			const comparator = this.#makePrefixedComparator(prefix, finalOrderings);
-			inputsArray.sort(comparator);
-
-			sortedInputs = inputsArray;
+			sortedInputs = sortBy(inputsArray, finalOrderings, this.#makePrefixedGetValue(prefix));
 		}
 
 		const result: Output[] = [];
@@ -1382,18 +1379,18 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	/**
-	 * Creates a comparator function that handles prefixed field names.
+	 * Creates a sort-key accessor that handles prefixed field names.
 	 * For function keys, creates a prefixed accessor so the function can access unprefixed fields.
 	 */
-	#makePrefixedComparator(prefix: string, orderings: readonly OrderBy<Input>[]) {
-		return makeOrderByComparator(orderings, (obj, key) => {
+	#makePrefixedGetValue(prefix: string) {
+		return (obj: Input, key: keyof Input | ((input: Input) => unknown)): unknown => {
 			if (typeof key === "function") {
 				// Create a prefixed accessor so the function can access fields without the prefix
 				const accessor = createdPrefixedAccessor(prefix, obj as object);
 				return key(accessor as Input);
 			}
 			return getPrefixedValue(prefix, obj, key as string);
-		});
+		};
 	}
 
 	/**

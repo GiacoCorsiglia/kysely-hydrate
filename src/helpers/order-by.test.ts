@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { sqlCompare, makeOrderByComparator } from "./order-by.ts";
+import {
+	DecimalStub,
+	DurationStub,
+	PlainDateStub,
+	PlainMonthDayStub,
+	PlainTimeStub,
+} from "./order-by.stubs.ts";
+import { makeOrderByComparator, type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
 
 describe("sqlCompare", () => {
 	it("should return 0 for equal values", () => {
@@ -110,7 +117,9 @@ describe("sqlCompare", () => {
 		assert.ok(sqlCompare(valid, invalid1) < 0);
 	});
 
-	// A pool of every value family the comparator must total-order together.
+	// Values that are all mutually distinguishable: no two compare equal. The
+	// strict permutation check below relies on that, since tied elements may
+	// legitimately land in either order.
 	const mixedPool = [
 		null,
 		undefined,
@@ -134,7 +143,38 @@ describe("sqlCompare", () => {
 		"apple",
 		{},
 		[1, 2],
+		[1, 2, 3],
+		[],
+		Buffer.from([1, 2]),
+		Buffer.from([1, 2, 3]),
+		new Uint8Array([0]),
+		new DecimalStub(2.5),
+		new DecimalStub(11),
+		new PlainDateStub("2024-01-01"),
+		new PlainDateStub("2020-06-15"),
+		new PlainTimeStub("10:00:00"),
+		new PlainMonthDayStub("01-01"),
+		new DurationStub("PT2H"),
+		new DurationStub("P1M"),
 	];
+
+	// Values that deliberately tie with a member of mixedPool. Each tie is
+	// correct behavior, asserted individually elsewhere: a decimal equals the
+	// plain number of the same value, two unorderable values compare equal, and
+	// distinct objects sharing a String() form must compare equal.
+	const tiedPool = [new DecimalStub(2), new DecimalStub(Number.NaN), Object.create(null)];
+
+	const fullPool = [...mixedPool, ...tiedPool];
+
+	// String() throws on pool members that cannot be coerced (null-prototype
+	// objects), so failure messages go through a safe label.
+	const label = (value: unknown): string => {
+		try {
+			return String(value);
+		} catch {
+			return Object.prototype.toString.call(value);
+		}
+	};
 
 	it("should produce the same sorted order for any input permutation", () => {
 		// The real total-order property: sort output must not depend on input
@@ -155,15 +195,42 @@ describe("sqlCompare", () => {
 		}
 	});
 
+	it("should sort consistently from any permutation, including tied values", () => {
+		// The same property over a pool that contains ties. Identity-level
+		// equality cannot be asserted here -- tied elements may appear in either
+		// order -- but every result must still be non-decreasing, which is what
+		// "the order does not depend on the input" means once ties exist.
+		const withoutUndefined = fullPool.filter((value) => value !== undefined);
+		const evens = withoutUndefined.filter((_, i) => i % 2 === 0);
+		const odds = withoutUndefined.filter((_, i) => i % 2 === 1);
+		const permutations = [
+			[...withoutUndefined],
+			[...withoutUndefined].reverse(),
+			[...withoutUndefined.slice(7), ...withoutUndefined.slice(0, 7)],
+			[...evens, ...odds],
+			[...odds, ...evens].reverse(),
+		];
+
+		for (const permutation of permutations) {
+			const sorted = [...permutation].sort(sqlCompare);
+			for (let i = 1; i < sorted.length; i++) {
+				assert.ok(
+					sqlCompare(sorted[i - 1], sorted[i]) <= 0,
+					`out of order at ${i}: ${label(sorted[i - 1])} then ${label(sorted[i])}`,
+				);
+			}
+		}
+	});
+
 	it("should satisfy the comparator contract on all mixed-pool pairs", () => {
 		// Antisymmetry: sign(cmp(a, b)) === -sign(cmp(b, a)) for every pair.
-		for (const a of mixedPool) {
-			for (const b of mixedPool) {
+		for (const a of fullPool) {
+			for (const b of fullPool) {
 				// Compare with === rather than assert.equal: -Math.sign(0) is -0,
 				// which strict deep equality distinguishes from 0.
 				assert.ok(
 					Math.sign(sqlCompare(a, b)) === -Math.sign(sqlCompare(b, a)),
-					`antisymmetry failed for ${String(a)} vs ${String(b)}`,
+					`antisymmetry failed for ${label(a)} vs ${label(b)}`,
 				);
 			}
 		}
@@ -174,12 +241,12 @@ describe("sqlCompare", () => {
 		// to the end without consulting the comparator, so its position does not
 		// reflect sqlCompare's ordering (the antisymmetry loop above still
 		// exercises undefined against every other value).
-		const sorted = mixedPool.filter((value) => value !== undefined).sort(sqlCompare);
+		const sorted = fullPool.filter((value) => value !== undefined).sort(sqlCompare);
 		for (let i = 0; i < sorted.length; i++) {
 			for (let j = i + 1; j < sorted.length; j++) {
 				assert.ok(
 					sqlCompare(sorted[i], sorted[j]) <= 0,
-					`sorted[${i}] (${String(sorted[i])}) should be <= sorted[${j}] (${String(sorted[j])})`,
+					`sorted[${i}] (${label(sorted[i])}) should be <= sorted[${j}] (${label(sorted[j])})`,
 				);
 			}
 		}
@@ -444,5 +511,251 @@ describe("makeOrderByComparator", () => {
 		// Age 30: alice
 		assert.equal(rows[2]!.age, 30);
 		assert.equal(rows[2]!.name, "alice");
+	});
+});
+
+describe("sqlCompare duck-typed types", () => {
+	it("should order binary data byte-wise, shorter prefix first", () => {
+		assert.ok(sqlCompare(Buffer.from([1, 2]), Buffer.from([1, 3])) < 0);
+		assert.ok(sqlCompare(Buffer.from([1, 3]), Buffer.from([1, 2])) > 0);
+		assert.equal(sqlCompare(Buffer.from([1, 2]), Buffer.from([1, 2])), 0);
+		// A prefix sorts before the longer value it prefixes.
+		assert.ok(sqlCompare(Buffer.from([1, 2]), Buffer.from([1, 2, 0])) < 0);
+		// Byte-wise, not stringified: String() of both of these is "1,2".
+		assert.equal(sqlCompare(Buffer.from([1, 2]), new Uint8Array([1, 2])), 0);
+		// High bytes compare as unsigned, where a signed read would invert them.
+		assert.ok(sqlCompare(Buffer.from([0x7f]), Buffer.from([0x80])) < 0);
+	});
+
+	it("should order arrays element-wise, not by string form", () => {
+		assert.ok(sqlCompare([1, 2], [1, 3]) < 0);
+		assert.ok(sqlCompare([1, 3], [1, 2]) > 0);
+		assert.equal(sqlCompare([1, 2], [1, 2]), 0);
+		assert.ok(sqlCompare([], [0]) < 0);
+		// The case stringification gets wrong: "10" < "2" lexicographically,
+		// but 2 < 10 numerically.
+		assert.ok(sqlCompare([2], [10]) < 0);
+		// Nested arrays recurse.
+		assert.ok(sqlCompare([[1, 2]], [[1, 3]]) < 0);
+		// Elements of any supported type, including nulls.
+		assert.ok(sqlCompare([null, 1], [1, 1]) < 0);
+	});
+
+	it("should order decimal instances within the numeric rank", () => {
+		assert.ok(sqlCompare(new DecimalStub(2), new DecimalStub(10)) < 0);
+		assert.ok(sqlCompare(new DecimalStub(10), new DecimalStub(2)) > 0);
+		assert.equal(sqlCompare(new DecimalStub(5), new DecimalStub(5)), 0);
+
+		// Mixed with plain numbers: numeric, not rank-separated. This is the
+		// case a driver hits when some rows arrive as decimals and some as
+		// numbers.
+		assert.ok(sqlCompare(new DecimalStub(2), 10) < 0);
+		assert.ok(sqlCompare(10, new DecimalStub(2)) > 0);
+		assert.equal(sqlCompare(new DecimalStub(5), 5), 0);
+		assert.ok(sqlCompare(new DecimalStub(2), 3n) < 0);
+
+		// Decimals sort before strings, like other numerics.
+		assert.ok(sqlCompare(new DecimalStub(2), "1") < 0);
+	});
+
+	it("should support decimal libraries exposing only comparedTo", () => {
+		// bignumber.js exposes comparedTo but not cmp.
+		const a = new DecimalStub(2, "comparedTo");
+		const b = new DecimalStub(10, "comparedTo");
+		assert.ok(sqlCompare(a, b) < 0);
+		assert.ok(sqlCompare(b, a) > 0);
+		assert.ok(sqlCompare(a, 10) < 0);
+	});
+
+	it("should pin decimal NaN after real numerics, however it is reported", () => {
+		// decimal.js returns NaN from cmp; bignumber.js returns null. Both are
+		// unorderable and neither may be treated as "equal".
+		for (const unorderable of [Number.NaN, null] as const) {
+			const nan = new DecimalStub(Number.NaN, "cmp", unorderable);
+			assert.ok(sqlCompare(nan, new DecimalStub(3)) > 0, `${String(unorderable)} vs decimal`);
+			assert.ok(sqlCompare(new DecimalStub(3), nan) < 0, `decimal vs ${String(unorderable)}`);
+			assert.ok(sqlCompare(nan, 3) > 0, `${String(unorderable)} vs number`);
+			assert.ok(sqlCompare(3, nan) < 0, `number vs ${String(unorderable)}`);
+			assert.equal(sqlCompare(nan, nan), 0);
+		}
+	});
+
+	it("should fall back rather than throw when a decimal rejects an operand", () => {
+		const throwing = new DecimalStub(1, "cmp", undefined, true);
+		assert.doesNotThrow(() => sqlCompare(throwing, new DecimalStub(2)));
+		assert.equal(
+			Math.sign(sqlCompare(throwing, new DecimalStub(2))),
+			-Math.sign(sqlCompare(new DecimalStub(2), throwing)),
+		);
+	});
+
+	it("should order Temporal values via their type's static compare", () => {
+		const early = new PlainDateStub("2020-06-15");
+		const late = new PlainDateStub("2024-01-01");
+		assert.ok(sqlCompare(early, late) < 0);
+		assert.ok(sqlCompare(late, early) > 0);
+		assert.equal(sqlCompare(new PlainDateStub("2024-01-01"), new PlainDateStub("2024-01-01")), 0);
+	});
+
+	it("should never coerce a Temporal value with valueOf", () => {
+		// Temporal deliberately throws from valueOf to block `a < b`. Any code
+		// path that coerced instead of using compare would surface here.
+		const a = new PlainDateStub("2020-06-15");
+		const b = new PlainDateStub("2024-01-01");
+		assert.throws(() => a.valueOf());
+		assert.doesNotThrow(() => sqlCompare(a, b));
+		assert.doesNotThrow(() => sqlCompare(a, 1));
+		assert.doesNotThrow(() => sqlCompare(a, "x"));
+		assert.doesNotThrow(() => [b, a].sort(sqlCompare));
+	});
+
+	it("should separate distinct Temporal types by a stable ordering", () => {
+		// PlainDate.compare throws when handed a PlainTime, so unlike Temporal
+		// types must never reach it. They are ordered by tag instead.
+		const date = new PlainDateStub("2024-01-01");
+		const time = new PlainTimeStub("10:00:00");
+		assert.doesNotThrow(() => sqlCompare(date, time));
+		assert.notEqual(sqlCompare(date, time), 0);
+		assert.equal(Math.sign(sqlCompare(date, time)), -Math.sign(sqlCompare(time, date)));
+	});
+
+	it("should handle Temporal types without a usable compare", () => {
+		// PlainMonthDay has no static compare at all.
+		const a = new PlainMonthDayStub("01-01");
+		const b = new PlainMonthDayStub("06-15");
+		assert.doesNotThrow(() => sqlCompare(a, b));
+		assert.ok(sqlCompare(a, b) < 0);
+		assert.equal(sqlCompare(a, a), 0);
+
+		// Duration.compare throws for calendar-ambiguous units, but works for
+		// plain time units.
+		assert.ok(sqlCompare(new DurationStub("PT90M"), new DurationStub("PT2H")) < 0);
+		assert.doesNotThrow(() => sqlCompare(new DurationStub("P1M"), new DurationStub("P30D")));
+		assert.equal(
+			Math.sign(sqlCompare(new DurationStub("P1M"), new DurationStub("P30D"))),
+			-Math.sign(sqlCompare(new DurationStub("P30D"), new DurationStub("P1M"))),
+		);
+	});
+
+	it("should handle objects with no prototype", () => {
+		const a = Object.create(null);
+		const b = Object.create(null);
+		assert.doesNotThrow(() => sqlCompare(a, b));
+		assert.equal(sqlCompare(a, a), 0);
+		assert.equal(Math.sign(sqlCompare(a, 1)), -Math.sign(sqlCompare(1, a)));
+	});
+
+	it("should keep unlike types apart rather than stringifying them together", () => {
+		// Buffer, array, and Temporal each get their own rank, so a column
+		// mixing them groups by type instead of by String() form.
+		assert.notEqual(sqlCompare(Buffer.from([1, 2]), [1, 2]), 0);
+		assert.notEqual(sqlCompare([1, 2], new PlainDateStub("2024-01-01")), 0);
+		assert.ok(sqlCompare("z", Buffer.from([1])) < 0);
+	});
+});
+
+describe("sortBy", () => {
+	interface Row {
+		readonly id: number;
+		readonly group: string | null;
+		readonly score: number;
+	}
+
+	const rows: Row[] = [
+		{ id: 1, group: "b", score: 2 },
+		{ id: 2, group: "a", score: 1 },
+		{ id: 3, group: null, score: 3 },
+		{ id: 4, group: "a", score: 2 },
+		{ id: 5, group: "b", score: 1 },
+		{ id: 6, group: null, score: 1 },
+	];
+
+	it("should match makeOrderByComparator for every ordering shape", () => {
+		const orderingSets: OrderBy<Row>[][] = [
+			[{ key: "score", direction: "asc" }],
+			[{ key: "score", direction: "desc" }],
+			[{ key: "group", direction: "asc" }],
+			[{ key: "group", direction: "asc", nulls: "first" }],
+			[{ key: "group", direction: "asc", nulls: "last" }],
+			[{ key: "group", direction: "desc", nulls: "first" }],
+			[{ key: "group", direction: "desc", nulls: "last" }],
+			[
+				{ key: "group", direction: "asc" },
+				{ key: "score", direction: "desc" },
+			],
+			[{ key: (row: Row) => row.score * -1, direction: "asc" }],
+		];
+
+		for (const orderings of orderingSets) {
+			assert.deepEqual(
+				sortBy(rows, orderings),
+				[...rows].sort(makeOrderByComparator(orderings)),
+				JSON.stringify(orderings.map((o) => ({ ...o, key: String(o.key) }))),
+			);
+		}
+	});
+
+	it("should be stable for rows that compare equal", () => {
+		// Sorting an index array rather than the rows themselves loses
+		// Array.sort's stability guarantee unless it is restored explicitly.
+		const ties = Array.from({ length: 50 }, (_, i) => ({ id: i, group: "same", score: 0 }));
+		const sorted = sortBy(ties, [{ key: "group", direction: "asc" }]);
+		assert.deepEqual(
+			sorted.map((row) => row.id),
+			ties.map((row) => row.id),
+		);
+
+		// Stability must also hold when an earlier column breaks some ties but
+		// not others.
+		const partial = [
+			{ id: 1, group: "b", score: 0 },
+			{ id: 2, group: "a", score: 0 },
+			{ id: 3, group: "b", score: 0 },
+			{ id: 4, group: "a", score: 0 },
+		];
+		assert.deepEqual(
+			sortBy(partial, [{ key: "group", direction: "asc" }]).map((row) => row.id),
+			[2, 4, 1, 3],
+		);
+	});
+
+	it("should not mutate the input array", () => {
+		const original = [...rows];
+		const sorted = sortBy(rows, [{ key: "score", direction: "desc" }]);
+		assert.deepEqual(rows, original);
+		assert.notEqual(sorted, rows);
+	});
+
+	it("should handle empty orderings and trivial inputs", () => {
+		assert.deepEqual(sortBy(rows, []), rows);
+		assert.notEqual(sortBy(rows, []), rows);
+		assert.deepEqual(sortBy([], [{ key: "score", direction: "asc" }]), []);
+		assert.deepEqual(sortBy([rows[0]!], [{ key: "score", direction: "asc" }]), [rows[0]]);
+	});
+
+	it("should extract each row's key exactly once per ordering", () => {
+		// The reason sortBy exists: the hydrator's getValue allocates a Proxy
+		// per extraction, so O(n log n) extractions is the dominant cost.
+		let extractions = 0;
+		const many = Array.from({ length: 500 }, (_, i) => ({
+			id: i,
+			group: "g",
+			score: (i * 7) % 500,
+		}));
+		sortBy(many, [{ key: "score", direction: "asc" }], (row, key) => {
+			extractions++;
+			return (row as any)[key as string];
+		});
+		assert.equal(extractions, many.length);
+	});
+
+	it("should apply a custom getValue to function keys", () => {
+		const sorted = sortBy(rows, [{ key: (row: Row) => row.score, direction: "asc" }], (row, key) =>
+			typeof key === "function" ? key({ ...row, score: -row.score }) : (row as any)[key],
+		);
+		assert.deepEqual(
+			sorted.map((row) => row.score),
+			[3, 2, 2, 1, 1, 1],
+		);
 	});
 });
