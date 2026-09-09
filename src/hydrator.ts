@@ -1043,7 +1043,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// commonly build `WHERE x IN (...)` from the inputs, which is invalid
 			// or pointless SQL for zero inputs.  Leaving attachedDataMap without
 			// an entry behaves identically to storing an empty group — lookups go
-			// through `groupedData?.get(...)`, which yields undefined either way.
+			// through `groupedData?.find(...)`, which yields undefined either way.
 			if (inputArray.length > 0) {
 				for (const [key, attachedCollection] of attachedCollections) {
 					// Use prefixed key for the map
@@ -1625,10 +1625,9 @@ type KeyTrie = Map<unknown, number | KeyTrie>;
  * Keys are matched one part at a time in a trie of `Map`s — the first part in
  * the root map, the next in the map it points to, and so on, with the deepest
  * level holding slots into the groups array (see {@link KeyedGroups.values}).
- * Parts are therefore compared as
- * `Map` keys, which is both faster and stricter than encoding a key into a
- * single value: there is no per-row key to build and hash, and no boundary
- * between parts for values to collide across.
+ * Parts are therefore compared as `Map` keys, which is both faster and
+ * stricter than encoding a key into a single value: there is no per-row key to
+ * build and hash, and no boundary between parts for values to collide across.
  *
  * Most groups contain exactly one row, so the row is stored directly and a
  * RowGroup (with its backing array) is only allocated once a second row with
@@ -1726,19 +1725,20 @@ class KeyedGroups<T> {
 		keyBy: string | readonly string[],
 		create: boolean,
 	): number {
+		if (keyArity(keyBy) !== this.#arity) {
+			return NO_SLOT;
+		}
+
 		let node = this.#root;
 
+		// Descend one level per part, stopping before the last, which the shared
+		// tail below looks up in the level it lands on.  A single-part key has
+		// nothing to descend, so its part is looked up in the root map, which
+		// therefore holds slots directly.
 		let lastPartKey: string;
 		if (typeof keyBy !== "object") {
-			// Single-part key: the root map holds slots directly.
-			if (this.#arity !== 1) {
-				return NO_SLOT;
-			}
 			lastPartKey = keyBy;
 		} else {
-			if (keyBy.length !== this.#arity) {
-				return NO_SLOT;
-			}
 			const last = keyBy.length - 1;
 			for (let i = 0; i < last; i++) {
 				const value = getPrefixedValue(prefix, input, keyBy[i]!);

@@ -534,6 +534,38 @@ test("composite keys: skips rows where any key part is null", async () => {
 	assert.deepStrictEqual(result[0], { key1: "a", key2: 1, value: "valid" });
 });
 
+test("composite keys: a nil part after the first does not strand its branch", async () => {
+	interface CompositeRow {
+		key1: string;
+		key2: number | null;
+		value: string;
+	}
+
+	// Parts are matched one level at a time, so a row whose *second* part is
+	// nil is abandoned after its first part was already matched.  Later rows
+	// sharing that first part must still group normally through it.
+	const rows: CompositeRow[] = [
+		{ key1: "a", key2: null, value: "invalid" },
+		{ key1: "a", key2: 1, value: "a1" },
+		{ key1: "a", key2: null, value: "invalid" },
+		{ key1: "a", key2: 2, value: "a2" },
+		{ key1: "a", key2: 1, value: "a1 again" },
+	];
+
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"]).fields({
+		key1: true,
+		key2: true,
+		value: true,
+	});
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ key1: "a", key2: 1, value: "a1" },
+		{ key1: "a", key2: 2, value: "a2" },
+	]);
+});
+
 test("composite keys: values containing the separator do not collide", async () => {
 	interface CompositeRow {
 		key1: string;
@@ -1526,6 +1558,39 @@ test("attachMany: composite keys sharing a first part match separately", async (
 	assert.deepStrictEqual(
 		result.map((entity) => entity.related.map((related) => related.data)),
 		[["a1"], ["a2"], ["b1"]],
+	);
+});
+
+test("attachMany: a one-part array key and a plain string key match each other", async () => {
+	interface Entity {
+		id: number;
+	}
+
+	// The two `keyBy` shapes describe the same one-part key, so matchChild and
+	// toParent may use either shape and still match — in both directions.
+	const entities: Entity[] = [{ id: 1 }, { id: 2 }];
+
+	const fetchRelated = async () => [
+		{ id: 1, data: "one" },
+		{ id: 2, data: "two" },
+	];
+
+	const arrayChild = createHydrator<Entity>("id")
+		.fields({ id: true })
+		.attachMany("related", fetchRelated, { matchChild: ["id"], toParent: "id" });
+
+	assert.deepStrictEqual(
+		(await hydrate(entities, arrayChild)).map((entity) => entity.related.map((r) => r.data)),
+		[["one"], ["two"]],
+	);
+
+	const arrayParent = createHydrator<Entity>(["id"])
+		.fields({ id: true })
+		.attachMany("related", fetchRelated, { matchChild: "id", toParent: ["id"] });
+
+	assert.deepStrictEqual(
+		(await hydrate(entities, arrayParent)).map((entity) => entity.related.map((r) => r.data)),
+		[["one"], ["two"]],
 	);
 });
 
