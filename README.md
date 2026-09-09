@@ -188,6 +188,7 @@ type Result = Array<{
     - [Should I just use Drizzle?](#should-i-just-use-drizzle)
     - [I notice you have a `CLAUDE.md`. Is this whole thing AI slop?](#i-notice-you-have-a-claudemd-is-this-whole-thing-ai-slop)
     - [Does it work with Bun or Deno?](#does-it-work-with-bun-or-deno)
+  - [Development](#development)
   - [Acknowledgements](#acknowledgements)
 
 ## Installation
@@ -1732,6 +1733,41 @@ dependency.
 ### Does it work with Bun or Deno?
 
 It should run anywhere Kysely runs, but I haven't tested it on anything but Node.js.
+
+## Development
+
+Tests run against both SQLite (in-memory, via `better-sqlite3`) and PostgreSQL,
+since a few behaviours are dialect-specific.
+
+```sh
+npm install
+npm run test:db   # provision PostgreSQL; only needed once per machine/container
+npm run test:all  # SQLite, then PostgreSQL
+```
+
+`npm run test:db` is idempotent and picks a backend automatically:
+
+| Condition                              | Backend                       | Port              |
+| -------------------------------------- | ----------------------------- | ----------------- |
+| `POSTGRES_URL` is already set          | that instance, left untouched | —                 |
+| A Docker daemon is reachable           | `docker-compose.yml`          | 5434              |
+| Otherwise, a packaged cluster and root | `pg_ctlcluster`               | the cluster's own |
+
+It writes `POSTGRES_URL` to `.env` (gitignored), which the `npm test` scripts
+read via node's `--env-file-if-exists`. A `POSTGRES_URL` in the real
+environment always takes precedence over `.env`, which is how CI supplies its
+own service container.
+
+Force a backend with `KYSELY_HYDRATE_DB_BACKEND=docker|native` if the
+autodetection guesses wrong.
+
+The remaining checks:
+
+```sh
+npm run typecheck
+npm run lint
+npm run format
+```
 
 ## Acknowledgements
 
