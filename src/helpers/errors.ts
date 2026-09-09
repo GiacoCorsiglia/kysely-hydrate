@@ -107,19 +107,3 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 		);
 	}
 }
-
-/**
- * Error thrown when `"__proto__"` is used to name a key, either in a hydrator
- * configuration or as a column in a hydrated row.
- *
- * The name is unusable in both directions.  Reading it from a row resolves to
- * `Object.prototype` unless that row happens to carry it as an own property,
- * which varies by driver.  Writing it to an entity goes through
- * `Object.prototype`'s `__proto__` accessor, which silently drops scalars and
- * replaces the entity's prototype with objects.
- */
-export class UnsupportedProtoKeyError extends KyselyHydrateError {
-	constructor(source: string, hint?: string) {
-		super(`"__proto__" is not supported as ${source}${hint === undefined ? "" : `. ${hint}`}`);
-	}
-}

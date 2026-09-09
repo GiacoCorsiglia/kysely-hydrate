@@ -1,8 +1,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { dialect, getDbForTest } from "./__tests__/db.ts";
-import { UnsupportedProtoKeyError } from "./helpers/errors.ts";
+import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
@@ -682,25 +681,6 @@ describe("query-set: hydration", () => {
 		const fromHydrate = await qs.hydrate(rows);
 
 		assert.deepStrictEqual(fromHydrate, fromExecute);
-	});
-
-	test("hydration: a column aliased __proto__ is rejected during hydration", async () => {
-		// "__proto__" is not a usable key name, so hydration rejects the column
-		// rather than producing an entity whose prototype depends on the driver.
-		// Whether it reaches hydration at all is driver-dependent:
-		// - better-sqlite3 delivers rows with an own "__proto__" data property
-		// - node-pg drops the column when building its row objects, before this
-		//   library ever sees it
-		const qs = querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id"]).select("users.username as __proto__"))
-			.where("users.id", "=", 1);
-
-		if (dialect === "sqlite") {
-			await assert.rejects(() => qs.execute(), UnsupportedProtoKeyError);
-		} else {
-			// Dropped by node-pg, so there is nothing left to reject.
-			assert.deepStrictEqual(await qs.execute(), [{ id: 1 }]);
-		}
 	});
 
 	test("hydration: SQL reserved words work as aliases at base and nested levels", async () => {

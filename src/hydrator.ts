@@ -2,7 +2,6 @@ import {
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
-	UnsupportedProtoKeyError,
 } from "./helpers/errors.ts";
 import { makeOrderByComparator, type OrderBy } from "./helpers/order-by.ts";
 import {
@@ -809,40 +808,6 @@ interface HydrationContext {
 }
 
 /**
- * The one key name a hydrator cannot handle.  See
- * {@link UnsupportedProtoKeyError}.
- */
-const PROTO_KEY = "__proto__";
-
-/**
- * Rejects `"__proto__"` as a key name, given either a single key or a
- * composite of them.  `source` describes where the key came from, e.g. "a
- * field name".
- *
- * Applied only where the name can arrive without anyone choosing it: from row
- * data (an extender's returned keys), or from the database schema (a column,
- * a generated field list, a `keyBy` derived from a primary key).  Names the
- * caller invents - extras, collection keys - are deliberately left alone,
- * along with column references that can only make an ordering or an attach
- * match do nothing.  The name still cannot work in those positions; it just
- * takes deliberately typing it to get there, and guarding every position
- * costs more than the mistake does.
- */
-function assertNotProtoKey(
-	keys: PropertyKey | readonly PropertyKey[],
-	source: string,
-	hint?: string,
-): void {
-	if (typeof keys === "object") {
-		for (const key of keys) {
-			assertNotProtoKey(key, source, hint);
-		}
-	} else if (keys === PROTO_KEY) {
-		throw new UnsupportedProtoKeyError(source, hint);
-	}
-}
-
-/**
  * Implements the entire inheritance chain of Hydrators.
  */
 class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Output> {
@@ -859,9 +824,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	fields(fields: Fields<any> | readonly string[]): any {
-		// Only `.omit()` may name the key, and omitting does not come through here.
-		assertNotProtoKey(Array.isArray(fields) ? fields : Object.keys(fields), "a field name");
-
 		return new HydratorImpl({
 			...this.#props,
 
@@ -1169,15 +1131,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				continue;
 			}
 
-			// Reject before the key reaches the output.  Configuring the key at
-			// all is rejected up front, so reaching here means the row itself
-			// carries the column.
-			assertNotProtoKey(
-				unprefixedKey,
-				"a column name",
-				`Alias the column, or exclude it with .omit(["${PROTO_KEY}"]).`,
-			);
-
 			// The autoFields gets the unprefixed key.
 			autoFields.push(unprefixedKey);
 		}
@@ -1231,19 +1184,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			if (extenders) {
 				for (const extender of extenders) {
-					const extension = extender(accessor as Input);
-					// Extender keys are only known at call time.  Test the same
-					// own-enumerable keys Object.assign would copy, and preserve its
-					// tolerance for nullish sources (propertyIsEnumerable throws on
-					// them) for the sake of untyped callers.
-					if (
-						extension !== null &&
-						extension !== undefined &&
-						Object.prototype.propertyIsEnumerable.call(extension, PROTO_KEY)
-					) {
-						throw new UnsupportedProtoKeyError("an extend() key");
-					}
-					Object.assign(entity, extension);
+					Object.assign(entity, extender(accessor as Input));
 				}
 			}
 		}
@@ -1454,10 +1395,6 @@ export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): FullHydrator<T, {}>
 export function createHydrator<T extends InputWithDefaultKey>(): FullHydrator<T, {}>;
 // Implementation
 export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<T, {}> {
-	if (keyBy !== undefined) {
-		assertNotProtoKey(keyBy, "a keyBy column");
-	}
-
 	return new HydratorImpl({
 		keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string),
 		// orderByKeys is left unset (not false) so .with() can tell whether it

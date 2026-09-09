@@ -5,9 +5,8 @@ import {
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
-	UnsupportedProtoKeyError,
 } from "./helpers/errors.ts";
-import { createHydrator, EnableAutoInclusion, hydrate } from "./hydrator.ts";
+import { createHydrator, hydrate } from "./hydrator.ts";
 
 // Test data types
 interface User {
@@ -2518,107 +2517,6 @@ test("map: works with attached collections", async () => {
 	]);
 });
 
-//
-// __proto__ keys
-//
-// "__proto__" is not a usable key name in either direction: reading it from a
-// row resolves to Object.prototype rather than to a column value, and writing
-// it to an entity goes through Object.prototype's accessor.  It is rejected
-// where it can arrive without anyone choosing it - from row data, or from the
-// schema - which is at build time for schema-derived config and during
-// hydration for row columns and extender keys.  Names the caller invents, like
-// extras and collection keys, are left unguarded (see assertNotProtoKey).
-// Note the rows below are built with JSON.parse or computed keys - a plain
-// `{ __proto__: ... }` literal sets the prototype instead of creating an own
-// key.
-//
-
-test("__proto__: rejected when it names a key in a hydrator config", () => {
-	const hydrator = createHydrator<User>("id");
-
-	const configs: Record<string, () => unknown> = {
-		"fields, object form": () => hydrator.fields({ ["__proto__"]: true } as any),
-		"fields, array form": () => hydrator.fields(["__proto__"] as any),
-		// Reading it would yield Object.prototype for every row, which is never
-		// nil, collapsing unrelated rows into a single entity.
-		keyBy: () => createHydrator<User>("__proto__" as any),
-		"composite keyBy": () => createHydrator<User>(["id", "__proto__"] as any),
-	};
-
-	for (const [name, config] of Object.entries(configs)) {
-		assert.throws(config, UnsupportedProtoKeyError, name);
-	}
-});
-
-test("__proto__: rejected as a column during hydration", async () => {
-	interface ProtoRow {
-		id: number;
-		name: string;
-	}
-
-	const rows = JSON.parse('[{"id":1,"name":"Alice","__proto__":"x"}]') as ProtoRow[];
-
-	const hydrator = createHydrator<ProtoRow>("id");
-
-	await assert.rejects(
-		() => hydrator.hydrate(rows, { [EnableAutoInclusion]: true }),
-		UnsupportedProtoKeyError,
-	);
-});
-
-test("__proto__: rejected as a column at a nested collection level", async () => {
-	interface UserWithProtoPosts extends User {
-		posts$$id: number;
-	}
-
-	const rows = JSON.parse(
-		'[{"id":1,"name":"Alice","posts$$id":10,"posts$$__proto__":"p10"}]',
-	) as UserWithProtoPosts[];
-
-	const hydrator = createHydrator<UserWithProtoPosts>("id")
-		.fields({ id: true, name: true })
-		.hasMany("posts", "posts$$", (h) => h("id"));
-
-	await assert.rejects(
-		() => hydrator.hydrate(rows, { [EnableAutoInclusion]: true }),
-		UnsupportedProtoKeyError,
-	);
-});
-
-test("__proto__: omitting the column keeps auto-inclusion working", async () => {
-	interface ProtoRow {
-		id: number;
-		name: string;
-	}
-
-	const rows = JSON.parse('[{"id":1,"name":"Alice","__proto__":"x"}]') as ProtoRow[];
-
-	const hydrator = createHydrator<ProtoRow>("id").omit(["__proto__"] as any);
-
-	const result = await hydrator.hydrate(rows, { [EnableAutoInclusion]: true });
-
-	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
-	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "name"]);
-	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
-});
-
-test("__proto__: rejected as an extend() key during hydration", async () => {
-	const users: User[] = [{ id: 1, name: "Alice" }];
-
-	const objectValued = createHydrator<User>("id")
-		.fields({ id: true })
-		.extend(() => JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>);
-
-	await assert.rejects(() => hydrate(users, objectValued), UnsupportedProtoKeyError);
-	assert.strictEqual(({} as Record<string, unknown>).polluted, undefined);
-
-	const scalarValued = createHydrator<User>("id")
-		.fields({ id: true })
-		.extend(() => JSON.parse('{"__proto__":"x"}') as Record<string, unknown>);
-
-	await assert.rejects(() => hydrate(users, scalarValued), UnsupportedProtoKeyError);
-});
-
 test("extend: normal keys still merge with later keys winning", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
@@ -2635,8 +2533,8 @@ test("extend: normal keys still merge with later keys winning", async () => {
 test("extend: a nullish extension is a no-op, matching Object.assign", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
-	// The Extender type forbids nullish returns, but untyped callers relied on
-	// Object.assign tolerating them; the key check must not throw first.
+	// The Extender type forbids nullish returns, but untyped callers rely on
+	// Object.assign tolerating them.
 	const hydrator = createHydrator<User>("id")
 		.fields({ id: true, name: true })
 		.extend(() => undefined as any)
