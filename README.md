@@ -188,7 +188,6 @@ type Result = Array<{
     - [Should I just use Drizzle?](#should-i-just-use-drizzle)
     - [I notice you have a `CLAUDE.md`. Is this whole thing AI slop?](#i-notice-you-have-a-claudemd-is-this-whole-thing-ai-slop)
     - [Does it work with Bun or Deno?](#does-it-work-with-bun-or-deno)
-  - [Development](#development)
   - [Acknowledgements](#acknowledgements)
 
 ## Installation
@@ -1733,22 +1732,6 @@ dependency.
 ### Does it work with Bun or Deno?
 
 It should run anywhere Kysely runs, but I haven't tested it on anything but Node.js.
-
-## Development
-
-Tests run against both SQLite (in-memory, via `better-sqlite3`) and PostgreSQL,
-since some behaviour is dialect-specific.
-
-```sh
-npm install
-docker compose up --detach --wait postgres  # published on port 5434
-npm run test:all                            # SQLite, then PostgreSQL
-```
-
-Set `POSTGRES_URL` to run against a PostgreSQL of your own instead; that is how
-CI points the suite at its service container.
-
-Then `npm run typecheck`, `npm run lint` and `npm run format`.
 
 ## Acknowledgements
 
