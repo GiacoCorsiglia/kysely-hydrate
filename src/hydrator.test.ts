@@ -2525,67 +2525,32 @@ test("map: works with attached collections", async () => {
 // row resolves to Object.prototype rather than to a column value, and writing
 // it to an entity goes through Object.prototype's accessor.  Config keys are
 // rejected when the hydrator is built; row columns and extender keys are
-// rejected during hydration.  Note the rows below are built with JSON.parse or
-// computed keys - a plain `{ __proto__: ... }` literal sets the prototype
-// instead of creating an own key.
+// rejected during hydration.  Column references that can only make an ordering
+// or an attach match do nothing are left unguarded.  Note the rows below are
+// built with JSON.parse or computed keys - a plain `{ __proto__: ... }` literal
+// sets the prototype instead of creating an own key.
 //
 
-test("__proto__: rejected as a field name", () => {
+test("__proto__: rejected when it names a key in a hydrator config", () => {
 	const hydrator = createHydrator<User>("id");
 
-	assert.throws(() => hydrator.fields({ ["__proto__"]: true } as any), UnsupportedProtoKeyError);
-	assert.throws(() => hydrator.fields(["__proto__"] as any), UnsupportedProtoKeyError);
-});
+	const configs: Record<string, () => unknown> = {
+		"fields, object form": () => hydrator.fields({ ["__proto__"]: true } as any),
+		"fields, array form": () => hydrator.fields(["__proto__"] as any),
+		extras: () => hydrator.extras({ ["__proto__"]: (u: User) => u.name } as any),
+		"joined collection key": () =>
+			hydrator.hasMany("__proto__" as any, "posts$$", (h: any) => h("id")),
+		"attached collection key": () =>
+			hydrator.attachMany("__proto__" as any, async () => [], { matchChild: "id" } as any),
+		// Reading it would yield Object.prototype for every row, which is never
+		// nil, collapsing unrelated rows into a single entity.
+		keyBy: () => createHydrator<User>("__proto__" as any),
+		"composite keyBy": () => createHydrator<User>(["id", "__proto__"] as any),
+	};
 
-test("__proto__: rejected as an extra name", () => {
-	assert.throws(
-		() => createHydrator<User>("id").extras({ ["__proto__"]: (u: User) => u.name } as any),
-		UnsupportedProtoKeyError,
-	);
-});
-
-test("__proto__: rejected as a collection key", () => {
-	const hydrator = createHydrator<User>("id");
-
-	assert.throws(
-		() => hydrator.hasMany("__proto__" as any, "posts$$", (h: any) => h("id")),
-		UnsupportedProtoKeyError,
-	);
-	assert.throws(
-		() => hydrator.attachMany("__proto__" as any, async () => [], { matchChild: "id" } as any),
-		UnsupportedProtoKeyError,
-	);
-});
-
-test("__proto__: rejected as an attached collection match column", () => {
-	const hydrator = createHydrator<User>("id");
-
-	assert.throws(
-		() => hydrator.attachMany("posts", async () => [], { matchChild: "__proto__" } as any),
-		UnsupportedProtoKeyError,
-	);
-	assert.throws(
-		() =>
-			hydrator.attachMany("posts", async () => [], {
-				matchChild: "id",
-				toParent: "__proto__",
-			} as any),
-		UnsupportedProtoKeyError,
-	);
-});
-
-test("__proto__: rejected as a keyBy column", () => {
-	// Reading it would yield Object.prototype for every row, collapsing
-	// unrelated rows into one entity.
-	assert.throws(() => createHydrator<User>("__proto__" as any), UnsupportedProtoKeyError);
-	assert.throws(() => createHydrator<User>(["id", "__proto__"] as any), UnsupportedProtoKeyError);
-});
-
-test("__proto__: rejected as an orderBy column", () => {
-	assert.throws(
-		() => createHydrator<User>("id").orderBy("__proto__" as any),
-		UnsupportedProtoKeyError,
-	);
+	for (const [name, config] of Object.entries(configs)) {
+		assert.throws(config, UnsupportedProtoKeyError, name);
+	}
 });
 
 test("__proto__: rejected as a column during hydration", async () => {

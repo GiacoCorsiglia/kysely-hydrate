@@ -818,6 +818,13 @@ const PROTO_KEY = "__proto__";
  * Rejects `"__proto__"` as a key name, given either a single key or a
  * composite of them.  `source` describes where the key came from, e.g. "a
  * field name".
+ *
+ * Applied to keys that become output keys, where the name corrupts the entity,
+ * and to `keyBy`, where every row reads the same non-nil `Object.prototype`
+ * and so unrelated rows collapse into one entity.  Other column references
+ * (orderings, attached collection match columns) are deliberately left alone:
+ * the name is useless there too, but the worst case is an ordering or a match
+ * that does nothing.
  */
 function assertNotProtoKey(
 	keys: PropertyKey | readonly PropertyKey[],
@@ -933,8 +940,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	orderBy(key: any, direction: "asc" | "desc" = "asc", nulls?: "first" | "last"): any {
-		assertNotProtoKey(key, "an orderBy column");
-
 		return new HydratorImpl({
 			...this.#props,
 
@@ -1005,12 +1010,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
-		// Defaults to this hydrator's keyBy, which createHydrator already checked.
-		const toParent = keys.toParent ?? this.#props.keyBy;
-
 		assertNotProtoKey(key, "a collection key");
-		assertNotProtoKey(keys.matchChild, "an attached collection match column");
-		assertNotProtoKey(toParent, "an attached collection match column");
 
 		return new HydratorImpl({
 			...this.#props,
@@ -1022,7 +1022,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				mode,
 				fetchFn,
 				matchChild: keys.matchChild,
-				toParent,
+				toParent: keys.toParent ?? this.#props.keyBy,
 			} satisfies AttachedCollection<any, any>),
 		});
 	}
