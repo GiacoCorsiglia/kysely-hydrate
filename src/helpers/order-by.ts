@@ -19,24 +19,24 @@ class MockOrderByItemBuilder {
 		this.orderBy = orderBy;
 	}
 
-	private with(patch: Partial<OrderBy>): MockOrderByItemBuilder {
+	#with(patch: Partial<OrderBy>): MockOrderByItemBuilder {
 		return new MockOrderByItemBuilder({ ...this.orderBy, ...patch });
 	}
 
 	asc(): MockOrderByItemBuilder {
-		return this.with({ direction: "asc" });
+		return this.#with({ direction: "asc" });
 	}
 
 	desc(): MockOrderByItemBuilder {
-		return this.with({ direction: "desc" });
+		return this.#with({ direction: "desc" });
 	}
 
 	nullsFirst(): MockOrderByItemBuilder {
-		return this.with({ nulls: "first" });
+		return this.#with({ nulls: "first" });
 	}
 
 	nullsLast(): MockOrderByItemBuilder {
-		return this.with({ nulls: "last" });
+		return this.#with({ nulls: "last" });
 	}
 
 	collate(): MockOrderByItemBuilder {
