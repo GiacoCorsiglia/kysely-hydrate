@@ -796,9 +796,10 @@ interface HydrationContext {
 	/**
 	 * Map of attached collection data, keyed by prefixed collection key.
 	 * Populated during the initial fetch phase and used during hydration.
-	 * The inner maps hold grouped rows (see groupByKey).
+	 * The values hold the fetched rows grouped by their match key (see
+	 * {@link groupByKey}).
 	 */
-	readonly attachedDataMap: Map<string, Grouped<any>>;
+	readonly attachedDataMap: Map<string, KeyedGroups<any>>;
 
 	/**
 	 * Cache for auto-include field names keyed by prefix.
@@ -1028,14 +1029,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// to prefixed accessors if we are nested, because the fetchFn expects
 			// unprefixed inputs.
 			const { keyBy } = this.#props;
-			const seen = new Set<unknown>();
+			const seen = new KeyedGroups<Input>(keyArity(keyBy));
 			const inputArray: any[] = [];
 			for (const input of inputs) {
-				const key = getKey(prefix, input, keyBy);
-				if (isKeyNil(key) || seen.has(key)) {
+				if (!seen.addFirst(prefix, input, keyBy)) {
 					continue;
 				}
-				seen.add(key);
 				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
 			}
 
@@ -1205,15 +1204,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// Attach collections from the provided map
 		if (attachedCollections) {
 			for (const [key, collection] of attachedCollections) {
-				// Get the match value from this input using the matchBy.
-				const inputKey = getKey(prefix, input, collection.toParent);
-
 				// Use prefixed key to look up in the map
 				const mapKey = prefix ? applyPrefix(prefix, key) : key;
 
-				// Look up attached rows with matching key (already hydrated)
+				// Look up attached rows whose matchChild key matches this input's
+				// toParent key (already hydrated)
 				const groupedData = ctx.attachedDataMap.get(mapKey);
-				const attached = groupedData?.get(inputKey);
+				const attached = groupedData?.find(prefix, input, collection.toParent);
 
 				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
 			}
@@ -1510,101 +1507,100 @@ function applyGroupedCollectionMode<T>(
 }
 
 /**
- * Determines if a key is nil, meaning the corresponding object does not exist.
+ * Determines if a key part is nil, meaning the corresponding object does not
+ * exist.
  */
-function isKeyNil(key: unknown): key is null | undefined {
-	return key === null || key === undefined;
+function isKeyNil(value: unknown): value is null | undefined {
+	return value === null || value === undefined;
 }
 
 /**
- * Gets the key for an entity from the input.
- *
- * Expected to return values that are good for use as a key in a Map, but not
- * guaranteed to do so depending on the input object.
- *
- * Note the semantics differ between the two `keyBy` shapes: single keys
- * (`keyBy` is a string) return the raw column value, so entities are matched
- * by SameValueZero identity in the `Map` (two equal-time `Date` objects are
- * *different* keys).  Composite keys (`keyBy` is an array) are encoded to a
- * string by {@link encodeKeyPart}, which compares parts by value (two
- * equal-time `Date`s are the *same* key part).  This asymmetry is
- * intentional; normalizing the single-key path was considered and deferred.
+ * The number of parts in a key, for either `keyBy` shape.
  */
-function getKey(prefix: string, input: unknown, keyBy: string | readonly string[]): unknown {
-	if (typeof keyBy !== "object") {
-		return getPrefixedValue(prefix, input, keyBy);
-	}
-
-	// Concatenate one self-delimiting token per part (see encodeKeyPart), so
-	// that distinct part sequences can never collide — neither across part
-	// boundaries nor across types.
-	let key = "";
-	for (const partKey of keyBy) {
-		const value = getPrefixedValue(prefix, input, partKey);
-		if (isKeyNil(value)) {
-			return null; // A null part invalidates the whole key for this entity
-		}
-		key += encodeKeyPart(value);
-	}
-	return key;
+function keyArity(keyBy: string | readonly string[]): number {
+	return typeof keyBy === "object" ? keyBy.length : 1;
 }
 
 /**
- * Encodes one composite-key part as a self-delimiting token: a one-character
- * type tag followed by a JSON string literal holding the part's canonical
- * string form.
+ * Marks a key part that had to be canonicalized (see
+ * {@link normalizeKeyPart}).  Practically no real column value starts with
+ * `NUL`, so the escape branch for strings is practically never taken.
+ */
+const KEY_PART_TAG = "\u0000";
+
+/**
+ * Canonicalizes one key part into a value that compares correctly as a `Map`
+ * key, i.e. under SameValueZero.
  *
- * Injectivity invariant: a concatenation of tokens decodes unambiguously left
- * to right — each token is one tag character (never `"`), then a JSON string
- * literal, which starts at the next `"` and ends at the first unescaped `"`.
- * Distinct tags separate types, and within each type the canonical string
- * form is injective, so distinct (type, value) part sequences — including
- * sequences of different arity — always produce distinct keys.  The non-string
- * canonical forms below never contain `"` or `\`, so interpolating them
- * directly between quotes yields a valid JSON string literal; arbitrary
- * strings go through JSON.stringify, which escapes those characters.
+ * Primitives already compare by value, so they pass through untouched and the
+ * common case costs one `typeof` check.  Values that must compare by content
+ * rather than by identity become a tagged string:
  *
- * Deliberate equivalences within a type:
- * - Numbers: `-0` encodes as `0`.  SQL does not distinguish negative zero,
- *   and this matches the SameValueZero semantics `Map` gives single keys.
- *   `NaN`, `Infinity`, and `-Infinity` each encode distinctly.
- * - Dates: compared by time value; all invalid dates are equal (their time
+ * - `Date`s compare by time value, so all invalid dates are equal (their time
  *   value is `NaN`), matching how `Date` equality is usually defined.
- * - Buffers/`Uint8Array`s: compared by content.
- * - Anything else falls back to its `String()` form under its own tag, so
- *   exotic values still get stable (if not perfectly distinct) keys.
+ * - Buffers/`Uint8Array`s compare by content.
+ * - Anything else falls back to its `String()` form, so exotic values still
+ *   group deterministically (if not always distinctly — every plain object
+ *   stringifies to `[object Object]`).
+ *
+ * Injectivity: distinct (type, value) pairs must stay distinct.  Primitives of
+ * different types are never SameValueZero-equal, so `1n`, `1`, `"1"`, and
+ * `true` are four keys; the canonical forms above carry distinct tags; and a
+ * string that could otherwise be mistaken for one of them — one already
+ * starting with the tag — is itself tagged.
+ *
+ * Deliberate equivalences: `-0` and `0` are the same key (SameValueZero), as
+ * SQL does not distinguish negative zero, while `NaN` groups only with `NaN`.
+ *
+ * Both `keyBy` shapes normalize their parts this way, so a single key and a
+ * one-part composite key group identically.
  */
-function encodeKeyPart(value: unknown): string {
+function normalizeKeyPart(value: NonNullable<unknown>): unknown {
 	switch (typeof value) {
 		case "string":
-			return `s${JSON.stringify(value)}`;
-		case "number":
-			return `n"${value}"`;
-		case "bigint":
-			return `b"${value}"`;
-		case "boolean":
-			return `t"${value}"`;
-		default:
+			return value.charCodeAt(0) === 0 ? `${KEY_PART_TAG}s${value}` : value;
+		case "object":
 			if (value instanceof Date) {
-				return `d"${value.getTime()}"`;
+				return `${KEY_PART_TAG}d${value.getTime()}`;
 			}
 			if (value instanceof Uint8Array) {
-				return `u"${value.join(",")}"`;
+				return `${KEY_PART_TAG}u${value.join(",")}`;
 			}
-			// String() throws for values with no primitive conversion (e.g.
-			// null-prototype objects); fall back to the tagged toString form so
-			// such keys still group deterministically instead of rejecting.
-			try {
-				return `x${JSON.stringify(String(value))}`;
-			} catch {
-				return `x${JSON.stringify(Object.prototype.toString.call(value))}`;
-			}
+			return stringifyKeyPart(value);
+		default:
+			// Numbers, bigints, and booleans compare by value already; symbols and
+			// functions have no meaningful content, so identity is right for them.
+			return value;
 	}
 }
+
+/**
+ * The canonical form of a key part that is neither a primitive nor one of the
+ * types {@link normalizeKeyPart} knows: its `String()` form, tagged.
+ *
+ * Kept out of normalizeKeyPart because a `try` block would stop that hot
+ * function from being inlined.
+ */
+function stringifyKeyPart(value: object): string {
+	// String() throws for values with no primitive conversion (e.g.
+	// null-prototype objects); fall back to the default toString form so such
+	// keys still group deterministically instead of rejecting.
+	try {
+		return `${KEY_PART_TAG}x${String(value)}`;
+	} catch {
+		return `${KEY_PART_TAG}x${Object.prototype.toString.call(value)}`;
+	}
+}
+
+/**
+ * The slot of a key that has no group: it is absent from the groups, or it
+ * cannot have one because it has a nil part or the wrong arity.
+ */
+const NO_SLOT = -1;
 
 /**
  * A group of 2+ rows sharing the same key.  Groups of one row are stored as
- * the row itself (see {@link groupByKey}); this wrapper class disambiguates
+ * the row itself (see {@link KeyedGroups}); this wrapper class disambiguates
  * multi-row groups from rows without restricting what a row can be.
  */
 class RowGroup<T> {
@@ -1616,42 +1612,182 @@ class RowGroup<T> {
 }
 
 /**
- * The result of grouping rows by key: a single row, or a RowGroup for 2+ rows.
+ * One level of {@link KeyedGroups}'s key trie: each key part maps to the next
+ * level, or — at the deepest level — to a slot in the groups array.  Which of
+ * the two a level holds is fixed by the groups' arity rather than by the type.
  */
-type Grouped<T> = Map<unknown, T | RowGroup<T>>;
+type KeyTrie = Map<unknown, number | KeyTrie>;
 
 /**
- * Groups rows by the entity's key.
+ * Rows grouped by their entity's key: for each distinct key, the single row,
+ * or a {@link RowGroup} for 2+ rows.
+ *
+ * Keys are matched one part at a time in a trie of `Map`s — the first part in
+ * the root map, the next in the map it points to, and so on, with the deepest
+ * level holding slots into the groups array (see {@link KeyedGroups.values}).
+ * Parts are therefore compared as
+ * `Map` keys, which is both faster and stricter than encoding a key into a
+ * single value: there is no per-row key to build and hash, and no boundary
+ * between parts for values to collide across.
  *
  * Most groups contain exactly one row, so the row is stored directly and a
  * RowGroup (with its backing array) is only allocated once a second row with
  * the same key shows up.  This keeps grouping allocation-free for the common
  * duplicate-free case.
  */
+class KeyedGroups<T> {
+	readonly #root: KeyTrie = new Map();
+	readonly #groups: (T | RowGroup<T>)[] = [];
+	readonly #arity: number;
+
+	/**
+	 * @param arity - The number of parts in the keys these groups are keyed by.
+	 *   Lookups with a different arity match nothing, so an attach collection
+	 *   whose `toParent` and `matchChild` disagree never matches (rather than
+	 *   matching the wrong rows).
+	 */
+	constructor(arity: number) {
+		this.#arity = arity;
+	}
+
+	/**
+	 * Adds a row to its key's group, or ignores it if the key has a nil part
+	 * (the entity does not exist).
+	 */
+	add(prefix: string, input: T, keyBy: string | readonly string[]): void {
+		const slot = this.#walk(prefix, input, keyBy, true);
+		const groups = this.#groups;
+		// Slots are allocated sequentially, and `groups` only grows here and in
+		// addFirst, so a slot at the end is one just allocated for a new key.
+		// NO_SLOT is negative, and so is never a length.
+		if (slot === groups.length) {
+			groups.push(input);
+			return;
+		}
+		if (slot === NO_SLOT) {
+			return;
+		}
+		const existing = groups[slot]!;
+		if (existing instanceof RowGroup) {
+			existing.rows.push(input);
+		} else {
+			groups[slot] = new RowGroup(existing, input);
+		}
+	}
+
+	/**
+	 * Adds a row only if its key is new, and returns whether it was added.  For
+	 * callers that want one row per key: rows with a duplicate key are dropped
+	 * rather than grouped, so no RowGroup is ever allocated.
+	 */
+	addFirst(prefix: string, input: T, keyBy: string | readonly string[]): boolean {
+		const slot = this.#walk(prefix, input, keyBy, true);
+		if (slot !== this.#groups.length) {
+			return false; // An already-seen key, or NO_SLOT.
+		}
+		this.#groups.push(input);
+		return true;
+	}
+
+	/**
+	 * Returns the group matching this input's key, or undefined if there is
+	 * none.  `keyBy` names the parts on `input` to match with, which need not be
+	 * the parts the groups were keyed by — only their arity must agree.
+	 */
+	find(
+		prefix: string,
+		input: unknown,
+		keyBy: string | readonly string[],
+	): T | RowGroup<T> | undefined {
+		const slot = this.#walk(prefix, input, keyBy, false);
+		return slot === NO_SLOT ? undefined : this.#groups[slot];
+	}
+
+	/**
+	 * The groups, in the order their keys first appeared.
+	 */
+	values(): readonly (T | RowGroup<T>)[] {
+		return this.#groups;
+	}
+
+	/**
+	 * Matches this input's key part by part, returning its slot: an existing
+	 * one, the next one if `create` is set and the key is new, or NO_SLOT if the
+	 * key has a nil part, has the wrong arity, or is absent and `create` is not
+	 * set.
+	 *
+	 * A key abandoned partway through (a nil part after the first) can leave an
+	 * empty map behind, which is harmless: no slot is allocated for it, so
+	 * nothing can reach it.
+	 */
+	#walk(
+		prefix: string,
+		input: unknown,
+		keyBy: string | readonly string[],
+		create: boolean,
+	): number {
+		let node = this.#root;
+
+		let lastPartKey: string;
+		if (typeof keyBy !== "object") {
+			// Single-part key: the root map holds slots directly.
+			if (this.#arity !== 1) {
+				return NO_SLOT;
+			}
+			lastPartKey = keyBy;
+		} else {
+			if (keyBy.length !== this.#arity) {
+				return NO_SLOT;
+			}
+			const last = keyBy.length - 1;
+			for (let i = 0; i < last; i++) {
+				const value = getPrefixedValue(prefix, input, keyBy[i]!);
+				if (isKeyNil(value)) {
+					return NO_SLOT; // A nil part invalidates the whole key.
+				}
+				const part = normalizeKeyPart(value);
+				let next = node.get(part) as KeyTrie | undefined;
+				if (next === undefined) {
+					if (!create) {
+						return NO_SLOT;
+					}
+					next = new Map();
+					node.set(part, next);
+				}
+				node = next;
+			}
+			lastPartKey = keyBy[last]!;
+		}
+
+		const value = getPrefixedValue(prefix, input, lastPartKey);
+		if (isKeyNil(value)) {
+			return NO_SLOT;
+		}
+		const part = normalizeKeyPart(value);
+		const slot = node.get(part) as number | undefined;
+		if (slot !== undefined) {
+			return slot;
+		}
+		if (!create) {
+			return NO_SLOT;
+		}
+		const allocated = this.#groups.length;
+		node.set(part, allocated);
+		return allocated;
+	}
+}
+
+/**
+ * Groups rows by the entity's key.
+ */
 function groupByKey<T>(
 	prefix: string,
 	inputs: Iterable<T>,
 	keyBy: string | readonly string[],
-): Grouped<T> {
-	const map: Grouped<T> = new Map();
-
+): KeyedGroups<T> {
+	const groups = new KeyedGroups<T>(keyArity(keyBy));
 	for (const input of inputs) {
-		const key = getKey(prefix, input, keyBy);
-		// Skip rows with null keys.
-		if (isKeyNil(key)) {
-			continue;
-		}
-		// Rows are never undefined (reading a key from an undefined row would
-		// have thrown above), so undefined reliably means "absent".
-		const existing = map.get(key);
-		if (existing === undefined) {
-			map.set(key, input);
-		} else if (existing instanceof RowGroup) {
-			existing.rows.push(input);
-		} else {
-			map.set(key, new RowGroup(existing, input));
-		}
+		groups.add(prefix, input, keyBy);
 	}
-
-	return map;
+	return groups;
 }
