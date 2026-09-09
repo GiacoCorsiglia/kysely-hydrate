@@ -130,3 +130,30 @@ export type AnyQueryBuilder =
 export function isSelectQueryBuilder(o: unknown): o is AnySelectQueryBuilder {
 	return typeof o === "object" && o !== null && "isSelectQueryBuilder" in o;
 }
+
+const utf8 = new TextEncoder();
+const PRINTABLE_ASCII = /^[ -~]*$/;
+
+/**
+ * Length of a string in UTF-8 bytes, which is how databases measure identifiers.
+ */
+export function utf8ByteLength(input: string): number {
+	// Printable ASCII is one byte per code unit, so skip the encoding allocation.
+	return PRINTABLE_ASCII.test(input) ? input.length : utf8.encode(input).length;
+}
+
+/**
+ * The longest prefix of `input` that fits in `maxBytes` of UTF-8, never
+ * splitting a code point.
+ */
+export function truncateToBytes(input: string, maxBytes: number): string {
+	let out = "";
+	for (const char of input) {
+		maxBytes -= utf8ByteLength(char);
+		if (maxBytes < 0) {
+			break;
+		}
+		out += char;
+	}
+	return out;
+}

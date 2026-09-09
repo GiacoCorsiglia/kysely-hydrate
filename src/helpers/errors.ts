@@ -107,3 +107,28 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 		);
 	}
 }
+
+/**
+ * Error thrown when a generated column alias exceeds the database's identifier
+ * length limit. PostgreSQL would silently truncate it and corrupt hydration.
+ */
+export class AliasTooLongError extends KyselyHydrateError {
+	constructor(alias: string, bytes: number, maxBytes: number) {
+		super(
+			`Column alias "${alias}" is ${bytes} bytes, over the ${maxBytes}-byte identifier limit. ` +
+				`PostgreSQL silently truncates such identifiers, which corrupts hydration. ` +
+				`Install the fixLongAliases() plugin on your Kysely instance (wrapping your CamelCasePlugin, ` +
+				`if you use one), or pass { maxAliasBytes: null } to querySet() to disable this check.`,
+		);
+	}
+}
+
+/**
+ * Error thrown by the `fixLongAliases()` plugin when two different over-long
+ * aliases hash to the same shortened form.
+ */
+export class AliasHashCollisionError extends KyselyHydrateError {
+	constructor(alias: string, otherAlias: string) {
+		super(`Column aliases "${alias}" and "${otherAlias}" shorten to the same identifier`);
+	}
+}
