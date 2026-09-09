@@ -1680,4 +1680,215 @@ describe("query-set: sql", () => {
 			`Expected prefixed alias reference: ${sql}`,
 		);
 	});
+
+	//
+	// modifyFront / modifyEnd Application
+	//
+	// The stored modifiers must be applied exactly once, to the outermost query
+	// produced by toQuery(), on every query-generation path.
+	//
+
+	const FRONT = "/* front-hint */";
+	const END = "/* end-hint */";
+	const frontHint = sql`/* front-hint */`;
+	const endHint = sql`/* end-hint */`;
+
+	function count(haystack: string, needle: string): number {
+		return haystack.split(needle).length - 1;
+	}
+
+	function assertModifiersOnce(compiled: string, { front = false } = {}) {
+		assert.strictEqual(count(compiled, END), 1, `Expected exactly one end hint: ${compiled}`);
+		assert.ok(compiled.endsWith(END), `Expected end hint at the very end: ${compiled}`);
+
+		if (front) {
+			assert.strictEqual(count(compiled, FRONT), 1, `Expected exactly one front hint: ${compiled}`);
+			assert.ok(
+				compiled.startsWith(`select ${FRONT}`),
+				`Expected front hint on the outermost select: ${compiled}`,
+			);
+		}
+	}
+
+	test("SQL: modifyFront/modifyEnd with no joins, no pagination", () => {
+		const compiled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		assertModifiersOnce(compiled, { front: true });
+	});
+
+	test("SQL: modifyFront/modifyEnd on raw base fast path (orderByKeys disabled)", () => {
+		const compiled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.orderByKeys(false)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		// The base query is returned as-is, with the modifiers applied directly.
+		assert.strictEqual(
+			compiled,
+			snapshot`
+			select /* front-hint */ "id", "username" from "users" /* end-hint */
+		`,
+		);
+	});
+
+	test("SQL: modifyFront/modifyEnd with no joins + limit", () => {
+		const compiled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.limit(2)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		assertModifiersOnce(compiled, { front: true });
+		assert.ok(compiled.includes("limit"), `Expected a limit: ${compiled}`);
+	});
+
+	test("SQL: modifyFront/modifyEnd with cardinality-one join + limit", () => {
+		const compiled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.limit(2)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		assertModifiersOnce(compiled, { front: true });
+	});
+
+	test("SQL: modifyFront/modifyEnd with many-join, no pagination", () => {
+		const compiled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		assertModifiersOnce(compiled, { front: true });
+	});
+
+	test("SQL: modifyFront/modifyEnd with many-join + limit - applied exactly once, to the outermost query", () => {
+		const compiled = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.limit(2)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		// This path wraps the paginated cardinality-one query in a subquery; the
+		// modifiers must land on the outer query only, exactly once.
+		assert.ok(compiled.includes('as "user" left join'), `Expected wrapped subquery: ${compiled}`);
+		assertModifiersOnce(compiled, { front: true });
+	});
+
+	test("SQL: modifyEnd on write base fast path - applied to the write query", () => {
+		const compiled = querySet(db)
+			.insertAs("newUser", (db) =>
+				db
+					.insertInto("users")
+					.values({ username: "insertuser", email: "insert@example.com" })
+					.returningAll(),
+			)
+			.orderByKeys(false)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		// With no joins, ordering, or pagination, the insert is returned as-is and
+		// the end modifier applies directly to it.
+		assert.strictEqual(
+			compiled,
+			snapshot`
+			insert into "users" ("username", "email")
+			values (?, ?)
+			returning * /* end-hint */
+		`,
+		);
+	});
+
+	test("SQL: modifyFront on write base fast path - forces CTE wrap", () => {
+		const compiled = querySet(db)
+			.insertAs("newUser", (db) =>
+				db
+					.insertInto("users")
+					.values({ username: "insertuser", email: "insert@example.com" })
+					.returningAll(),
+			)
+			.orderByKeys(false)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		// Kysely write query builders don't support modifyFront, so the write is
+		// wrapped in a data-modifying CTE and the modifiers apply to the outer
+		// SELECT.
+		assert.strictEqual(
+			compiled,
+			snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?)
+				returning *
+			)
+			select /* front-hint */ "newUser".*
+			from "__base" as "newUser" /* end-hint */
+		`,
+		);
+	});
+
+	test("SQL: modifyFront/modifyEnd on write base with default ordering (CTE path)", () => {
+		const compiled = querySet(db)
+			.insertAs("newUser", (db) =>
+				db
+					.insertInto("users")
+					.values({ username: "insertuser", email: "insert@example.com" })
+					.returningAll(),
+			)
+			.modifyFront(frontHint)
+			.modifyEnd(endHint)
+			.toQuery()
+			.compile().sql;
+
+		assert.strictEqual(
+			compiled,
+			snapshot`
+			with "__base" as (
+				insert into "users" ("username", "email")
+				values (?, ?)
+				returning *
+			)
+			select /* front-hint */ "newUser".*
+			from "__base" as "newUser"
+			order by "newUser"."id" asc /* end-hint */
+		`,
+		);
+	});
 });

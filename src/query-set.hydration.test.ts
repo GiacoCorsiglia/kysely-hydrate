@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
-import { dialect, getDbForTest } from "./__tests__/db.ts";
+import { getDbForTest } from "./__tests__/db.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
@@ -681,29 +681,6 @@ describe("query-set: hydration", () => {
 		const fromHydrate = await qs.hydrate(rows);
 
 		assert.deepStrictEqual(fromHydrate, fromExecute);
-	});
-
-	test("hydration: a column aliased __proto__ survives where the driver delivers it", async () => {
-		// Hydration assigns "__proto__" keys via own-property shadowing, so the
-		// value becomes a normal key instead of being silently dropped (or, for
-		// object values, replacing the entity's prototype). Whether the value
-		// reaches the hydrator at all is driver-dependent:
-		// - better-sqlite3 delivers rows with an own "__proto__" data property
-		// - node-pg drops the column when building its row objects, before this
-		//   library ever sees it
-		const result = await querySet(db)
-			.selectAs("user", db.selectFrom("users").select(["id"]).select("users.username as __proto__"))
-			.where("users.id", "=", 1)
-			.execute();
-
-		assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
-		if (dialect === "sqlite") {
-			assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: "alice" }]);
-			assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
-		} else {
-			// Dropped by node-pg, not by hydration.
-			assert.deepStrictEqual(result, [{ id: 1 }]);
-		}
 	});
 
 	test("hydration: SQL reserved words work as aliases at base and nested levels", async () => {

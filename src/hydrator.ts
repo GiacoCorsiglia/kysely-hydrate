@@ -18,6 +18,7 @@ import {
 	type ExtendWith,
 	isIterable,
 	type KeyBy,
+	mapWithDeleted,
 } from "./helpers/utils.ts";
 
 ////////////////////////////////////////////////////////////////////
@@ -143,7 +144,8 @@ function isExecutable<Output>(value: unknown): value is Executable<Output> {
  * with one input per parent entity, to avoid N+1 queries.  Parent inputs are
  * deduplicated by the parent's `keyBy`, and rows with nil keys (e.g. phantom
  * all-null rows produced by matchless left joins) are excluded.  Should return
- * already-hydrated data.
+ * already-hydrated data.  Never called with zero inputs: when every parent row
+ * is dropped, the fetch is skipped entirely.
  */
 export type FetchFn<ParentInput, AttachedOutput> = (
 	inputs: ParentInput[],
@@ -524,6 +526,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	/**
 	 * Composes this Hydrator with the configuration from another Hydrator.  The
 	 * other Hydrator's configuration takes precedence in case of conflicts.
+	 * This applies across collection kinds as well: a nested (`has`) or
+	 * attached (`attach`) collection on the other Hydrator replaces a
+	 * collection of either kind registered under the same key on this one.
 	 *
 	 * Both hydrators must have the same `keyBy`, and any overlapping fields
 	 * between the two input types must have compatible types.
@@ -563,6 +568,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * Configures a nested collection that exists in the same query result. The
 	 * child data is expected to be prefixed in the input (e.g., `posts$$id`,
 	 * `posts$$title`) with the given `prefix`.
+	 *
+	 * Replaces any collection — nested or attached — previously registered
+	 * under the same key.
 	 *
 	 * You may prefer to use the shorthand methods: {@link hasMany},
 	 * {@link hasOne}, or {@link hasOneOrThrow}.
@@ -647,6 +655,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * Configures an attached collection that is fetched from an external source.
 	 * The `fetchFn` is called exactly once per hydration with all parent inputs
 	 * to avoid N+1 queries, even when this hydrator is nested within another.
+	 *
+	 * Replaces any collection — nested or attached — previously registered
+	 * under the same key.
 	 *
 	 * For convenience, you may prefer to use the shorthand methods:
 	 * {@link attachMany}, {@link attachOne}, or {@link attachOneOrThrow}.
@@ -791,40 +802,9 @@ interface HydrationContext {
 
 	/**
 	 * Cache for auto-include field names keyed by prefix.
-	 * Maps: prefix -> AutoFields
+	 * Maps: prefix -> fieldNames[]
 	 */
-	readonly autoFieldsCache: Map<string, AutoFields>;
-}
-
-/**
- * Auto-include field names for one prefix level, plus a precomputed flag so
- * the per-row assignment loop never has to scan the names itself.
- */
-interface AutoFields {
-	readonly names: readonly string[];
-
-	/**
-	 * True when `names` contains "__proto__", which must be assigned via
-	 * {@link defineProtoShadowedKey}.
-	 */
-	readonly needsProtoShadow: boolean;
-}
-
-/**
- * Sets a "__proto__" output key as a normal own data property. Plain
- * `entity[key] = value` assignment would hit `Object.prototype`'s
- * `__proto__` accessor instead: scalar values are silently dropped, and
- * object values would REPLACE the entity's prototype (prototype pollution).
- * An own data property shadows the accessor, so subsequent reads and plain
- * writes behave normally.
- */
-function defineProtoShadowedKey(entity: object, value: unknown): void {
-	Object.defineProperty(entity, "__proto__", {
-		value,
-		writable: true,
-		enumerable: true,
-		configurable: true,
-	});
+	readonly autoFieldsCache: Map<string, string[]>;
 }
 
 /**
@@ -833,27 +813,8 @@ function defineProtoShadowedKey(entity: object, value: unknown): void {
 class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Output> {
 	#props: HydratorProps<Input>;
 
-	/**
-	 * Memo for {@link #getConfigNeedsProtoShadow}; computed on first hydration.
-	 */
-	#configNeedsProtoShadow: boolean | undefined;
-
 	constructor(props: HydratorProps<Input>) {
 		this.#props = props;
-	}
-
-	/**
-	 * True when any configured output key is "__proto__", which must be
-	 * assigned via {@link defineProtoShadowedKey}.
-	 */
-	#getConfigNeedsProtoShadow(): boolean {
-		this.#configNeedsProtoShadow ??= Boolean(
-			this.#props.fields?.has("__proto__") ||
-			this.#props.extras?.has("__proto__") ||
-			this.#props.collections?.has("__proto__") ||
-			this.#props.attachedCollections?.has("__proto__"),
-		);
-		return this.#configNeedsProtoShadow;
 	}
 
 	get [IsFullHydrator]() {
@@ -911,16 +872,29 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const ownProps = this.#props;
 		const otherProps = otherImpl.#props;
+
+		// The other hydrator's collection definitions take precedence across
+		// kinds, too: its definition of a key replaces an own definition of
+		// either kind, exactly as if has()/attach() had been called on this
+		// hydrator directly.
+		const collections = new Map(ownProps.collections);
+		const attachedCollections = new Map(ownProps.attachedCollections);
+		for (const [key, collection] of otherProps.collections ?? []) {
+			attachedCollections.delete(key);
+			collections.set(key, collection);
+		}
+		for (const [key, collection] of otherProps.attachedCollections ?? []) {
+			collections.delete(key);
+			attachedCollections.set(key, collection);
+		}
+
 		return new HydratorImpl({
 			keyBy: otherProps.keyBy as any,
 			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
 			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
 			extenders: [...(ownProps.extenders ?? []), ...(otherProps.extenders ?? [])],
-			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
-			attachedCollections: new Map([
-				...(ownProps.attachedCollections ?? []),
-				...(otherProps.attachedCollections ?? []),
-			]),
+			collections,
+			attachedCollections,
 			mapFns: [...(this.#props.mapFns ?? []), ...(otherProps.mapFns ?? [])],
 			orderings: [...(ownProps.orderings ?? []), ...(otherProps.orderings ?? [])],
 			orderByKeys: otherProps.orderByKeys ?? ownProps.orderByKeys,
@@ -970,6 +944,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			...this.#props,
 
 			collections: newCollections,
+			// A key names a single output property regardless of collection kind,
+			// so redefining it as a nested collection must drop any attached
+			// collection previously registered under the same key.
+			attachedCollections:
+				this.#props.attachedCollections && mapWithDeleted(this.#props.attachedCollections, key),
 		});
 	}
 
@@ -994,6 +973,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		return new HydratorImpl({
 			...this.#props,
 
+			// See the corresponding note in has(): the same key must not remain
+			// registered as both a nested and an attached collection.
+			collections: this.#props.collections && mapWithDeleted(this.#props.collections, key),
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
@@ -1057,30 +1039,38 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
 			}
 
-			for (const [key, attachedCollection] of attachedCollections) {
-				// Use prefixed key for the map
-				const mapKey = prefix ? applyPrefix(prefix, key) : key;
+			// When there are no inputs left (no rows at all, or every row dropped
+			// by the nil-key filter), skip the fetch entirely: user fetchFns
+			// commonly build `WHERE x IN (...)` from the inputs, which is invalid
+			// or pointless SQL for zero inputs.  Leaving attachedDataMap without
+			// an entry behaves identically to storing an empty group — lookups go
+			// through `groupedData?.get(...)`, which yields undefined either way.
+			if (inputArray.length > 0) {
+				for (const [key, attachedCollection] of attachedCollections) {
+					// Use prefixed key for the map
+					const mapKey = prefix ? applyPrefix(prefix, key) : key;
 
-				// Create fetch promise
-				fetchPromises.push(
-					Promise.resolve(attachedCollection.fetchFn(inputArray))
-						.then((result) => {
-							if (isExecutable(result)) {
-								return result.execute();
-							}
-							return result as Iterable<any>;
-						})
-						.then((attachedOutputs) => {
-							// Group fetched rows by their match key
-							const grouped = groupByKey(
-								"", // Always unprefixed.
-								attachedOutputs,
-								attachedCollection.matchChild,
-							);
+					// Create fetch promise
+					fetchPromises.push(
+						Promise.resolve(attachedCollection.fetchFn(inputArray))
+							.then((result) => {
+								if (isExecutable(result)) {
+									return result.execute();
+								}
+								return result as Iterable<any>;
+							})
+							.then((attachedOutputs) => {
+								// Group fetched rows by their match key
+								const grouped = groupByKey(
+									"", // Always unprefixed.
+									attachedOutputs,
+									attachedCollection.matchChild,
+								);
 
-							ctx.attachedDataMap.set(mapKey, grouped);
-						}),
-				);
+								ctx.attachedDataMap.set(mapKey, grouped);
+							}),
+					);
+				}
 			}
 		}
 
@@ -1100,7 +1090,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * parent, and not to any nested collection.  Does this once per hydration
 	 * (assumes all inputs have the same keys).
 	 */
-	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): AutoFields {
+	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): string[] {
 		// Have we done this already?
 		const cached = ctx.autoFieldsCache.get(prefix);
 		if (cached) {
@@ -1110,7 +1100,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// If we get a null for some bizarre reason, I guess we should try again
 		// on the next row.
 		if (typeof input !== "object" || input === null) {
-			return { names: [], needsProtoShadow: false };
+			return [];
 		}
 
 		const { fields, extras, collections } = this.#props;
@@ -1145,14 +1135,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			autoFields.push(unprefixedKey);
 		}
 
-		const result: AutoFields = {
-			names: autoFields,
-			needsProtoShadow: autoFields.includes("__proto__"),
-		};
-
 		// Cache and return the auto-include fields
-		ctx.autoFieldsCache.set(prefix, result);
-		return result;
+		ctx.autoFieldsCache.set(prefix, autoFields);
+		return autoFields;
 	}
 
 	/**
@@ -1170,22 +1155,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const entity: any = {};
 
-		// A "__proto__" key must go through defineProtoShadowedKey (see its doc).
-		// Both flags are precomputed outside the row loop (per cached auto-field
-		// set / memoized per hydrator), so the common case pays only a
-		// short-circuited boolean test per assignment.
-		const configShadow = this.#getConfigNeedsProtoShadow();
-
 		// Auto-include all fields at this prefix level when enabled
 		if (ctx.autoIncludeFields) {
-			const autoFields = this.#getAutoFields(ctx, prefix, input);
-			for (const key of autoFields.names) {
-				const value = getPrefixedValue(prefix, input, key);
-				if (autoFields.needsProtoShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, value);
-				} else {
-					entity[key] = value;
-				}
+			for (const key of this.#getAutoFields(ctx, prefix, input)) {
+				entity[key] = getPrefixedValue(prefix, input, key);
 			}
 		}
 
@@ -1196,12 +1169,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					continue;
 				}
 				const value = getPrefixedValue(prefix, input, key);
-				const output = field === true ? value : field(value as any);
-				if (configShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, output);
-				} else {
-					entity[key] = output;
-				}
+				entity[key] = field === true ? value : field(value as any);
 			}
 		}
 
@@ -1210,12 +1178,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			if (extras) {
 				for (const [key, extra] of extras) {
-					const output = extra(accessor as Input);
-					if (configShadow && key === "__proto__") {
-						defineProtoShadowedKey(entity, output);
-					} else {
-						entity[key] = output;
-					}
+					entity[key] = extra(accessor as Input);
 				}
 			}
 
@@ -1235,12 +1198,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				// Hydrate nested collections (all attach collections already fetched)
 				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, rows);
 
-				const output = applyCollectionMode(collectionOutputs, collection.mode, key);
-				if (configShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, output);
-				} else {
-					entity[key] = output;
-				}
+				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
 		}
 
@@ -1257,12 +1215,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const groupedData = ctx.attachedDataMap.get(mapKey);
 				const attached = groupedData?.get(inputKey);
 
-				const output = applyGroupedCollectionMode(attached, collection.mode, key);
-				if (configShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, output);
-				} else {
-					entity[key] = output;
-				}
+				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
 			}
 		}
 
@@ -1478,14 +1431,15 @@ export function hydrate<Input, Output>(
 	hydrator: HydratorArg<NoInfer<Input>, Output>,
 ): Promise<Output | Output[]> {
 	// The factory is user code; catch synchronous errors and turn them into
-	// rejections so this function never throws.
+	// rejections so this function never throws.  The hydrate() call stays
+	// inside the try for the same reason: a factory that returns a
+	// non-hydrator would otherwise throw a synchronous TypeError.
 	try {
 		hydrator = typeof hydrator === "function" ? hydrator(createHydrator as any) : hydrator;
+		return hydrator.hydrate(input);
 	} catch (error) {
 		return Promise.reject(error);
 	}
-
-	return hydrator.hydrate(input);
 }
 
 /**

@@ -6,7 +6,7 @@ import {
 	ExpectedOneItemError,
 	KeyByMismatchError,
 } from "./helpers/errors.ts";
-import { createHydrator, EnableAutoInclusion, hydrate } from "./hydrator.ts";
+import { createHydrator, hydrate } from "./hydrator.ts";
 
 // Test data types
 interface User {
@@ -349,6 +349,16 @@ test("hydrate: rejects when the hydrator factory throws", async () => {
 		});
 	});
 	await assert.rejects(promise!, /factory failed/);
+});
+
+test("hydrate: rejects when the hydrator factory returns a non-hydrator", async () => {
+	// A factory returning something without a .hydrate() method must reject
+	// (like every other failure mode) rather than throw synchronously.
+	let promise: Promise<unknown> | undefined;
+	assert.doesNotThrow(() => {
+		promise = hydrate([], () => ({}) as any);
+	});
+	await assert.rejects(promise!, TypeError);
 });
 
 test("grouping: attachOne throws CardinalityViolationError for multiple matching children", async () => {
@@ -1050,6 +1060,104 @@ test("attach: fetchFn receives deduplicated inputs with null-key rows dropped", 
 	]);
 });
 
+test("attach: fetchFn is not called when all parent keys are nil", async () => {
+	// Every row is a left-join phantom with a nil key, so no parent entity
+	// exists to attach to.  The fetchFn must be skipped entirely: user code
+	// building `WHERE x IN (...)` from the inputs would otherwise generate
+	// invalid or pointless SQL.
+	const rows = [
+		{ id: null as unknown as number, name: null as unknown as string },
+		{ id: null as unknown as number, name: null as unknown as string },
+	];
+
+	let fetchCount = 0;
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				fetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, []);
+	assert.strictEqual(fetchCount, 0);
+});
+
+test("attach: fetchFn is not called when there are no input rows", async () => {
+	let fetchCount = 0;
+
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				fetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		);
+
+	const result = await hydrator.hydrate([]);
+
+	assert.deepStrictEqual(result, []);
+	assert.strictEqual(fetchCount, 0);
+});
+
+test("attach: nested attach fetchFn is not called when all nested keys are nil", async () => {
+	// The empty-input skip must apply per nesting level: the parents exist (so
+	// their fetch runs), but every nested profile is a matchless left join, so
+	// the profile-level attach fetch must be skipped.
+	interface UserWithProfile extends User {
+		profile$$id: number | null;
+	}
+
+	const rows: UserWithProfile[] = [
+		{ id: 1, name: "Alice", profile$$id: null },
+		{ id: 2, name: "Bob", profile$$id: null },
+	];
+
+	let parentFetchCount = 0;
+	let nestedFetchCount = 0;
+
+	const hydrator = createHydrator<UserWithProfile>("id")
+		.fields({ id: true, name: true })
+		.attachMany(
+			"posts",
+			() => {
+				parentFetchCount++;
+				return [];
+			},
+			{ matchChild: "userId" },
+		)
+		.hasOne("profile", "profile$$", (h) =>
+			h("id")
+				.fields(["id"])
+				.attachMany(
+					"badges",
+					() => {
+						nestedFetchCount++;
+						return [];
+					},
+					{ matchChild: "profileId" },
+				),
+		);
+
+	const result = await hydrator.hydrate(rows);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [], profile: null },
+		{ id: 2, name: "Bob", posts: [], profile: null },
+	]);
+	assert.strictEqual(parentFetchCount, 1);
+	assert.strictEqual(nestedFetchCount, 0);
+});
+
 test("attachMany: calls fetchFn once", async () => {
 	let userPostsFetchCount = 0;
 	let postCommentsFetchCount = 0;
@@ -1634,6 +1742,60 @@ test("mixing has and attach collections", async () => {
 	assert.strictEqual(result[1]?.posts.length, 1);
 });
 
+test("collection override: has after attach with the same key drops the attach", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Joined Post" },
+	];
+
+	let fetchCount = 0;
+	const fetchPosts = async () => {
+		fetchCount++;
+		return [{ id: 999, userId: 1, title: "FROM STALE ATTACH" }];
+	};
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" })
+		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.strictEqual(fetchCount, 0);
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, title: "Joined Post" }] },
+	]);
+});
+
+test("collection override: attach after has with the same key drops the nested spec", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	// No prefixed child columns exist in the data — as when a query set removes
+	// an overridden join's SQL.  A stale oneOrThrow spec would throw
+	// ExpectedOneItemError here.
+	const rows: UserWithPosts[] = [{ id: 1, name: "Alice", posts$$id: null, posts$$title: null }];
+
+	const fetchPosts = async () => [{ id: 10, userId: 1, title: "Attached Post" }];
+
+	const hydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.hasOneOrThrow("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }))
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, userId: 1, title: "Attached Post" }] },
+	]);
+});
+
 test("complex nesting: has and attach at multiple levels", async () => {
 	let authorsFetchCount = 0;
 	let tagsFetchCount = 0;
@@ -1865,6 +2027,63 @@ test("with: other hydrator's collections take precedence", async () => {
 			name: "Alice",
 			posts: [{ id: 10, title: "POST TITLE" }],
 		},
+	]);
+});
+
+test("with: other hydrator's nested collection overrides own attach with the same key", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [
+		{ id: 1, name: "Alice", posts$$id: 10, posts$$title: "Joined Post" },
+	];
+
+	let fetchCount = 0;
+	const fetchPosts = async () => {
+		fetchCount++;
+		return [{ id: 999, userId: 1, title: "FROM STALE ATTACH" }];
+	};
+
+	const baseHydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.attachMany("posts", fetchPosts, { matchChild: "userId" });
+
+	const otherHydrator = createHydrator<UserWithPosts>("id").hasMany("posts", "posts$$", (h) =>
+		h("id").fields({ id: true, title: true }),
+	);
+
+	const result = await hydrate(rows, baseHydrator.with(otherHydrator));
+
+	assert.strictEqual(fetchCount, 0);
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, title: "Joined Post" }] },
+	]);
+});
+
+test("with: other hydrator's attach overrides own nested collection with the same key", async () => {
+	interface UserWithPosts extends User {
+		posts$$id: number | null;
+		posts$$title: string | null;
+	}
+
+	const rows: UserWithPosts[] = [{ id: 1, name: "Alice", posts$$id: null, posts$$title: null }];
+
+	const fetchPosts = async () => [{ id: 10, userId: 1, title: "Attached Post" }];
+
+	const baseHydrator = createHydrator<UserWithPosts>("id")
+		.fields({ id: true, name: true })
+		.hasOneOrThrow("posts", "posts$$", (h) => h("id").fields({ id: true, title: true }));
+
+	const otherHydrator = createHydrator<UserWithPosts>("id").attachMany("posts", fetchPosts, {
+		matchChild: "userId",
+	});
+
+	const result = await hydrate(rows, baseHydrator.with(otherHydrator));
+
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice", posts: [{ id: 10, userId: 1, title: "Attached Post" }] },
 	]);
 });
 
@@ -2539,125 +2758,30 @@ test("map: works with attached collections", async () => {
 	]);
 });
 
-//
-// __proto__ keys
-//
-// A column or config key named "__proto__" must become a normal own property
-// of the hydrated entity. Plain `entity[key] = value` assignment would hit
-// Object.prototype's `__proto__` accessor instead: scalar values are silently
-// dropped, and object values would REPLACE the entity's prototype (a
-// prototype-pollution shape). Note all input rows below are built with
-// JSON.parse or computed keys — a plain `{ __proto__: ... }` literal sets the
-// prototype rather than creating an own key.
-//
-
-test("fields: a field named __proto__ hydrates as a normal own property", async () => {
-	interface ProtoRow {
-		id: number;
-		__proto__: string;
-	}
-
-	const rows = JSON.parse(
-		'[{"id":1,"__proto__":"alice"},{"id":2,"__proto__":"bob"}]',
-	) as ProtoRow[];
-
-	const hydrator = createHydrator<ProtoRow>("id").fields({ id: true, ["__proto__"]: true });
-
-	const result = await hydrate(rows, hydrator);
-
-	assert.deepStrictEqual(result, [
-		{ id: 1, ["__proto__"]: "alice" },
-		{ id: 2, ["__proto__"]: "bob" },
-	]);
-	// The key must be an own property, not a prototype mutation.
-	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
-	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
-});
-
-test("fields: an object-valued __proto__ field does not replace the entity prototype", async () => {
-	interface ProtoRow {
-		id: number;
-		__proto__: { polluted: boolean };
-	}
-
-	// e.g. a JSON column hydrated by the driver
-	const rows = JSON.parse('[{"id":1,"__proto__":{"polluted":true}}]') as ProtoRow[];
-
-	const hydrator = createHydrator<ProtoRow>("id").fields({ id: true, ["__proto__"]: true });
-
-	const result = await hydrate(rows, hydrator);
-
-	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: { polluted: true } }]);
-	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
-	// Without own-property shadowing, the object value would have become the
-	// entity's prototype: invisible to Object.keys but reachable by lookup.
-	assert.deepStrictEqual(Object.keys(result[0]!), ["id", "__proto__"]);
-	assert.strictEqual(({} as Record<string, unknown>).polluted, undefined);
-});
-
-test("auto-inclusion: a column named __proto__ hydrates as a normal own property", async () => {
-	interface ProtoRow {
-		id: number;
-		name: string;
-		__proto__: string;
-	}
-
-	const rows = JSON.parse(
-		'[{"id":1,"name":"Alice","__proto__":"x"},{"id":2,"name":"Bob","__proto__":"y"}]',
-	) as ProtoRow[];
-
-	const hydrator = createHydrator<ProtoRow>("id");
-
-	const result = await hydrator.hydrate(rows, { [EnableAutoInclusion]: true });
-
-	assert.deepStrictEqual(result, [
-		{ id: 1, name: "Alice", ["__proto__"]: "x" },
-		{ id: 2, name: "Bob", ["__proto__"]: "y" },
-	]);
-	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
-});
-
-test("fields: __proto__ works at nested collection level", async () => {
-	interface UserWithProtoPosts extends User {
-		posts$$id: number | null;
-		posts$$__proto__: string | null;
-	}
-
-	const rows: UserWithProtoPosts[] = [
-		{ id: 1, name: "Alice", posts$$id: 10, posts$$__proto__: "p10" },
-		{ id: 1, name: "Alice", posts$$id: 11, posts$$__proto__: "p11" },
-	];
-
-	const hydrator = createHydrator<UserWithProtoPosts>("id")
-		.fields({ id: true, name: true })
-		.hasMany("posts", "posts$$", (h) => h("id").fields({ id: true, ["__proto__"]: true }));
-
-	const result = await hydrate(rows, hydrator);
-
-	assert.deepStrictEqual(result, [
-		{
-			id: 1,
-			name: "Alice",
-			posts: [
-				{ id: 10, ["__proto__"]: "p10" },
-				{ id: 11, ["__proto__"]: "p11" },
-			],
-		},
-	]);
-	assert.strictEqual(Object.getPrototypeOf(result[0]!.posts[0]), Object.prototype);
-});
-
-test("extras: an extra named __proto__ hydrates as a normal own property", async () => {
+test("extend: normal keys still merge with later keys winning", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
 	const hydrator = createHydrator<User>("id")
-		.fields({ id: true })
-		.extras({
-			["__proto__"]: (input) => `proto-${input.name}`,
-		});
+		.fields({ id: true, name: true })
+		.extend((input) => ({ name: input.name.toUpperCase(), greeting: `Hi ${input.name}` }))
+		.extend(() => ({ greeting: "Hello" }));
 
 	const result = await hydrate(users, hydrator);
 
-	assert.deepStrictEqual(result, [{ id: 1, ["__proto__"]: "proto-Alice" }]);
-	assert.strictEqual(Object.getPrototypeOf(result[0]), Object.prototype);
+	assert.deepStrictEqual(result, [{ id: 1, name: "ALICE", greeting: "Hello" }]);
+});
+
+test("extend: a nullish extension is a no-op, matching Object.assign", async () => {
+	const users: User[] = [{ id: 1, name: "Alice" }];
+
+	// The Extender type forbids nullish returns, but untyped callers rely on
+	// Object.assign tolerating them.
+	const hydrator = createHydrator<User>("id")
+		.fields({ id: true, name: true })
+		.extend(() => undefined as any)
+		.extend(() => null as any);
+
+	const result = await hydrate(users, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
 });
