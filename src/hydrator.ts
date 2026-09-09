@@ -18,6 +18,7 @@ import {
 	type ExtendWith,
 	isIterable,
 	type KeyBy,
+	mapWithDeleted,
 } from "./helpers/utils.ts";
 
 ////////////////////////////////////////////////////////////////////
@@ -524,6 +525,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	/**
 	 * Composes this Hydrator with the configuration from another Hydrator.  The
 	 * other Hydrator's configuration takes precedence in case of conflicts.
+	 * This applies across collection kinds as well: a nested (`has`) or
+	 * attached (`attach`) collection on the other Hydrator replaces a
+	 * collection of either kind registered under the same key on this one.
 	 *
 	 * Both hydrators must have the same `keyBy`, and any overlapping fields
 	 * between the two input types must have compatible types.
@@ -563,6 +567,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * Configures a nested collection that exists in the same query result. The
 	 * child data is expected to be prefixed in the input (e.g., `posts$$id`,
 	 * `posts$$title`) with the given `prefix`.
+	 *
+	 * Replaces any collection — nested or attached — previously registered
+	 * under the same key.
 	 *
 	 * You may prefer to use the shorthand methods: {@link hasMany},
 	 * {@link hasOne}, or {@link hasOneOrThrow}.
@@ -647,6 +654,9 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * Configures an attached collection that is fetched from an external source.
 	 * The `fetchFn` is called exactly once per hydration with all parent inputs
 	 * to avoid N+1 queries, even when this hydrator is nested within another.
+	 *
+	 * Replaces any collection — nested or attached — previously registered
+	 * under the same key.
 	 *
 	 * For convenience, you may prefer to use the shorthand methods:
 	 * {@link attachMany}, {@link attachOne}, or {@link attachOneOrThrow}.
@@ -911,16 +921,29 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const ownProps = this.#props;
 		const otherProps = otherImpl.#props;
+
+		// The other hydrator's collection definitions take precedence across
+		// kinds, too: its definition of a key replaces an own definition of
+		// either kind, exactly as if has()/attach() had been called on this
+		// hydrator directly.
+		const collections = new Map(ownProps.collections);
+		const attachedCollections = new Map(ownProps.attachedCollections);
+		for (const [key, collection] of otherProps.collections ?? []) {
+			attachedCollections.delete(key);
+			collections.set(key, collection);
+		}
+		for (const [key, collection] of otherProps.attachedCollections ?? []) {
+			collections.delete(key);
+			attachedCollections.set(key, collection);
+		}
+
 		return new HydratorImpl({
 			keyBy: otherProps.keyBy as any,
 			fields: new Map([...(ownProps.fields ?? []), ...(otherProps.fields ?? [])]),
 			extras: new Map([...(ownProps.extras ?? []), ...(otherProps.extras ?? [])]),
 			extenders: [...(ownProps.extenders ?? []), ...(otherProps.extenders ?? [])],
-			collections: new Map([...(ownProps.collections ?? []), ...(otherProps.collections ?? [])]),
-			attachedCollections: new Map([
-				...(ownProps.attachedCollections ?? []),
-				...(otherProps.attachedCollections ?? []),
-			]),
+			collections,
+			attachedCollections,
 			mapFns: [...(this.#props.mapFns ?? []), ...(otherProps.mapFns ?? [])],
 			orderings: [...(ownProps.orderings ?? []), ...(otherProps.orderings ?? [])],
 			orderByKeys: otherProps.orderByKeys ?? ownProps.orderByKeys,
@@ -970,6 +993,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			...this.#props,
 
 			collections: newCollections,
+			// A key names a single output property regardless of collection kind,
+			// so redefining it as a nested collection must drop any attached
+			// collection previously registered under the same key.
+			attachedCollections:
+				this.#props.attachedCollections && mapWithDeleted(this.#props.attachedCollections, key),
 		});
 	}
 
@@ -994,6 +1022,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		return new HydratorImpl({
 			...this.#props,
 
+			// See the corresponding note in has(): the same key must not remain
+			// registered as both a nested and an attached collection.
+			collections: this.#props.collections && mapWithDeleted(this.#props.collections, key),
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
