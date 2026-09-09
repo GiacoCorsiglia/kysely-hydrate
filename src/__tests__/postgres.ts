@@ -11,10 +11,8 @@ import { type SeedDB } from "./fixture.ts";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// `npm run test:db` provisions Postgres and writes POSTGRES_URL to .env, which
-// the npm test scripts load; CI sets it directly. The fallback covers a
-// `docker compose up postgres` by hand, which maps to 5434 to avoid colliding
-// with a Postgres already listening on the standard port.
+// Default to port 5434 for local docker-compose (avoids conflict with local postgres)
+// CI uses POSTGRES_URL or the default port 5432
 const connectionString =
 	process.env.POSTGRES_URL || "postgres://postgres:postgres@localhost:5434/kysely_hydrate_test";
 

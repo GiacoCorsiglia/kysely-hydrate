@@ -1737,37 +1737,18 @@ It should run anywhere Kysely runs, but I haven't tested it on anything but Node
 ## Development
 
 Tests run against both SQLite (in-memory, via `better-sqlite3`) and PostgreSQL,
-since a few behaviours are dialect-specific.
+since some behaviour is dialect-specific.
 
 ```sh
 npm install
-npm run test:db   # provision PostgreSQL; only needed once per machine/container
-npm run test:all  # SQLite, then PostgreSQL
+docker compose up --detach --wait postgres  # published on port 5434
+npm run test:all                            # SQLite, then PostgreSQL
 ```
 
-`npm run test:db` is idempotent and picks a backend automatically:
+Set `POSTGRES_URL` to run against a PostgreSQL of your own instead; that is how
+CI points the suite at its service container.
 
-| Condition                              | Backend                       | Port              |
-| -------------------------------------- | ----------------------------- | ----------------- |
-| `POSTGRES_URL` is already set          | that instance, left untouched | —                 |
-| A Docker daemon is reachable           | `docker-compose.yml`          | 5434              |
-| Otherwise, a packaged cluster and root | `pg_ctlcluster`               | the cluster's own |
-
-It writes `POSTGRES_URL` to `.env` (gitignored), which the `npm test` scripts
-read via node's `--env-file-if-exists`. A `POSTGRES_URL` in the real
-environment always takes precedence over `.env`, which is how CI supplies its
-own service container.
-
-Force a backend with `KYSELY_HYDRATE_DB_BACKEND=docker|native` if the
-autodetection guesses wrong.
-
-The remaining checks:
-
-```sh
-npm run typecheck
-npm run lint
-npm run format
-```
+Then `npm run typecheck`, `npm run lint` and `npm run format`.
 
 ## Acknowledgements
 

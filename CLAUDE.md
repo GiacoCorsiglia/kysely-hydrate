@@ -11,11 +11,9 @@ written using Node.js's builtin testing library. See `package.json` scripts.
 Tests use better-sqlite3 for in-memory SQLite databases and Postgres for
 pg-specific cases. Use `npm run test:all` to run them all.
 
-Postgres must be running first. `npm run test:db` provisions it (idempotently,
-via Docker or a local cluster, whichever is available) and writes `POSTGRES_URL`
-to `.env`, which the test scripts read automatically. In Claude Code on the web
-the `.claude/hooks/session-start.sh` hook already did this, so `npm run test:all`
-just works. See the Development section of the README.
+Postgres must be running first: `docker compose up --detach --wait postgres`.
+In Claude Code on the web the `.claude/hooks/session-start.sh` hook already
+started one, so `npm run test:all` just works.
 
 After making changes, always run
 

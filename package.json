@@ -30,11 +30,10 @@
 	"scripts": {
 		"build": "tsdown",
 		"release": "./scripts/release.sh",
-		"test": "node --env-file-if-exists=.env --test",
+		"test": "node --test",
 		"test:sqlite": "HYDRATE_TEST_DB=sqlite npm run test",
 		"test:postgres": "HYDRATE_TEST_DB=postgres npm run test",
 		"test:all": "npm run test:sqlite && npm run test:postgres",
-		"test:db": "./scripts/test-db.sh",
 		"typecheck": "tsgo",
 		"typecheck:tsc": "tsc",
 		"lint": "oxlint",
