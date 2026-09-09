@@ -819,12 +819,14 @@ const PROTO_KEY = "__proto__";
  * composite of them.  `source` describes where the key came from, e.g. "a
  * field name".
  *
- * Applied to keys that become output keys, where the name corrupts the entity,
- * and to `keyBy`, where every row reads the same non-nil `Object.prototype`
- * and so unrelated rows collapse into one entity.  Other column references
- * (orderings, attached collection match columns) are deliberately left alone:
- * the name is useless there too, but the worst case is an ordering or a match
- * that does nothing.
+ * Applied only where the name can arrive without anyone choosing it: from row
+ * data (an extender's returned keys), or from the database schema (a column,
+ * a generated field list, a `keyBy` derived from a primary key).  Names the
+ * caller invents - extras, collection keys - are deliberately left alone,
+ * along with column references that can only make an ordering or an attach
+ * match do nothing.  The name still cannot work in those positions; it just
+ * takes deliberately typing it to get there, and guarding every position
+ * costs more than the mistake does.
  */
 function assertNotProtoKey(
 	keys: PropertyKey | readonly PropertyKey[],
@@ -883,8 +885,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	extras(extras: Extras<any>): any {
-		assertNotProtoKey(Object.keys(extras), "an extra name");
-
 		return new HydratorImpl({
 			...this.#props,
 
@@ -972,8 +972,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	has(mode: CollectionMode, key: string, prefix: string, hydrator: any): any {
-		assertNotProtoKey(key, "a collection key");
-
 		const newCollections = new Map(this.#props.collections).set(key, {
 			prefix,
 			mode,
@@ -1010,8 +1008,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
-		assertNotProtoKey(key, "a collection key");
-
 		return new HydratorImpl({
 			...this.#props,
 

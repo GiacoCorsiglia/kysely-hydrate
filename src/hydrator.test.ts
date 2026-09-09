@@ -2523,12 +2523,14 @@ test("map: works with attached collections", async () => {
 //
 // "__proto__" is not a usable key name in either direction: reading it from a
 // row resolves to Object.prototype rather than to a column value, and writing
-// it to an entity goes through Object.prototype's accessor.  Config keys are
-// rejected when the hydrator is built; row columns and extender keys are
-// rejected during hydration.  Column references that can only make an ordering
-// or an attach match do nothing are left unguarded.  Note the rows below are
-// built with JSON.parse or computed keys - a plain `{ __proto__: ... }` literal
-// sets the prototype instead of creating an own key.
+// it to an entity goes through Object.prototype's accessor.  It is rejected
+// where it can arrive without anyone choosing it - from row data, or from the
+// schema - which is at build time for schema-derived config and during
+// hydration for row columns and extender keys.  Names the caller invents, like
+// extras and collection keys, are left unguarded (see assertNotProtoKey).
+// Note the rows below are built with JSON.parse or computed keys - a plain
+// `{ __proto__: ... }` literal sets the prototype instead of creating an own
+// key.
 //
 
 test("__proto__: rejected when it names a key in a hydrator config", () => {
@@ -2537,11 +2539,6 @@ test("__proto__: rejected when it names a key in a hydrator config", () => {
 	const configs: Record<string, () => unknown> = {
 		"fields, object form": () => hydrator.fields({ ["__proto__"]: true } as any),
 		"fields, array form": () => hydrator.fields(["__proto__"] as any),
-		extras: () => hydrator.extras({ ["__proto__"]: (u: User) => u.name } as any),
-		"joined collection key": () =>
-			hydrator.hasMany("__proto__" as any, "posts$$", (h: any) => h("id")),
-		"attached collection key": () =>
-			hydrator.attachMany("__proto__" as any, async () => [], { matchChild: "id" } as any),
 		// Reading it would yield Object.prototype for every row, which is never
 		// nil, collapsing unrelated rows into a single entity.
 		keyBy: () => createHydrator<User>("__proto__" as any),
