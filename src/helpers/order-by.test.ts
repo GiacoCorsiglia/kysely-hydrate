@@ -627,6 +627,55 @@ describe("sqlCompare duck-typed types", () => {
 		}
 	});
 
+	it("should stay exact when only one decimal can read the other", () => {
+		// big.js stringifies whatever it is handed, so it reads a decimal.js
+		// instance; decimal.js throws on a foreign object. Both argument orders
+		// must reach the same exact answer rather than one of them degrading to
+		// a lossy fallback -- these two differ beyond double precision.
+		class Reader {
+			readonly value: string;
+			constructor(value: string) {
+				this.value = value;
+			}
+			cmp(other: unknown): number {
+				const mine = this.value;
+				const theirs = String(other);
+				return mine < theirs ? -1 : mine > theirs ? 1 : 0;
+			}
+			toString(): string {
+				return this.value;
+			}
+		}
+		class Strict {
+			readonly value: string;
+			constructor(value: string) {
+				this.value = value;
+			}
+			cmp(other: unknown): number {
+				if (!(other instanceof Strict)) {
+					throw new Error("foreign operand");
+				}
+				return this.value < other.value ? -1 : this.value > other.value ? 1 : 0;
+			}
+			toString(): string {
+				return this.value;
+			}
+		}
+
+		const lower = new Reader("1.0000000000000000001");
+		const higher = new Strict("1.0000000000000000002");
+		assert.ok(sqlCompare(lower, higher) < 0);
+		assert.ok(sqlCompare(higher, lower) > 0);
+	});
+
+	it("should classify Temporal by the prototype's tag, not an instance's", () => {
+		// A plain object carrying a Temporal tag must not cache a Temporal
+		// handler under Object.prototype and re-rank every plain object.
+		const impostor = { [Symbol.toStringTag]: "Temporal.Instant" };
+		sqlCompare(impostor, {});
+		assert.ok(sqlCompare({ a: 1 }, new PlainDateStub("2024-01-01")) > 0);
+	});
+
 	it("should fall back rather than throw when a decimal rejects an operand", () => {
 		const throwing = new DecimalStub(1, undefined, true);
 		assert.doesNotThrow(() => sqlCompare(throwing, new DecimalStub(2)));
@@ -674,14 +723,54 @@ describe("sqlCompare duck-typed types", () => {
 		assert.ok(sqlCompare(a, b) < 0);
 		assert.equal(sqlCompare(a, a), 0);
 
-		// Duration.compare throws for calendar-ambiguous units, but works for
-		// plain time units.
+		// Durations are ordered by nominal length rather than natively, since
+		// Temporal.Duration.compare is only a partial order.
 		assert.ok(sqlCompare(new DurationStub("PT90M"), new DurationStub("PT2H")) < 0);
 		assert.doesNotThrow(() => sqlCompare(new DurationStub("P1M"), new DurationStub("P30D")));
-		assert.ok(
-			Math.sign(sqlCompare(new DurationStub("P1M"), new DurationStub("P30D"))) ===
-				-Math.sign(sqlCompare(new DurationStub("P30D"), new DurationStub("P1M"))),
+		// A month is nominally 30 days, matching how Postgres orders intervals.
+		assert.equal(sqlCompare(new DurationStub("P1M"), new DurationStub("P30D")), 0);
+		assert.ok(sqlCompare(new DurationStub("P1M"), new DurationStub("P31D")) < 0);
+		assert.ok(sqlCompare(new DurationStub("P1Y"), new DurationStub("P1M")) > 0);
+	});
+
+	it("should stay transitive for a Duration whose compare is only partial", () => {
+		// The spec short-circuits Duration.compare to 0 for identical field
+		// sets, so a value cannot be probed for comparability: P1M answers
+		// "orderable" against itself yet throws against P2M. Ordering durations
+		// natively at all is therefore unsound, and this is the shape that
+		// exposes it.
+		const durations = ["P1M", "P5Y", "PT1H", "PT60M", "P10D", "P9D"].map(
+			(iso) => new DurationStub(iso),
 		);
+
+		for (const a of durations) {
+			for (const b of durations) {
+				assert.ok(Math.sign(sqlCompare(a, b)) === -Math.sign(sqlCompare(b, a)), `${a} vs ${b}`);
+				for (const c of durations) {
+					if (sqlCompare(a, b) <= 0 && sqlCompare(b, c) <= 0) {
+						assert.ok(sqlCompare(a, c) <= 0, `${a} <= ${b} <= ${c} but ${a} > ${c}`);
+					}
+				}
+			}
+		}
+
+		// PT1H and PT60M are the same length, so equal.
+		assert.equal(sqlCompare(new DurationStub("PT1H"), new DurationStub("PT60M")), 0);
+	});
+
+	it("should share one handler between a Temporal type and its subclasses", () => {
+		// A subclass inherits the static compare, so both must order through it
+		// rather than falling to a cross-handler tiebreak -- otherwise two
+		// values that compare equal would order differently against a third.
+		class MyDuration extends DurationStub {}
+		const hour = new DurationStub("PT1H");
+		const sixtyMinutes = new DurationStub("PT60M");
+		const thirtyMinutes = new MyDuration("PT30M");
+
+		assert.equal(sqlCompare(hour, sixtyMinutes), 0);
+		// Equal values must compare identically against any third value.
+		assert.equal(sqlCompare(hour, thirtyMinutes), sqlCompare(sixtyMinutes, thirtyMinutes));
+		assert.ok(sqlCompare(thirtyMinutes, hour) < 0);
 	});
 
 	it("should handle objects with no prototype", () => {

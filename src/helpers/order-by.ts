@@ -155,7 +155,14 @@ function stringForm(value: unknown): string {
 	try {
 		return String(value);
 	} catch {
-		return Object.prototype.toString.call(value);
+		// Even the fallback can fail on a sufficiently hostile object, and a
+		// comparator that throws mid-sort leaves the array in an arbitrary
+		// state, so every value must yield some string.
+		try {
+			return Object.prototype.toString.call(value);
+		} catch {
+			return "";
+		}
 	}
 }
 
@@ -335,13 +342,15 @@ const decimalHandler: TypeHandler = {
 };
 
 function compareDecimals(a: unknown, b: unknown): number {
-	let result: number | undefined;
-	try {
-		result = clampSign(rawDecimalCompare(a, b));
-	} catch {
-		// Decimal libraries throw on operands they cannot interpret -- notably
-		// an instance of a *different* decimal library.
-		result = undefined;
+	let result = tryDecimalCompare(a, b);
+	if (result === undefined) {
+		// Support is not always symmetric: big.js stringifies whatever it is
+		// handed and so reads a decimal.js instance fine, while decimal.js
+		// throws on a foreign object. Asking the other operand keeps both
+		// argument orders on the same exact answer, instead of letting one
+		// direction fall through to the projection below and disagree.
+		const reversed = tryDecimalCompare(b, a);
+		result = reversed === undefined ? undefined : -reversed;
 	}
 	if (result !== undefined) {
 		return result;
@@ -356,13 +365,27 @@ function compareDecimals(a: unknown, b: unknown): number {
 	return compareNumericProjection(a, b);
 }
 
-/** Invokes whichever comparison method the decimal library provides. */
-function rawDecimalCompare(a: unknown, b: unknown): unknown {
+/**
+ * Invokes whichever comparison method the decimal library provides. Returns
+ * undefined when the library refuses the operand or reports an unorderable
+ * result, leaving the caller to decide the fallback.
+ */
+function tryDecimalCompare(a: unknown, b: unknown): number | undefined {
 	const decimal = a as {
 		cmp?: (other: unknown) => unknown;
 		comparedTo?: (other: unknown) => unknown;
 	};
-	return typeof decimal.cmp === "function" ? decimal.cmp(b) : decimal.comparedTo!(b);
+	try {
+		if (typeof decimal.cmp === "function") {
+			return clampSign(decimal.cmp(b));
+		}
+		if (typeof decimal.comparedTo === "function") {
+			return clampSign(decimal.comparedTo(b));
+		}
+	} catch {
+		// The library rejected the operand outright.
+	}
+	return undefined;
 }
 
 /**
@@ -421,11 +444,82 @@ const otherHandler: TypeHandler = {
  * them by tag ("Temporal.Instant" before "Temporal.PlainDate", etc.).
  *
  * `Temporal.PlainMonthDay` has no `compare` at all -- a month/day pair has no
- * meaningful order -- and `Temporal.Duration.compare` throws for durations
- * with calendar-ambiguous units (comparing months against days needs a
- * starting point). Both fall back to string forms.
+ * meaningful order -- so it falls back to string forms, consistently for every
+ * pair. `Temporal.Duration` is handled separately; see `durationHandler`.
  */
+/**
+ * Temporal handlers are shared by native `compare` function rather than by
+ * prototype. A subclass inherits its parent's static `compare`, so both must
+ * resolve to the *same* handler -- otherwise they take the cross-handler path
+ * and get ordered against each other by something other than the native
+ * comparison, which contradicts how each orders its own values.
+ */
+const temporalHandlers = new WeakMap<object, TypeHandler>();
+
+/**
+ * Nanoseconds per duration field, using Postgres's interval convention: a
+ * month is 30 days and a year is 12 of those. Calendar units have no exact
+ * length, so any total order over them has to pick nominal ones.
+ */
+const DURATION_FIELD_NANOS: readonly (readonly [string, number])[] = [
+	["years", 360 * 86_400e9],
+	["months", 30 * 86_400e9],
+	["weeks", 7 * 86_400e9],
+	["days", 86_400e9],
+	["hours", 3_600e9],
+	["minutes", 60e9],
+	["seconds", 1e9],
+	["milliseconds", 1e6],
+	["microseconds", 1e3],
+	["nanoseconds", 1],
+];
+
+/**
+ * `Temporal.Duration` is the one Temporal type whose `compare` is partial: it
+ * throws once years, months, or weeks are involved, because relating those to
+ * days needs a starting point. Worse, it short-circuits to 0 when both
+ * operands have identical fields, so a value cannot be asked whether it is
+ * comparable -- `compare(v, v)` succeeds even for a duration that throws
+ * against everything else.
+ *
+ * A partial order cannot be completed pairwise without becoming intransitive,
+ * so durations are not compared natively at all. They are projected onto a
+ * nominal length instead, which is total, transitive, and exact for durations
+ * built from fixed-length units.
+ */
+const durationHandler: TypeHandler = {
+	rank: Rank.Temporal,
+	name: "Temporal.Duration",
+	compare(a: Record<string, unknown>, b: Record<string, unknown>) {
+		const aNanos = durationNanos(a);
+		const bNanos = durationNanos(b);
+		if (aNanos < bNanos) {
+			return -1;
+		}
+		if (aNanos > bNanos) {
+			return 1;
+		}
+		return compareUnordered(aNanos !== aNanos, bNanos !== bNanos);
+	},
+	mixed: byHandlerName,
+};
+
+function durationNanos(value: Record<string, unknown>): number {
+	let total = 0;
+	for (const [field, nanos] of DURATION_FIELD_NANOS) {
+		const amount = value[field];
+		if (typeof amount === "number") {
+			total += amount * nanos;
+		}
+	}
+	return total;
+}
+
 function makeTemporalHandler(value: object, tag: string): TypeHandler {
+	if (tag === "Temporal.Duration") {
+		return durationHandler;
+	}
+
 	const constructor = (
 		Object.getPrototypeOf(value) as { constructor?: { compare?: unknown } } | null
 	)?.constructor;
@@ -433,6 +527,11 @@ function makeTemporalHandler(value: object, tag: string): TypeHandler {
 
 	if (typeof compare !== "function") {
 		return { rank: Rank.Temporal, name: tag, compare: compareStringForms, mixed: byHandlerName };
+	}
+
+	const shared = temporalHandlers.get(compare as object);
+	if (shared !== undefined) {
+		return shared;
 	}
 
 	const orderable = (value: unknown): boolean => {
@@ -443,7 +542,7 @@ function makeTemporalHandler(value: object, tag: string): TypeHandler {
 		}
 	};
 
-	return {
+	const handler: TypeHandler = {
 		rank: Rank.Temporal,
 		name: tag,
 		compare(a: unknown, b: unknown) {
@@ -469,6 +568,8 @@ function makeTemporalHandler(value: object, tag: string): TypeHandler {
 		},
 		mixed: byHandlerName,
 	};
+	temporalHandlers.set(compare as object, handler);
+	return handler;
 }
 
 /**
@@ -476,7 +577,20 @@ function makeTemporalHandler(value: object, tag: string): TypeHandler {
  * constructor -- `handlerFor` memoizes the result -- so the duck-type probing
  * here costs nothing per comparison.
  */
-function classify(value: object): TypeHandler {
+/** Reads a prototype's string tag without letting a hostile getter escape. */
+function readTag(prototype: object | null): string | undefined {
+	if (prototype === null) {
+		return undefined;
+	}
+	try {
+		const tag = (prototype as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag];
+		return typeof tag === "string" ? tag : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function classify(value: object, prototype: object | null): TypeHandler {
 	if (value instanceof Date) {
 		return dateHandler;
 	}
@@ -488,20 +602,23 @@ function classify(value: object): TypeHandler {
 		return bytesHandler;
 	}
 
-	const tag = (value as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag];
-	if (typeof tag === "string" && tag.startsWith("Temporal.")) {
+	// Read from the prototype, not the instance. Handlers are memoized per
+	// prototype, so classifying on instance state would let whichever value
+	// arrived first decide the handler for every value sharing its prototype:
+	// a single object literal carrying a "Temporal.*" tag would rank every
+	// plain object in the process as Temporal. Real Temporal values carry the
+	// tag on the prototype.
+	const tag = readTag(prototype);
+	if (tag !== undefined && tag.startsWith("Temporal.")) {
 		return makeTemporalHandler(value, tag);
 	}
 
-	// Probed on the prototype, not the instance. The memo below is keyed by
-	// prototype, so reading own properties here would make one instance's shape
-	// decide the handler for every value sharing its prototype -- and which
-	// instance got there first would depend on process history. Every decimal
-	// library puts these on the prototype.
-	const prototype = Object.getPrototypeOf(value) as { cmp?: unknown; comparedTo?: unknown } | null;
+	// Probed on the prototype for the same reason as the tag above. Every
+	// decimal library puts these on the prototype.
+	const shape = prototype as { cmp?: unknown; comparedTo?: unknown } | null;
 	if (
-		prototype !== null &&
-		(typeof prototype.cmp === "function" || typeof prototype.comparedTo === "function")
+		shape !== null &&
+		(typeof shape.cmp === "function" || typeof shape.comparedTo === "function")
 	) {
 		return decimalHandler;
 	}
@@ -548,7 +665,7 @@ function handlerFor(value: NonNullable<unknown>): TypeHandler {
 		return cached;
 	}
 
-	const handler = classify(value as object);
+	const handler = classify(value as object, prototype);
 	handlerCache.set(prototype, handler);
 	return handler;
 }

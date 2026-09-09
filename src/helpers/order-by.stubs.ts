@@ -130,21 +130,43 @@ export class PlainMonthDayStub extends TemporalStub {
  */
 export class DurationStub extends TemporalStub {
 	static compare(a: DurationStub, b: DurationStub): number {
-		const aMinutes = DurationStub.#toMinutes(a.value);
-		const bMinutes = DurationStub.#toMinutes(b.value);
-		return aMinutes < bMinutes ? -1 : aMinutes > bMinutes ? 1 : 0;
-	}
-
-	static #toMinutes(iso: string): number {
-		const [datePart = "", timePart = ""] = iso.replace(/^P/, "").split("T");
-		if (/[YMW]/.test(datePart)) {
+		// Mirrors the spec: identical field sets short-circuit before the
+		// calendar-unit check, so this succeeds even for values that cannot be
+		// compared against anything else.
+		if (a.value === b.value) {
+			return 0;
+		}
+		if (a.#hasCalendarUnits() || b.#hasCalendarUnits()) {
 			throw new RangeError("A starting point is required for years, months, or weeks comparison");
 		}
+		const aTotal = a.minutes + a.hours * 60 + a.days * 24 * 60;
+		const bTotal = b.minutes + b.hours * 60 + b.days * 24 * 60;
+		return aTotal < bTotal ? -1 : aTotal > bTotal ? 1 : 0;
+	}
 
-		const days = Number(/(\d+)D/.exec(datePart)?.[1] ?? 0);
-		const hours = Number(/(\d+)H/.exec(timePart)?.[1] ?? 0);
-		const minutes = Number(/(\d+)M/.exec(timePart)?.[1] ?? 0);
-		return days * 24 * 60 + hours * 60 + minutes;
+	readonly years: number;
+	readonly months: number;
+	readonly weeks: number;
+	readonly days: number;
+	readonly hours: number;
+	readonly minutes: number;
+
+	constructor(value: string) {
+		super(value);
+		const [datePart = "", timePart = ""] = value.replace(/^P/, "").split("T");
+		const field = (part: string, unit: string) =>
+			Number(new RegExp(`(\\d+)${unit}`).exec(part)?.[1] ?? 0);
+
+		this.years = field(datePart, "Y");
+		this.months = field(datePart, "M");
+		this.weeks = field(datePart, "W");
+		this.days = field(datePart, "D");
+		this.hours = field(timePart, "H");
+		this.minutes = field(timePart, "M");
+	}
+
+	#hasCalendarUnits(): boolean {
+		return this.years !== 0 || this.months !== 0 || this.weeks !== 0;
 	}
 
 	override get [Symbol.toStringTag](): string {
