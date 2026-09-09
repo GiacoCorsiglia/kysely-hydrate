@@ -123,8 +123,15 @@ interface TypeHandler {
  * are fixed strings, so the result is stable across runs -- which matters,
  * because an unstable tiebreak would make sort output depend on input order.
  */
-function byHandlerName(_a: unknown, _b: unknown, ha: TypeHandler, hb: TypeHandler): number {
-	return ha.name < hb.name ? -1 : ha.name > hb.name ? 1 : 0;
+function byHandlerName(a: unknown, b: unknown, ha: TypeHandler, hb: TypeHandler): number {
+	if (ha.name !== hb.name) {
+		return ha.name < hb.name ? -1 : 1;
+	}
+	// Two handlers can share a name when the same logical type arrives from two
+	// implementations (a native Temporal value and a polyfilled one). Returning
+	// 0 would call them all equal while each implementation still ordered its
+	// own values, which is not transitive.
+	return compareStringForms(a, b);
 }
 
 /**
@@ -196,7 +203,8 @@ const numericHandler: TypeHandler = {
 		}
 		return compareUnordered(a !== a, b !== b);
 	},
-	mixed: compareDecimalMixed,
+	// Only ever reached with a decimal on the other side; see decimalHandler.
+	mixed: (a, b) => -compareDecimals(b, a),
 };
 
 /**
@@ -237,20 +245,39 @@ const stringHandler: TypeHandler = {
 };
 
 /**
- * Byte-wise ordering for binary columns (Postgres `bytea` arrives as a
- * `Buffer`), matching how SQL orders binary data: compare byte by byte, then
- * shorter-is-first when one is a prefix of the other.
+ * Element-wise ordering for binary columns (Postgres `bytea` arrives as a
+ * `Buffer`), matching how SQL orders binary data: compare position by
+ * position, then shorter-is-first when one is a prefix of the other.
+ *
+ * Elements are compared numerically rather than by raw identity, which for
+ * `Buffer`/`Uint8Array` is the same unsigned byte order but also gives the
+ * right answer for the signed and floating-point views -- a `Float64Array`
+ * element can be NaN, and NaN must not be compared with `<`/`>`.
  */
 const bytesHandler: TypeHandler = {
 	rank: Rank.Bytes,
 	name: "bytes",
-	compare(a: Uint8Array, b: Uint8Array) {
+	compare(a: ArrayLike<number | bigint>, b: ArrayLike<number | bigint>) {
 		const shared = a.length < b.length ? a.length : b.length;
 		for (let i = 0; i < shared; i++) {
-			const aByte = a[i]!;
-			const bByte = b[i]!;
-			if (aByte !== bByte) {
-				return aByte < bByte ? -1 : 1;
+			const aElement = a[i]!;
+			const bElement = b[i]!;
+			// Equal elements are the overwhelmingly common case, so it is the
+			// only one that costs a single comparison.
+			if (aElement !== bElement) {
+				if (aElement < bElement) {
+					return -1;
+				}
+				if (aElement > bElement) {
+					return 1;
+				}
+				// Neither ordered nor equal: at least one element is NaN. Two
+				// NaNs are indistinguishable, so fall through to the next
+				// position rather than calling the whole pair equal.
+				const unordered = compareUnordered(aElement !== aElement, bElement !== bElement);
+				if (unordered !== 0) {
+					return unordered;
+				}
 			}
 		}
 		return a.length - b.length;
@@ -268,12 +295,25 @@ const arrayHandler: TypeHandler = {
 	rank: Rank.Array,
 	name: "array",
 	compare(a: readonly unknown[], b: readonly unknown[]) {
+		// A self-referential or very deeply nested array would otherwise recurse
+		// until the stack overflows. Length is the only comparison available
+		// that cannot itself recurse -- String() on a deeply nested array
+		// overflows in exactly the same way.
+		if (arrayDepth >= MAX_ARRAY_DEPTH) {
+			return a.length - b.length;
+		}
+
 		const shared = a.length < b.length ? a.length : b.length;
-		for (let i = 0; i < shared; i++) {
-			const element = sqlCompare(a[i], b[i]);
-			if (element !== 0) {
-				return element;
+		arrayDepth++;
+		try {
+			for (let i = 0; i < shared; i++) {
+				const element = sqlCompare(a[i], b[i]);
+				if (element !== 0) {
+					return element;
+				}
 			}
+		} finally {
+			arrayDepth--;
 		}
 		return a.length - b.length;
 	},
@@ -289,63 +329,76 @@ const decimalHandler: TypeHandler = {
 	rank: Rank.Numeric,
 	name: "decimal",
 	compare: compareDecimals,
-	mixed: compareDecimalMixed,
+	// The numeric rank holds exactly two handlers, so `mixed` is only ever
+	// reached with a plain number/bigint on the other side.
+	mixed: (a, b) => compareDecimals(a, b),
 };
 
-function compareDecimals(a: any, b: any): number {
+function compareDecimals(a: unknown, b: unknown): number {
 	let result: number | undefined;
 	try {
-		result = clampSign(typeof a.cmp === "function" ? a.cmp(b) : a.comparedTo(b));
+		result = clampSign(rawDecimalCompare(a, b));
 	} catch {
-		// Decimal libraries throw on operands they cannot interpret at all.
-		return compareStringForms(a, b);
+		// Decimal libraries throw on operands they cannot interpret -- notably
+		// an instance of a *different* decimal library.
+		result = undefined;
 	}
 	if (result !== undefined) {
 		return result;
 	}
-	// An unorderable result means a decimal NaN. Pin it after real values, the
-	// same treatment numeric NaN gets, rather than letting it fall somewhere
-	// else in the ordering.
-	return compareUnordered(isUnorderableNumeric(a), isUnorderableNumeric(b));
+
+	// The comparison produced no usable answer, either because an operand is a
+	// decimal NaN or because the two came from libraries that cannot read each
+	// other. Both fall back to the same numeric projection: introducing a
+	// second ordering here (comparing string forms, say) would make the numeric
+	// rank intransitive, since some pairs in it would then be ordered
+	// numerically and others lexicographically.
+	return compareNumericProjection(a, b);
+}
+
+/** Invokes whichever comparison method the decimal library provides. */
+function rawDecimalCompare(a: unknown, b: unknown): unknown {
+	const decimal = a as {
+		cmp?: (other: unknown) => unknown;
+		comparedTo?: (other: unknown) => unknown;
+	};
+	return typeof decimal.cmp === "function" ? decimal.cmp(b) : decimal.comparedTo!(b);
 }
 
 /**
- * Whether a numeric-ranked value has no place in the numeric ordering. A
- * decimal NaN reveals itself by comparing unorderably against itself, which
- * works whichever decimal library produced it.
+ * Orders numeric-ranked values by their `Number()` value. Lossy for decimals
+ * beyond double precision, but it is a total order across the whole rank,
+ * which is what a fallback has to be. Values with no numeric reading (a
+ * decimal NaN) sort last, matching how NaN is treated everywhere else.
  */
-function isUnorderableNumeric(value: any): boolean {
+function compareNumericProjection(a: unknown, b: unknown): number {
+	const aNum = toNumber(a);
+	const bNum = toNumber(b);
+	if (aNum < bNum) {
+		return -1;
+	}
+	if (aNum > bNum) {
+		return 1;
+	}
+	return compareUnordered(aNum !== aNum, bNum !== bNum);
+}
+
+function toNumber(value: unknown): number {
 	if (typeof value === "number") {
-		return value !== value;
+		return value;
 	}
 	if (typeof value === "bigint") {
-		return false;
+		return Number(value);
 	}
-	try {
-		return (
-			clampSign(typeof value.cmp === "function" ? value.cmp(value) : value.comparedTo(value)) ===
-			undefined
-		);
-	} catch {
-		return true;
-	}
+	return Number(stringForm(value));
 }
 
 /**
- * Compares a decimal against a plain `number`/`bigint`. Every decimal library
- * checked accepts a plain number argument to `cmp`/`comparedTo`, so the
- * decimal side drives the comparison and the result is negated when the
- * decimal is the right-hand operand.
+ * Bounds recursion into nested arrays. Deep nesting is not something a SQL
+ * driver produces, so this only ever fires for pathological input.
  */
-function compareDecimalMixed(a: any, b: any, ha: TypeHandler, hb: TypeHandler): number {
-	if (ha === decimalHandler) {
-		return compareDecimals(a, b);
-	}
-	if (hb === decimalHandler) {
-		return -compareDecimals(b, a);
-	}
-	return byHandlerName(a, b, ha, hb);
-}
+const MAX_ARRAY_DEPTH = 64;
+let arrayDepth = 0;
 
 const otherHandler: TypeHandler = {
 	rank: Rank.Other,
@@ -382,15 +435,37 @@ function makeTemporalHandler(value: object, tag: string): TypeHandler {
 		return { rank: Rank.Temporal, name: tag, compare: compareStringForms, mixed: byHandlerName };
 	}
 
+	const orderable = (value: unknown): boolean => {
+		try {
+			return clampSign(compare(value, value)) !== undefined;
+		} catch {
+			return false;
+		}
+	};
+
 	return {
 		rank: Rank.Temporal,
 		name: tag,
 		compare(a: unknown, b: unknown) {
 			try {
-				return clampSign(compare(a, b)) ?? compareStringForms(a, b);
+				const result = clampSign(compare(a, b));
+				if (result !== undefined) {
+					return result;
+				}
 			} catch {
-				return compareStringForms(a, b);
+				// Fall through to the partition below.
 			}
+
+			// This pair has no native ordering, but others of the same type may.
+			// Falling straight to string forms would mix two orderings within
+			// one type and break transitivity, so instead the values that can
+			// be ordered natively are kept ahead of the ones that cannot, and
+			// string forms only break ties *within* the unorderable group.
+			const aOrderable = orderable(a);
+			if (aOrderable !== orderable(b)) {
+				return aOrderable ? -1 : 1;
+			}
+			return compareStringForms(a, b);
 		},
 		mixed: byHandlerName,
 	};
@@ -418,8 +493,16 @@ function classify(value: object): TypeHandler {
 		return makeTemporalHandler(value, tag);
 	}
 
-	const candidate = value as { cmp?: unknown; comparedTo?: unknown };
-	if (typeof candidate.cmp === "function" || typeof candidate.comparedTo === "function") {
+	// Probed on the prototype, not the instance. The memo below is keyed by
+	// prototype, so reading own properties here would make one instance's shape
+	// decide the handler for every value sharing its prototype -- and which
+	// instance got there first would depend on process history. Every decimal
+	// library puts these on the prototype.
+	const prototype = Object.getPrototypeOf(value) as { cmp?: unknown; comparedTo?: unknown } | null;
+	if (
+		prototype !== null &&
+		(typeof prototype.cmp === "function" || typeof prototype.comparedTo === "function")
+	) {
 		return decimalHandler;
 	}
 
@@ -442,13 +525,11 @@ const primitiveHandlers: Partial<Record<string, TypeHandler>> = {
 };
 
 /**
- * Memoized per constructor. Keyed weakly so classifying values from
- * dynamically created classes does not retain those classes.
+ * Memoized per prototype -- the object that actually determines a value's
+ * shape. Keyed weakly so classifying values from dynamically created classes
+ * does not retain those classes.
  */
 const handlerCache = new WeakMap<object, TypeHandler>();
-
-/** Stands in for values whose `constructor` is missing (null-prototype objects). */
-const noConstructor: object = {};
 
 function handlerFor(value: NonNullable<unknown>): TypeHandler {
 	const primitive = primitiveHandlers[typeof value];
@@ -456,21 +537,19 @@ function handlerFor(value: NonNullable<unknown>): TypeHandler {
 		return primitive;
 	}
 
-	const constructor = (value as { constructor?: unknown }).constructor;
-	// A non-object constructor (someone assigned to the property) cannot key a
-	// WeakMap; treat it as unclassifiable rather than throwing.
-	const key =
-		typeof constructor === "function" || (typeof constructor === "object" && constructor !== null)
-			? (constructor as object)
-			: noConstructor;
+	const prototype = Object.getPrototypeOf(value) as object | null;
+	if (prototype === null) {
+		// A null-prototype object has no shape to classify or to key a cache by.
+		return otherHandler;
+	}
 
-	const cached = handlerCache.get(key);
+	const cached = handlerCache.get(prototype);
 	if (cached !== undefined) {
 		return cached;
 	}
 
-	const handler = key === noConstructor ? otherHandler : classify(value as object);
-	handlerCache.set(key, handler);
+	const handler = classify(value as object);
+	handlerCache.set(prototype, handler);
 	return handler;
 }
 
@@ -506,15 +585,25 @@ function handlerFor(value: NonNullable<unknown>): TypeHandler {
  * chronologically.
  */
 export function sqlCompare(a: unknown, b: unknown): number {
-	if (a === b) {
-		return 0;
-	}
 	if (isNil(a)) {
 		// null and undefined compare equal to each other (they are not ===).
 		return isNil(b) ? 0 : -1;
 	}
 	if (isNil(b)) {
 		return 1;
+	}
+	return compareNonNil(a, b);
+}
+
+/**
+ * The body of `sqlCompare` for operands already known to be neither null nor
+ * undefined, so callers that have already established that -- the ordering
+ * comparators below, which must handle NULLS FIRST/LAST themselves -- do not
+ * pay for the check twice.
+ */
+function compareNonNil(a: NonNullable<unknown>, b: NonNullable<unknown>): number {
+	if (a === b) {
+		return 0;
 	}
 
 	// Fast path for same-typed primitives, which dominate real columns. This
@@ -594,7 +683,7 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 		return plan.nullsFirst ? nullFirst : -nullFirst;
 	}
 
-	return sqlCompare(a, b) * plan.direction;
+	return compareNonNil(a, b) * plan.direction;
 }
 
 export function makeOrderByComparator<T>(
@@ -639,19 +728,28 @@ export function sortBy<T>(
 
 	const plans = planColumns(orderings);
 
+	// Array.prototype.sort relocates undefined *elements* to the end without
+	// ever consulting the comparator. Sorting an index array would instead hand
+	// them to getValue, so they are held out and appended, matching what
+	// sorting the rows directly would do.
+	const indices: number[] = [];
+	let undefinedCount = 0;
+	for (let i = 0; i < rows.length; i++) {
+		if (rows[i] === undefined) {
+			undefinedCount++;
+		} else {
+			indices.push(i);
+		}
+	}
+
 	// One pass per ordering, extracting that column's key for every row.
 	const columns: unknown[][] = orderings.map(({ key }) => {
 		const values = new Array<unknown>(rows.length);
-		for (let i = 0; i < rows.length; i++) {
+		for (const i of indices) {
 			values[i] = getValue(rows[i]!, key);
 		}
 		return values;
 	});
-
-	const indices = new Array<number>(rows.length);
-	for (let i = 0; i < rows.length; i++) {
-		indices[i] = i;
-	}
 
 	indices.sort((x, y) => {
 		for (let i = 0; i < columns.length; i++) {
@@ -669,8 +767,11 @@ export function sortBy<T>(
 	});
 
 	const sorted = new Array<T>(rows.length);
-	for (let i = 0; i < rows.length; i++) {
+	for (let i = 0; i < indices.length; i++) {
 		sorted[i] = rows[indices[i]!]!;
+	}
+	for (let i = 0; i < undefinedCount; i++) {
+		sorted[indices.length + i] = undefined as T;
 	}
 	return sorted;
 }

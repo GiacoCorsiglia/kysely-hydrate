@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+	ComparedToDecimalStub,
 	DecimalStub,
 	DurationStub,
 	PlainDateStub,
@@ -148,6 +149,9 @@ describe("sqlCompare", () => {
 		Buffer.from([1, 2]),
 		Buffer.from([1, 2, 3]),
 		new Uint8Array([0]),
+		new Int8Array([-1]),
+		new Float64Array([1.5]),
+		new Float64Array([Number.NaN]),
 		new DecimalStub(2.5),
 		new DecimalStub(11),
 		new PlainDateStub("2024-01-01"),
@@ -156,13 +160,27 @@ describe("sqlCompare", () => {
 		new PlainMonthDayStub("01-01"),
 		new DurationStub("PT2H"),
 		new DurationStub("P1M"),
+		// P10D/P9D order natively while P5Y cannot be ordered at all, and the
+		// string forms contradict the numeric ones -- the shape that exposes a
+		// type mixing two orderings.
+		new DurationStub("P10D"),
+		new DurationStub("P9D"),
+		new DurationStub("P5Y"),
 	];
 
 	// Values that deliberately tie with a member of mixedPool. Each tie is
 	// correct behavior, asserted individually elsewhere: a decimal equals the
 	// plain number of the same value, two unorderable values compare equal, and
 	// distinct objects sharing a String() form must compare equal.
-	const tiedPool = [new DecimalStub(2), new DecimalStub(Number.NaN), Object.create(null)];
+	const tiedPool = [
+		new DecimalStub(2),
+		new DecimalStub(Number.NaN),
+		new ComparedToDecimalStub(2.5),
+		// A decimal that throws on every comparison, as one library's instance
+		// does when handed another's.
+		new DecimalStub(7, undefined, true),
+		Object.create(null),
+	];
 
 	const fullPool = [...mixedPool, ...tiedPool];
 
@@ -193,6 +211,35 @@ describe("sqlCompare", () => {
 		for (const permutation of permutations) {
 			assert.deepEqual([...permutation].sort(sqlCompare), baseline);
 		}
+	});
+
+	it("should be transitive across every triple in the pool", () => {
+		// Antisymmetry and a sorted-order spot-check both pass on comparators
+		// that are still intransitive, which is the failure mode that makes
+		// sort output depend on input order. This checks it directly.
+		const pool = fullPool.filter((value) => value !== undefined);
+		const failures: string[] = [];
+
+		for (const a of pool) {
+			for (const b of pool) {
+				if (sqlCompare(a, b) > 0) {
+					continue;
+				}
+				for (const c of pool) {
+					if (sqlCompare(b, c) > 0) {
+						continue;
+					}
+					// a <= b and b <= c, so a <= c must hold.
+					if (sqlCompare(a, c) > 0) {
+						failures.push(
+							`${label(a)} <= ${label(b)} <= ${label(c)}, but ${label(a)} > ${label(c)}`,
+						);
+					}
+				}
+			}
+		}
+
+		assert.deepEqual(failures, []);
 	});
 
 	it("should sort consistently from any permutation, including tied values", () => {
@@ -560,8 +607,8 @@ describe("sqlCompare duck-typed types", () => {
 
 	it("should support decimal libraries exposing only comparedTo", () => {
 		// bignumber.js exposes comparedTo but not cmp.
-		const a = new DecimalStub(2, "comparedTo");
-		const b = new DecimalStub(10, "comparedTo");
+		const a = new ComparedToDecimalStub(2);
+		const b = new ComparedToDecimalStub(10);
 		assert.ok(sqlCompare(a, b) < 0);
 		assert.ok(sqlCompare(b, a) > 0);
 		assert.ok(sqlCompare(a, 10) < 0);
@@ -571,7 +618,7 @@ describe("sqlCompare duck-typed types", () => {
 		// decimal.js returns NaN from cmp; bignumber.js returns null. Both are
 		// unorderable and neither may be treated as "equal".
 		for (const unorderable of [Number.NaN, null] as const) {
-			const nan = new DecimalStub(Number.NaN, "cmp", unorderable);
+			const nan = new DecimalStub(Number.NaN, unorderable);
 			assert.ok(sqlCompare(nan, new DecimalStub(3)) > 0, `${String(unorderable)} vs decimal`);
 			assert.ok(sqlCompare(new DecimalStub(3), nan) < 0, `decimal vs ${String(unorderable)}`);
 			assert.ok(sqlCompare(nan, 3) > 0, `${String(unorderable)} vs number`);
@@ -581,11 +628,11 @@ describe("sqlCompare duck-typed types", () => {
 	});
 
 	it("should fall back rather than throw when a decimal rejects an operand", () => {
-		const throwing = new DecimalStub(1, "cmp", undefined, true);
+		const throwing = new DecimalStub(1, undefined, true);
 		assert.doesNotThrow(() => sqlCompare(throwing, new DecimalStub(2)));
-		assert.equal(
-			Math.sign(sqlCompare(throwing, new DecimalStub(2))),
-			-Math.sign(sqlCompare(new DecimalStub(2), throwing)),
+		assert.ok(
+			Math.sign(sqlCompare(throwing, new DecimalStub(2))) ===
+				-Math.sign(sqlCompare(new DecimalStub(2), throwing)),
 		);
 	});
 
@@ -616,7 +663,7 @@ describe("sqlCompare duck-typed types", () => {
 		const time = new PlainTimeStub("10:00:00");
 		assert.doesNotThrow(() => sqlCompare(date, time));
 		assert.notEqual(sqlCompare(date, time), 0);
-		assert.equal(Math.sign(sqlCompare(date, time)), -Math.sign(sqlCompare(time, date)));
+		assert.ok(Math.sign(sqlCompare(date, time)) === -Math.sign(sqlCompare(time, date)));
 	});
 
 	it("should handle Temporal types without a usable compare", () => {
@@ -631,9 +678,9 @@ describe("sqlCompare duck-typed types", () => {
 		// plain time units.
 		assert.ok(sqlCompare(new DurationStub("PT90M"), new DurationStub("PT2H")) < 0);
 		assert.doesNotThrow(() => sqlCompare(new DurationStub("P1M"), new DurationStub("P30D")));
-		assert.equal(
-			Math.sign(sqlCompare(new DurationStub("P1M"), new DurationStub("P30D"))),
-			-Math.sign(sqlCompare(new DurationStub("P30D"), new DurationStub("P1M"))),
+		assert.ok(
+			Math.sign(sqlCompare(new DurationStub("P1M"), new DurationStub("P30D"))) ===
+				-Math.sign(sqlCompare(new DurationStub("P30D"), new DurationStub("P1M"))),
 		);
 	});
 
@@ -642,7 +689,7 @@ describe("sqlCompare duck-typed types", () => {
 		const b = Object.create(null);
 		assert.doesNotThrow(() => sqlCompare(a, b));
 		assert.equal(sqlCompare(a, a), 0);
-		assert.equal(Math.sign(sqlCompare(a, 1)), -Math.sign(sqlCompare(1, a)));
+		assert.ok(Math.sign(sqlCompare(a, 1)) === -Math.sign(sqlCompare(1, a)));
 	});
 
 	it("should keep unlike types apart rather than stringifying them together", () => {
@@ -757,5 +804,128 @@ describe("sortBy", () => {
 			sorted.map((row) => row.score),
 			[3, 2, 2, 1, 1, 1],
 		);
+	});
+});
+
+describe("sqlCompare total-order edge cases", () => {
+	it("should order float typed arrays without letting NaN escape", () => {
+		// Raw < / > on elements would silently break antisymmetry here, since
+		// every comparison against NaN is false.
+		const nan = new Float64Array([Number.NaN]);
+		const one = new Float64Array([1]);
+		assert.ok(sqlCompare(one, nan) < 0);
+		assert.ok(sqlCompare(nan, one) > 0);
+		assert.equal(sqlCompare(nan, new Float64Array([Number.NaN])), 0);
+		// A NaN in a shared position must not stop the comparison there.
+		assert.ok(sqlCompare(new Float64Array([Number.NaN, 1]), new Float64Array([Number.NaN, 2])) < 0);
+		assert.ok(sqlCompare(new Float32Array([1]), new Float32Array([2])) < 0);
+	});
+
+	it("should read typed array elements with their own signedness", () => {
+		assert.ok(sqlCompare(new Int8Array([-1]), new Int8Array([1])) < 0);
+		assert.ok(sqlCompare(new Uint8Array([255]), new Uint8Array([1])) > 0);
+		assert.ok(sqlCompare(new BigInt64Array([1n]), new BigInt64Array([2n])) < 0);
+	});
+
+	it("should stay consistent when a decimal cannot compare its operand", () => {
+		// One library's instance handed another's throws. The throwing and
+		// non-throwing directions must still agree, and must not contradict
+		// plain numbers on the same rank.
+		const throwing = new DecimalStub(7, undefined, true);
+		const nan = new DecimalStub(Number.NaN);
+
+		assert.ok(Math.sign(sqlCompare(throwing, nan)) === -Math.sign(sqlCompare(nan, throwing)));
+		assert.ok(sqlCompare(throwing, nan) < 0, "a real value sorts before an unorderable one");
+
+		// Transitivity against a plain number: 2 < 7 < NaN.
+		assert.ok(sqlCompare(2, throwing) < 0);
+		assert.ok(sqlCompare(throwing, nan) < 0);
+		assert.ok(sqlCompare(2, nan) < 0);
+	});
+
+	it("should keep a partly-orderable Temporal type transitive", () => {
+		// Duration.compare works for exact time units and throws once years,
+		// months, or weeks appear. Ordering the throwing ones by string form
+		// alongside natively-ordered ones would be intransitive.
+		const tenDays = new DurationStub("P10D");
+		const nineDays = new DurationStub("P9D");
+		const fiveYears = new DurationStub("P5Y");
+
+		assert.ok(sqlCompare(tenDays, nineDays) > 0, "natively ordered");
+		// The unorderable value sorts after both, rather than landing between
+		// them by string form ("P10D" < "P5Y" < "P9D").
+		assert.ok(sqlCompare(tenDays, fiveYears) < 0);
+		assert.ok(sqlCompare(nineDays, fiveYears) < 0);
+
+		// Sort output must not depend on input order.
+		const expected = ["P9D", "P10D", "P5Y"];
+		for (const permutation of [
+			[tenDays, nineDays, fiveYears],
+			[fiveYears, tenDays, nineDays],
+			[nineDays, fiveYears, tenDays],
+		]) {
+			assert.deepEqual([...permutation].sort(sqlCompare).map(String), expected);
+		}
+	});
+
+	it("should distinguish two implementations of the same logical type", () => {
+		// A native Temporal value and a polyfilled one produce separate
+		// handlers sharing a tag. Calling every cross-implementation pair equal
+		// would be intransitive against each implementation's own ordering.
+		class OtherPlainDateStub extends PlainDateStub {}
+		const nativeEarly = new PlainDateStub("2020-06-15");
+		const polyfillLate = new OtherPlainDateStub("2024-01-01");
+
+		assert.ok(sqlCompare(nativeEarly, polyfillLate) < 0);
+		assert.ok(sqlCompare(polyfillLate, nativeEarly) > 0);
+	});
+
+	it("should not recurse without bound on self-referential arrays", () => {
+		const a: unknown[] = [];
+		a.push(a);
+		const b: unknown[] = [];
+		b.push(b);
+		assert.doesNotThrow(() => sqlCompare(a, b));
+		assert.ok(Math.sign(sqlCompare(a, b)) === -Math.sign(sqlCompare(b, a)));
+
+		const deep = (depth: number): unknown[] => {
+			let node: unknown[] = [];
+			for (let i = 0; i < depth; i++) {
+				node = [node];
+			}
+			return node;
+		};
+		assert.doesNotThrow(() => sqlCompare(deep(20_000), deep(20_000)));
+	});
+
+	it("should classify by prototype, not by whichever instance arrives first", () => {
+		// Handlers are memoized per prototype, so reading instance-level shape
+		// would let one value decide the handler for every value sharing its
+		// prototype. A plain object with an own cmp is not a decimal.
+		const ownCmp = { cmp: () => -1, toString: () => "own" };
+		assert.ok(Math.sign(sqlCompare(ownCmp, 1)) === -Math.sign(sqlCompare(1, ownCmp)));
+		assert.ok(sqlCompare(ownCmp, 1) > 0, "not treated as numeric");
+	});
+
+	it("should handle primitives with no natural ordering", () => {
+		const a = Symbol("a");
+		const b = Symbol("b");
+		assert.doesNotThrow(() => sqlCompare(a, b));
+		assert.equal(sqlCompare(a, a), 0);
+		assert.ok(Math.sign(sqlCompare(a, b)) === -Math.sign(sqlCompare(b, a)));
+
+		const fn = () => 1;
+		assert.equal(sqlCompare(fn, fn), 0);
+		assert.ok(Math.sign(sqlCompare(fn, a)) === -Math.sign(sqlCompare(a, fn)));
+	});
+
+	it("should tolerate a value whose constructor access throws", () => {
+		const hostile = {
+			get constructor() {
+				throw new Error("nope");
+			},
+			toString: () => "hostile",
+		};
+		assert.doesNotThrow(() => sqlCompare(hostile, 1));
 	});
 });

@@ -1,3 +1,4 @@
+import { DecimalStub, PlainDateStub } from "./order-by.stubs.ts";
 /**
  * Benchmark harness for the order-by comparator. Not part of `npm test` --
  * the filename deliberately avoids the test runner's discovery patterns.
@@ -20,45 +21,6 @@ function makeRandom(seed: number): () => number {
 		state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
 		return state / 2_147_483_648;
 	};
-}
-
-/** Structural stand-in for decimal.js/big.js/bignumber.js. */
-class DecimalStub {
-	readonly n: number;
-
-	constructor(n: number) {
-		this.n = n;
-	}
-
-	cmp(other: DecimalStub | number): number {
-		const o = typeof other === "number" ? other : other.n;
-		return this.n < o ? -1 : this.n > o ? 1 : 0;
-	}
-	toString(): string {
-		return String(this.n);
-	}
-}
-
-/** Structural stand-in for Temporal.PlainDate: static compare, throwing valueOf. */
-class PlainDateStub {
-	static compare(a: PlainDateStub, b: PlainDateStub): number {
-		return a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0;
-	}
-	readonly iso: string;
-
-	constructor(iso: string) {
-		this.iso = iso;
-	}
-
-	get [Symbol.toStringTag](): string {
-		return "Temporal.PlainDate";
-	}
-	valueOf(): never {
-		throw new TypeError("Do not use built-in arithmetic operators with Temporal objects.");
-	}
-	toString(): string {
-		return this.iso;
-	}
 }
 
 interface Scenario {

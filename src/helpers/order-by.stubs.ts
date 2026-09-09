@@ -15,46 +15,55 @@
 type UnorderableResult = number | null | undefined;
 
 /**
- * Stands in for decimal.js, big.js, and bignumber.js.
- *
- * The real libraries differ in ways that matter: decimal.js exposes both `cmp`
- * and `comparedTo`, big.js only `cmp`, bignumber.js only `comparedTo`. They
- * also disagree on unorderable results -- decimal.js returns `NaN` while
- * bignumber.js returns `null`, and `null` is the dangerous one because it
- * coerces to 0 and would silently report unequal values as equal.
+ * Shared behavior for the decimal stubs. The comparison method lives on each
+ * subclass's prototype rather than on the instance, which is where decimal.js,
+ * big.js, and bignumber.js all put theirs -- and what detection keys off.
  */
-export class DecimalStub {
+abstract class BaseDecimalStub {
 	readonly n: number;
 	readonly #unorderable: UnorderableResult;
 	readonly #throws: boolean;
 
-	constructor(
-		n: number,
-		method: "cmp" | "comparedTo" = "cmp",
-		unorderable: UnorderableResult = Number.NaN,
-		throws = false,
-	) {
+	constructor(n: number, unorderable: UnorderableResult = Number.NaN, throws = false) {
 		this.n = n;
 		this.#unorderable = unorderable;
 		this.#throws = throws;
+	}
 
-		// Expose only the method the emulated library has, so detection cannot
-		// pass by finding the other one.
-		const compare = (other: DecimalStub | number | bigint): number | null | undefined => {
-			if (this.#throws) {
-				throw new Error("[DecimalError] Invalid argument");
-			}
-			const value = other instanceof DecimalStub ? other.n : Number(other);
-			if (Number.isNaN(this.n) || Number.isNaN(value)) {
-				return this.#unorderable;
-			}
-			return this.n < value ? -1 : this.n > value ? 1 : 0;
-		};
-		(this as Record<string, unknown>)[method] = compare;
+	protected compareValue(other: unknown): number | null | undefined {
+		if (this.#throws) {
+			throw new Error("[DecimalError] Invalid argument");
+		}
+		const value = other instanceof BaseDecimalStub ? other.n : Number(other);
+		if (Number.isNaN(this.n) || Number.isNaN(value)) {
+			return this.#unorderable;
+		}
+		return this.n < value ? -1 : this.n > value ? 1 : 0;
 	}
 
 	toString(): string {
 		return String(this.n);
+	}
+}
+
+/**
+ * Stands in for decimal.js and big.js, which expose `cmp`.
+ *
+ * The `unorderable` parameter covers a real divergence between libraries:
+ * decimal.js returns `NaN` for a comparison against NaN while bignumber.js
+ * returns `null`, and `null` is the dangerous one because it coerces to 0 and
+ * would silently report unequal values as equal.
+ */
+export class DecimalStub extends BaseDecimalStub {
+	cmp(other: unknown): number | null | undefined {
+		return this.compareValue(other);
+	}
+}
+
+/** Stands in for bignumber.js, which exposes `comparedTo` but not `cmp`. */
+export class ComparedToDecimalStub extends BaseDecimalStub {
+	comparedTo(other: unknown): number | null | undefined {
+		return this.compareValue(other);
 	}
 }
 
