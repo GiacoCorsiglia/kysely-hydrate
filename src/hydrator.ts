@@ -2,6 +2,7 @@ import {
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
+	UnsupportedProtoKeyError,
 } from "./helpers/errors.ts";
 import { makeOrderByComparator, type OrderBy } from "./helpers/order-by.ts";
 import {
@@ -802,40 +803,34 @@ interface HydrationContext {
 
 	/**
 	 * Cache for auto-include field names keyed by prefix.
-	 * Maps: prefix -> AutoFields
+	 * Maps: prefix -> fieldNames[]
 	 */
-	readonly autoFieldsCache: Map<string, AutoFields>;
+	readonly autoFieldsCache: Map<string, string[]>;
 }
 
 /**
- * Auto-include field names for one prefix level, plus a precomputed flag so
- * the per-row assignment loop never has to scan the names itself.
+ * The one key name a hydrator cannot handle.  See
+ * {@link UnsupportedProtoKeyError}.
  */
-interface AutoFields {
-	readonly names: readonly string[];
-
-	/**
-	 * True when `names` contains "__proto__", which must be assigned via
-	 * {@link defineProtoShadowedKey}.
-	 */
-	readonly needsProtoShadow: boolean;
-}
+const PROTO_KEY = "__proto__";
 
 /**
- * Sets a "__proto__" output key as a normal own data property. Plain
- * `entity[key] = value` assignment would hit `Object.prototype`'s
- * `__proto__` accessor instead: scalar values are silently dropped, and
- * object values would REPLACE the entity's prototype (prototype pollution).
- * An own data property shadows the accessor, so subsequent reads and plain
- * writes behave normally.
+ * Rejects `"__proto__"` as a key name, given either a single key or a
+ * composite of them.  `source` describes where the key came from, e.g. "a
+ * field name".
  */
-function defineProtoShadowedKey(entity: object, value: unknown): void {
-	Object.defineProperty(entity, "__proto__", {
-		value,
-		writable: true,
-		enumerable: true,
-		configurable: true,
-	});
+function assertNotProtoKey(
+	keys: PropertyKey | readonly PropertyKey[],
+	source: string,
+	hint?: string,
+): void {
+	if (typeof keys === "object") {
+		for (const key of keys) {
+			assertNotProtoKey(key, source, hint);
+		}
+	} else if (keys === PROTO_KEY) {
+		throw new UnsupportedProtoKeyError(source, hint);
+	}
 }
 
 /**
@@ -844,27 +839,8 @@ function defineProtoShadowedKey(entity: object, value: unknown): void {
 class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Output> {
 	#props: HydratorProps<Input>;
 
-	/**
-	 * Memo for {@link #getConfigNeedsProtoShadow}; computed on first hydration.
-	 */
-	#configNeedsProtoShadow: boolean | undefined;
-
 	constructor(props: HydratorProps<Input>) {
 		this.#props = props;
-	}
-
-	/**
-	 * True when any configured output key is "__proto__", which must be
-	 * assigned via {@link defineProtoShadowedKey}.
-	 */
-	#getConfigNeedsProtoShadow(): boolean {
-		this.#configNeedsProtoShadow ??= Boolean(
-			this.#props.fields?.has("__proto__") ||
-			this.#props.extras?.has("__proto__") ||
-			this.#props.collections?.has("__proto__") ||
-			this.#props.attachedCollections?.has("__proto__"),
-		);
-		return this.#configNeedsProtoShadow;
 	}
 
 	get [IsFullHydrator]() {
@@ -874,6 +850,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	fields(fields: Fields<any> | readonly string[]): any {
+		// Only `.omit()` may name the key, and omitting does not come through here.
+		assertNotProtoKey(Array.isArray(fields) ? fields : Object.keys(fields), "a field name");
+
 		return new HydratorImpl({
 			...this.#props,
 
@@ -897,6 +876,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	extras(extras: Extras<any>): any {
+		assertNotProtoKey(Object.keys(extras), "an extra name");
+
 		return new HydratorImpl({
 			...this.#props,
 
@@ -952,6 +933,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	orderBy(key: any, direction: "asc" | "desc" = "asc", nulls?: "first" | "last"): any {
+		assertNotProtoKey(key, "an orderBy column");
+
 		return new HydratorImpl({
 			...this.#props,
 
@@ -984,6 +967,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	has(mode: CollectionMode, key: string, prefix: string, hydrator: any): any {
+		assertNotProtoKey(key, "a collection key");
+
 		const newCollections = new Map(this.#props.collections).set(key, {
 			prefix,
 			mode,
@@ -1020,6 +1005,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
+		// Defaults to this hydrator's keyBy, which createHydrator already checked.
+		const toParent = keys.toParent ?? this.#props.keyBy;
+
+		assertNotProtoKey(key, "a collection key");
+		assertNotProtoKey(keys.matchChild, "an attached collection match column");
+		assertNotProtoKey(toParent, "an attached collection match column");
+
 		return new HydratorImpl({
 			...this.#props,
 
@@ -1030,7 +1022,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				mode,
 				fetchFn,
 				matchChild: keys.matchChild,
-				toParent: keys.toParent ?? this.#props.keyBy,
+				toParent,
 			} satisfies AttachedCollection<any, any>),
 		});
 	}
@@ -1140,7 +1132,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * parent, and not to any nested collection.  Does this once per hydration
 	 * (assumes all inputs have the same keys).
 	 */
-	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): AutoFields {
+	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): string[] {
 		// Have we done this already?
 		const cached = ctx.autoFieldsCache.get(prefix);
 		if (cached) {
@@ -1150,7 +1142,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// If we get a null for some bizarre reason, I guess we should try again
 		// on the next row.
 		if (typeof input !== "object" || input === null) {
-			return { names: [], needsProtoShadow: false };
+			return [];
 		}
 
 		const { fields, extras, collections } = this.#props;
@@ -1181,18 +1173,22 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				continue;
 			}
 
+			// Reject before the key reaches the output.  Configuring the key at
+			// all is rejected up front, so reaching here means the row itself
+			// carries the column.
+			assertNotProtoKey(
+				unprefixedKey,
+				"a column name",
+				`Alias the column, or exclude it with .omit(["${PROTO_KEY}"]).`,
+			);
+
 			// The autoFields gets the unprefixed key.
 			autoFields.push(unprefixedKey);
 		}
 
-		const result: AutoFields = {
-			names: autoFields,
-			needsProtoShadow: autoFields.includes("__proto__"),
-		};
-
 		// Cache and return the auto-include fields
-		ctx.autoFieldsCache.set(prefix, result);
-		return result;
+		ctx.autoFieldsCache.set(prefix, autoFields);
+		return autoFields;
 	}
 
 	/**
@@ -1210,22 +1206,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		const entity: any = {};
 
-		// A "__proto__" key must go through defineProtoShadowedKey (see its doc).
-		// Both flags are precomputed outside the row loop (per cached auto-field
-		// set / memoized per hydrator), so the common case pays only a
-		// short-circuited boolean test per assignment.
-		const configShadow = this.#getConfigNeedsProtoShadow();
-
 		// Auto-include all fields at this prefix level when enabled
 		if (ctx.autoIncludeFields) {
-			const autoFields = this.#getAutoFields(ctx, prefix, input);
-			for (const key of autoFields.names) {
-				const value = getPrefixedValue(prefix, input, key);
-				if (autoFields.needsProtoShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, value);
-				} else {
-					entity[key] = value;
-				}
+			for (const key of this.#getAutoFields(ctx, prefix, input)) {
+				entity[key] = getPrefixedValue(prefix, input, key);
 			}
 		}
 
@@ -1236,12 +1220,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					continue;
 				}
 				const value = getPrefixedValue(prefix, input, key);
-				const output = field === true ? value : field(value as any);
-				if (configShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, output);
-				} else {
-					entity[key] = output;
-				}
+				entity[key] = field === true ? value : field(value as any);
 			}
 		}
 
@@ -1250,32 +1229,23 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			if (extras) {
 				for (const [key, extra] of extras) {
-					const output = extra(accessor as Input);
-					if (configShadow && key === "__proto__") {
-						defineProtoShadowedKey(entity, output);
-					} else {
-						entity[key] = output;
-					}
+					entity[key] = extra(accessor as Input);
 				}
 			}
 
 			if (extenders) {
 				for (const extender of extenders) {
 					const extension = extender(accessor as Input);
-					// Extender keys are only known at call time, so there is no
-					// precomputed flag like the paths above. Object.assign would
-					// funnel an own enumerable "__proto__" key through
-					// Object.prototype's setter; pre-shadowing it with an own data
-					// property makes the subsequent [[Set]] a plain write while
-					// keeping Object.assign's semantics for every other key.
-					// The nullish check preserves Object.assign's tolerance for
-					// nullish sources (propertyIsEnumerable would throw on them).
+					// Extender keys are only known at call time.  Test the same
+					// own-enumerable keys Object.assign would copy, and preserve its
+					// tolerance for nullish sources (propertyIsEnumerable throws on
+					// them) for the sake of untyped callers.
 					if (
 						extension !== null &&
 						extension !== undefined &&
-						Object.prototype.propertyIsEnumerable.call(extension, "__proto__")
+						Object.prototype.propertyIsEnumerable.call(extension, PROTO_KEY)
 					) {
-						defineProtoShadowedKey(entity, undefined);
+						throw new UnsupportedProtoKeyError("an extend() key");
 					}
 					Object.assign(entity, extension);
 				}
@@ -1291,12 +1261,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				// Hydrate nested collections (all attach collections already fetched)
 				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, rows);
 
-				const output = applyCollectionMode(collectionOutputs, collection.mode, key);
-				if (configShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, output);
-				} else {
-					entity[key] = output;
-				}
+				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
 			}
 		}
 
@@ -1313,12 +1278,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				const groupedData = ctx.attachedDataMap.get(mapKey);
 				const attached = groupedData?.get(inputKey);
 
-				const output = applyGroupedCollectionMode(attached, collection.mode, key);
-				if (configShadow && key === "__proto__") {
-					defineProtoShadowedKey(entity, output);
-				} else {
-					entity[key] = output;
-				}
+				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
 			}
 		}
 
@@ -1498,6 +1458,10 @@ export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): FullHydrator<T, {}>
 export function createHydrator<T extends InputWithDefaultKey>(): FullHydrator<T, {}>;
 // Implementation
 export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<T, {}> {
+	if (keyBy !== undefined) {
+		assertNotProtoKey(keyBy, "a keyBy column");
+	}
+
 	return new HydratorImpl({
 		keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string),
 		// orderByKeys is left unset (not false) so .with() can tell whether it
