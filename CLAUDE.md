@@ -30,10 +30,6 @@ Do not commit code in a local session. Ask the user to review and let them
 commit manually.
 
 In Claude Code on the web (`CLAUDE_CODE_REMOTE=true`) this is reversed: commit
-and push to the session's own branch, because the container is ephemeral and
-uncommitted work is lost when it is reclaimed. Pushing to a branch is how the
-user sees the work at all, and it still leaves review to happen before anything
-merges. Never commit to `main`, never force-push a branch you did not create,
-and do not open a pull request unless asked.
+and push to the session's own branch.
 
 Ignore the `src/experimental` directory.
