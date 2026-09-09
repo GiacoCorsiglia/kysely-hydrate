@@ -2,8 +2,8 @@
 #
 # Prepare a Claude Code on the web container for `npm run test:all`.
 #
-# node_modules survives container snapshotting but a running service does not,
-# so Postgres has to be started on every session even when the install no-ops.
+# The npm cache survives container snapshotting, so installing is quick, but a
+# running service does not, so Postgres has to be started on every session.
 #
 set -euo pipefail
 
@@ -22,7 +22,6 @@ npm ci --no-audit --no-fund
 read -r version cluster < <(pg_lsclusters --no-header | awk 'NR == 1 { print $1, $2 }')
 pg_conftool "$version" "$cluster" set port 5434
 pg_ctlcluster "$version" "$cluster" restart
-pg_isready --quiet --timeout 30 --port 5434
 
 # Both are idempotent; peer auth over the unix socket gets us in as superuser.
 su postgres -c "psql --quiet --port 5434 --command \
