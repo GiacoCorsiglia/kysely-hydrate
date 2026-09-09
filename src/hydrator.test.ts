@@ -351,6 +351,16 @@ test("hydrate: rejects when the hydrator factory throws", async () => {
 	await assert.rejects(promise!, /factory failed/);
 });
 
+test("hydrate: rejects when the hydrator factory returns a non-hydrator", async () => {
+	// A factory returning something without a .hydrate() method must reject
+	// (like every other failure mode) rather than throw synchronously.
+	let promise: Promise<unknown> | undefined;
+	assert.doesNotThrow(() => {
+		promise = hydrate([], () => ({}) as any);
+	});
+	await assert.rejects(promise!, TypeError);
+});
+
 test("grouping: attachOne throws CardinalityViolationError for multiple matching children", async () => {
 	const users: User[] = [{ id: 1, name: "Alice" }];
 
