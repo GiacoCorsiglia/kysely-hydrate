@@ -629,15 +629,25 @@ const keyPartCases: GroupingCase<unknown>[] = [
 		[0, 0, 1],
 	],
 	// Regression: Date#toJSON made a Date and its ISO string produce one key.
+	// The millisecond apart pins the time value: a Date's String() form is only
+	// second-resolution, so canonicalizing by it would merge these two.
 	[
 		"Dates group by time value and do not collide with their ISO string",
-		[date, new Date(date.getTime()), date.toISOString()],
-		[0, 0, 1],
+		[date, new Date(date.getTime()), date.toISOString(), new Date(date.getTime() + 1)],
+		[0, 0, 1, 2],
 	],
+	// Buffer#toString() decodes as UTF-8, which is lossy: distinct invalid
+	// sequences both decode to U+FFFD, so bytes must be compared as bytes.
 	[
 		"binary values group by content, keeping byte boundaries",
-		[new Uint8Array([1, 2]), new Uint8Array([1, 2]), new Uint8Array([12])],
-		[0, 0, 1],
+		[
+			new Uint8Array([1, 2]),
+			new Uint8Array([1, 2]),
+			new Uint8Array([12]),
+			Buffer.from([0xc0]),
+			Buffer.from([0xc1]),
+		],
+		[0, 0, 1, 2, 3],
 	],
 	[
 		"values with equal string forms are separated by type",
