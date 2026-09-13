@@ -1,18 +1,8 @@
 import * as k from "kysely";
 
-import { MAX_IDENTIFIER_BYTES } from "../fix-long-aliases.ts";
-import {
-	AliasTooLongError,
-	UnexpectedComplexAliasError,
-	UnexpectedSelectAllError,
-} from "./errors.ts";
+import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./errors.ts";
 import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
-import {
-	type AnyQueryBuilder,
-	type AnySelectQueryBuilder,
-	assertNever,
-	byteLength,
-} from "./utils.ts";
+import { type AnyQueryBuilder, type AnySelectQueryBuilder, assertNever } from "./utils.ts";
 
 function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefined {
 	const node = qb.toOperationNode();
@@ -82,48 +72,23 @@ class PrefixedAliasedExpression<
 	}
 }
 
-/** The output column name, or `undefined` for `*`, `table.*`, and non-identifier aliases. */
-function getSelectionName({ selection }: k.SelectionNode): string | undefined {
+function extractSelectionName({ selection }: k.SelectionNode): string {
 	switch (selection.kind) {
 		case "ColumnNode":
 			return selection.column.name;
 		case "ReferenceNode":
-			return k.SelectAllNode.is(selection.column) ? undefined : selection.column.column.name;
+			if (k.SelectAllNode.is(selection.column)) {
+				throw new UnexpectedSelectAllError();
+			}
+			return selection.column.column.name;
 		case "AliasNode":
-			return k.IdentifierNode.is(selection.alias) ? selection.alias.name : undefined;
+			if (!k.IdentifierNode.is(selection.alias)) {
+				throw new UnexpectedComplexAliasError();
+			}
+			return selection.alias.name;
 		case "SelectAllNode":
-			return undefined;
+			throw new UnexpectedSelectAllError();
 		default:
 			assertNever(selection);
 	}
-}
-
-/** Like `getSelectionName`, but throws: hoisting a selection needs its name. */
-function extractSelectionName(selectionNode: k.SelectionNode): string {
-	const name = getSelectionName(selectionNode);
-	if (name === undefined) {
-		throw k.AliasNode.is(selectionNode.selection)
-			? new UnexpectedComplexAliasError()
-			: new UnexpectedSelectAllError();
-	}
-	return name;
-}
-
-/**
- * Throws if an output column alias is over PostgreSQL's 63-byte limit. Runs
- * after plugins, so it measures what the database sees. Skips `selectAll()`
- * and raw aliases, whose names are not known here.
- */
-export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB): QB {
-	for (const selectionNode of getSelections(qb) ?? []) {
-		const name = getSelectionName(selectionNode);
-		if (name === undefined) {
-			continue;
-		}
-		const bytes = byteLength(name);
-		if (bytes > MAX_IDENTIFIER_BYTES) {
-			throw new AliasTooLongError(name, bytes);
-		}
-	}
-	return qb;
 }

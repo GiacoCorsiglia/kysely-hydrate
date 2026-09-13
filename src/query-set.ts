@@ -29,7 +29,6 @@ import {
 import {
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
-	assertAliasesFit,
 } from "./helpers/select-renamer.ts";
 import {
 	type AnySelectQueryBuilder,
@@ -2987,7 +2986,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return assertAliasesFit(this.#toJoinedQuery(false, false));
+		return this.#toJoinedQuery(false, false);
 	}
 
 	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
@@ -3092,7 +3091,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toQuery(): any {
-		return assertAliasesFit(this.#toQuery(false, false));
+		return this.#toQuery(false, false);
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {

@@ -122,15 +122,6 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 	}
 }
 
-export class AliasTooLongError extends KyselyHydrateError {
-	constructor(alias: string, bytes: number) {
-		super(
-			`Column alias "${alias}" is ${bytes} bytes; PostgreSQL's limit is 63. Add the ` +
-				`fixLongAliases() plugin to your Kysely instance (wrapping CamelCasePlugin if you use it).`,
-		);
-	}
-}
-
 export class AliasHashCollisionError extends KyselyHydrateError {
 	constructor(alias: string, otherAlias: string) {
 		super(`Aliases "${alias}" and "${otherAlias}" shorten to the same identifier`);

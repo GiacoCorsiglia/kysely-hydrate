@@ -862,12 +862,11 @@ You can inspect the generated SQL using `.toQuery()`, `.toJoinedQuery()`, or `.t
 
 ### PostgreSQL's 63-byte identifier limit
 
-PostgreSQL silently truncates identifiers longer than 63 bytes. Prefixed
+PostgreSQL silently truncates identifiers longer than 63 bytes, and prefixed
 aliases like `posts$$comments$$author_id` can exceed that with deep nesting or
-long names, so building such a query throws an `AliasTooLongError`. The fix is
-the `fixLongAliases()` plugin, which shortens over-long identifiers and restores
-the original names in result rows. Add it last, wrapping `CamelCasePlugin` if
-you use it:
+long names. On PostgreSQL, always install the `fixLongAliases()` plugin, which
+shortens over-long identifiers and restores the original names in result rows.
+Add it last, wrapping `CamelCasePlugin` if you use it:
 
 ```ts
 import { CamelCasePlugin, Kysely } from "kysely";
