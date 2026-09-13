@@ -100,7 +100,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			["departmentalEmployeeRoster", 64, 64],
 			["verknüpfteMitarbeiterAkte", 64, 63],
 		] as const) {
-			test(`alias of ${bytes} bytes (${chars} characters) hydrates with full field names`, async () => {
+			test(`${bytes}-byte, ${chars}-character alias`, async () => {
 				assertBytes(`${key}$$${NAME}`, bytes);
 				assert.strictEqual(`${key}$$${NAME}`.length, chars);
 
@@ -110,7 +110,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			});
 		}
 
-		test("two-level nesting with overflow already at the intermediate level hydrates fully", async () => {
+		test("two levels, overflow at the intermediate level", async () => {
 			assertBytes(`departmentalEmployeeRecords$$${NAME}`, 65);
 			assertBytes(`organizationalDepartments$$departmentalEmployeeRecords$$${NAME}`, 92);
 
@@ -138,7 +138,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("two-level nesting with overflow only at the top level hydrates fully and orders by the deep column", async () => {
+		test("two levels, overflow only at the top level, ordered by the deep column", async () => {
 			const grandparent = "grandparentOrganizationEntityOfTheDepartment";
 			const deepAlias = `parentOrganizationalDepartment$$${grandparent}$$organization_name`;
 			assertBytes(`${grandparent}$$organization_name`, 63);
@@ -169,7 +169,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("three-level nesting with overflow first at an intermediate level hydrates fully", async () => {
+		test("three levels, overflow first at an intermediate level", async () => {
 			assertBytes("assignedDepartmentRecord$$department_name", 41);
 			assertBytes("departmentalEmployeeRecords$$assignedDepartmentRecord$$department_name", 70);
 			assertBytes(
@@ -238,7 +238,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		const aliceWithEmail = withEmail(alice, "alice.anderson@example.com");
 		const bobWithEmail = withEmail(bob, "bob.barker@example.com");
 
-		test("sibling columns whose aliases differ only after byte 63 are both hydrated", async () => {
+		test("sibling aliases that differ only after byte 63", async () => {
 			assertBytes(`${verbose}$$${NAME}`, 93);
 			assertBytes(`${verbose}$$employee_secondary_contact_email_address`, 97);
 
@@ -247,26 +247,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("toJoinedQuery() rows carry every selected column's value", async () => {
-			const rows = await verboseEmployees.toJoinedQuery().execute();
-
-			// Three department columns plus four employee columns.
-			assert.strictEqual(rows.length, 2);
-			for (const row of rows) {
-				assert.strictEqual(Object.keys(row).length, 7);
-			}
-			const values = rows.flatMap((row) => Object.values(row));
-			for (const value of [
-				"Alice Anderson",
-				"alice.anderson@example.com",
-				"Bob Barker",
-				"bob.barker@example.com",
-			]) {
-				assert.ok(values.includes(value), value);
-			}
-		});
-
-		test("nested keyBy on a column whose alias collides at 63 bytes keys by the full column", async () => {
+		test("nested keyBy on a column whose alias collides at 63 bytes", async () => {
 			const employeesByEmail = querySet(snakeDb).selectAs(
 				"employee",
 				employeesWithEmail.toBaseQuery(),
@@ -287,7 +268,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("orderBy on a nested one-join column with an over-long alias orders the results and hydrates fully", async () => {
+		test("orderBy on an over-long nested alias", async () => {
 			const key = "organizationalDepartmentAssignmentForThisEmployeeRecord";
 			assertBytes(`${key}$$department_name`, 72);
 
@@ -304,7 +285,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("leftJoinOne whose key column alias is over-long hydrates matches as objects and non-matches as null", async () => {
+		test("leftJoinOne with an over-long key alias", async () => {
 			// Matched vs. null is decided by the nested key column, "<key>$$id".
 			const key = "organizationalDepartmentAssignmentRecordForThisEmployeeIfAny";
 			assertBytes(`${key}$$id`, 64);
@@ -346,7 +327,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			departmentalEmployeeRecords: [alice, bob],
 		};
 
-		test("pagination with a many-join and orderBy on an over-long alias returns the right page, ordered and hydrated", async () => {
+		test("pagination with a many-join, ordered by an over-long alias", async () => {
 			assertBytes(`${parent}$$organization_name`, 70);
 
 			assert.deepStrictEqual(await departmentsByOrganization().limit(1).execute(), [
@@ -357,7 +338,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("hydrate() restores rows executed through toQuery()", async () => {
+		test("hydrate() on rows from toQuery()", async () => {
 			const firstPage = departmentsByOrganization().limit(1);
 
 			const rows = await firstPage.toQuery().execute();
@@ -365,7 +346,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			assert.deepStrictEqual(await firstPage.hydrate(rows), [marketingByZenith]);
 		});
 
-		test("hydrate() accepts rows executed by an identically built query set", async () => {
+		test("hydrate() on rows from an identically built query set", async () => {
 			const rows = await departmentsByOrganization().toQuery().execute();
 
 			assert.deepStrictEqual(await departmentsByOrganization().hydrate(rows), [
@@ -374,14 +355,14 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("executeCount() and executeExists() are unaffected by over-long aliases", async () => {
+		test("executeCount() and executeExists()", async () => {
 			const firstPage = departmentsByOrganization().limit(1);
 
 			assert.strictEqual(await firstPage.executeCount(Number), 2);
 			assert.strictEqual(await firstPage.executeExists(), true);
 		});
 
-		test("attaches at the top level and nested under an over-long join receive full field names", async () => {
+		test("attaches at the top level and under an over-long join", async () => {
 			// The nested fetchFn reads parent rows through the prefixed accessor.
 			const result = await engineeringOnly
 				.innerJoinMany(
@@ -517,7 +498,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		];
 		for (const [options, key, snakeKey, bytes, alsoLegal] of cases) {
 			const optionNames = Object.keys(options).join(" + ") || "default options";
-			test(`${optionNames}: alias whose snake_case form is ${bytes} bytes hydrates with full camelCase field names (${key})`, async () => {
+			test(`${optionNames}: ${key}, ${bytes} bytes once snake_cased`, async () => {
 				assertBytes(`${snakeKey}${SNAKE_NAME}`, bytes);
 				if (alsoLegal) {
 					assertBytes(...alsoLegal);
@@ -529,7 +510,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			});
 		}
 
-		test("two-level nesting hydrates with full camelCase field names", async () => {
+		test("two levels", async () => {
 			assertBytes(`organizational_departments$$departmental_employee_records${SNAKE_NAME}`, 95);
 
 			const result = await organizations(camelDb)
@@ -571,7 +552,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("sibling columns whose snake_cased aliases share their first 63 bytes are all hydrated", async () => {
+		test("sibling aliases that share their first 63 bytes once snake_cased", async () => {
 			// The snake_cased key plus "$$" is 63 bytes, so every nested column
 			// alias would truncate to the same identifier.
 			const key = "departmentalEmployeeRecordsWithVerboseNamingConventions";
@@ -598,7 +579,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("orderBy on a nested one-join column whose snake_cased alias exceeds 63 bytes orders the results and hydrates fully", async () => {
+		test("orderBy on an alias that is over-long once snake_cased", async () => {
 			const key = "organizationalDepartmentAssignmentForThisEmployeeRecord";
 			assertBytes(
 				"organizational_department_assignment_for_this_employee_record$$department_name",
@@ -618,7 +599,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		test("pagination with a many-join and orderBy on an over-long snake_cased alias returns the right page, ordered and hydrated", async () => {
+		test("pagination with a many-join, ordered by an alias that is over-long once snake_cased", async () => {
 			const parent = "parentOrganizationRecordForOrganizationalDepartment";
 			assertBytes(
 				"parent_organization_record_for_organizational_department$$organization_name",

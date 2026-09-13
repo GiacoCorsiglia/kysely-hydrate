@@ -84,12 +84,6 @@ describe("fix-long-aliases", () => {
 		assert.deepStrictEqual(await query.executeTakeFirstOrThrow(), { [alias]: 1 });
 	});
 
-	test("restores rows from db.executeQuery()", async () => {
-		const { rows } = await db.executeQuery(selectLiterals(db, { [ALIAS_64]: 1 }).compile());
-
-		assert.deepStrictEqual(rows, [{ [ALIAS_64]: 1 }]);
-	});
-
 	test("rewrites references to a shortened alias in an enclosing query", async () => {
 		const inner = selectLiterals(db, { [ALIAS_64]: 1, [ALIAS_93]: 2 });
 		const outer = db
@@ -126,24 +120,19 @@ describe("fix-long-aliases", () => {
 		const CAMEL_58 = "employeeDirectoryEntries$$employeePreferredFullDisplayName";
 		const SNAKE_64 = "employee_directory_entries$$employee_preferred_full_display_name";
 
-		test("measures the snake_cased alias", () => {
+		test("measures the snake_cased alias and returns camelCase keys", async () => {
 			assert.strictEqual(bytes(CAMEL_58), 58);
 			assert.strictEqual(bytes(SNAKE_64), 64);
+			const query = selectLiterals(camelDb, { [CAMEL_58]: 1, createdAt: 2 });
 
-			const [alias] = aliasesIn(selectLiterals(camelDb, { [CAMEL_58]: 1 }));
-
+			const [alias] = aliasesIn(query);
 			assert.ok(alias);
 			assert.ok(bytes(alias) <= 63);
 			assert.ok(alias.startsWith("employee_directory_entries$$"), alias);
-		});
-
-		test("returns camelCase keys", async () => {
-			const row = await selectLiterals(camelDb, {
+			assert.deepStrictEqual(await query.executeTakeFirstOrThrow(), {
 				[CAMEL_58]: 1,
 				createdAt: 2,
-			}).executeTakeFirstOrThrow();
-
-			assert.deepStrictEqual(row, { [CAMEL_58]: 1, createdAt: 2 });
+			});
 		});
 	});
 

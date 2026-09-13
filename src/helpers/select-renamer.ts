@@ -119,8 +119,12 @@ export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB, maxBytes: n
 	}
 	for (const selectionNode of getSelections(qb) ?? []) {
 		const name = getSelectionName(selectionNode);
-		if (name !== undefined && byteLength(name) > maxBytes) {
-			throw new AliasTooLongError(name, byteLength(name), maxBytes);
+		if (name === undefined) {
+			continue;
+		}
+		const bytes = byteLength(name);
+		if (bytes > maxBytes) {
+			throw new AliasTooLongError(name, bytes, maxBytes);
 		}
 	}
 	return qb;

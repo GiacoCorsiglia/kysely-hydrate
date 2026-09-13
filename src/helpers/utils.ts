@@ -131,7 +131,7 @@ export function isSelectQueryBuilder(o: unknown): o is AnySelectQueryBuilder {
 	return typeof o === "object" && o !== null && "isSelectQueryBuilder" in o;
 }
 
-const utf8 = new TextEncoder();
+export const utf8 = new TextEncoder();
 
 /** Length in UTF-8 bytes, which is how databases measure identifiers. */
 export function byteLength(input: string): number {

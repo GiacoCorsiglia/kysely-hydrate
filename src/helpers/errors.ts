@@ -125,9 +125,9 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 export class AliasTooLongError extends KyselyHydrateError {
 	constructor(alias: string, bytes: number, maxBytes: number) {
 		super(
-			`Column alias "${alias}" is ${bytes} bytes; the limit is ${maxBytes}. PostgreSQL would ` +
-				`truncate it and break hydration. Add the fixLongAliases() plugin to your Kysely instance ` +
-				`(wrapping CamelCasePlugin if you use it), or pass { maxAliasBytes: null } to querySet().`,
+			`Column alias "${alias}" is ${bytes} bytes; the limit is ${maxBytes}. Add the ` +
+				`fixLongAliases() plugin (wrapping CamelCasePlugin if you use it), or pass ` +
+				`{ maxAliasBytes: null } to querySet().`,
 		);
 	}
 }

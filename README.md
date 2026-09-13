@@ -883,9 +883,11 @@ const db = new Kysely<DB>({
 ```
 
 The plugin shortens any identifier over 63 bytes to `<start of name>~<hash>`
-and restores the original names in result rows. It is deterministic, does
-nothing to queries that already fit, and works for any Kysely query. Rows
-fetched without the plugin are not restored, as with `CamelCasePlugin`.
+and restores the original names in result rows. Shortening is deterministic
+and leaves identifiers that already fit untouched. Like `CamelCasePlugin`, it
+can only restore rows that came through the plugin. Table and column names are
+rewritten too, so a schema that relies on PostgreSQL's own truncation will not
+work with it.
 
 `querySet(db, { maxAliasBytes })` changes the limit the check uses; pass
 `null` to turn it off, for example on SQLite.
