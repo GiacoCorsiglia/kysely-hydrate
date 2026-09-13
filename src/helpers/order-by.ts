@@ -157,9 +157,13 @@ function temporalTag(value: unknown): string | undefined {
  */
 function compareTemporal(a: object, b: object): number {
 	const aTag = temporalTag(a)!;
-	const bTag = temporalTag(b)!;
-	if (aTag !== bTag) {
-		return aTag < bTag ? -1 : 1;
+	// Same constructor means same type; the tag getter is only read for the
+	// other operand when that cheap check fails.
+	if (a.constructor !== b.constructor) {
+		const bTag = temporalTag(b)!;
+		if (aTag !== bTag) {
+			return aTag < bTag ? -1 : 1;
+		}
 	}
 	if (aTag === "Temporal.Duration") {
 		return durationNanos(a) - durationNanos(b);
@@ -167,20 +171,6 @@ function compareTemporal(a: object, b: object): number {
 	const compare = (a.constructor as { compare?: (x: object, y: object) => number }).compare;
 	return typeof compare === "function" ? compare(a, b) : compareStringForms(a, b);
 }
-
-/** Nanoseconds per `Temporal.Duration` field; see `durationNanos`. */
-const DURATION_FIELD_NANOS = {
-	years: 360 * 86_400e9,
-	months: 30 * 86_400e9,
-	weeks: 7 * 86_400e9,
-	days: 86_400e9,
-	hours: 3_600e9,
-	minutes: 60e9,
-	seconds: 1e9,
-	milliseconds: 1e6,
-	microseconds: 1e3,
-	nanoseconds: 1,
-};
 
 /**
  * Projects a `Temporal.Duration` onto a nominal length using Postgres's
@@ -195,11 +185,12 @@ const DURATION_FIELD_NANOS = {
  * intransitive.
  */
 function durationNanos(duration: object): number {
-	let total = 0;
-	for (const [field, nanos] of Object.entries(DURATION_FIELD_NANOS)) {
-		total += ((duration as Record<string, number>)[field] ?? 0) * nanos;
-	}
-	return total;
+	const d = duration as Record<string, number | undefined>;
+	const days = (d.years ?? 0) * 360 + (d.months ?? 0) * 30 + (d.weeks ?? 0) * 7 + (d.days ?? 0);
+	const seconds = ((days * 24 + (d.hours ?? 0)) * 60 + (d.minutes ?? 0)) * 60 + (d.seconds ?? 0);
+	return (
+		seconds * 1e9 + (d.milliseconds ?? 0) * 1e6 + (d.microseconds ?? 0) * 1e3 + (d.nanoseconds ?? 0)
+	);
 }
 
 /**
