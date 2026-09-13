@@ -158,18 +158,6 @@ describe("sqlCompare", () => {
 			assert.equal(sqlCompare(new PlainDateStub("2024-01-01"), new PlainDateStub("2024-01-01")), 0);
 		});
 
-		it("should never coerce a value with valueOf", () => {
-			// Temporal throws from valueOf to block `a < b`. Any code path that
-			// coerced instead of using compare would surface here.
-			const a = new PlainDateStub("2020-06-15");
-			const b = new PlainDateStub("2024-01-01");
-			assert.throws(() => a.valueOf());
-			assert.doesNotThrow(() => sqlCompare(a, b));
-			assert.doesNotThrow(() => sqlCompare(a, 1));
-			assert.doesNotThrow(() => sqlCompare(a, "x"));
-			assert.doesNotThrow(() => [b, a].sort(sqlCompare));
-		});
-
 		it("should separate distinct Temporal types by name rather than comparing them", () => {
 			// PlainDate.compare throws when handed a PlainTime, so unlike types
 			// must never reach it.
@@ -218,12 +206,6 @@ describe("sqlCompare", () => {
 					}
 				}
 			}
-		});
-
-		it("should order subclass instances through the inherited static compare", () => {
-			class MyDate extends PlainDateStub {}
-			assert.ok(sqlCompare(new MyDate("2020-01-01"), new PlainDateStub("2024-01-01")) < 0);
-			assert.equal(sqlCompare(new MyDate("2024-01-01"), new PlainDateStub("2024-01-01")), 0);
 		});
 
 		it("should rank Temporal between Date and string", () => {

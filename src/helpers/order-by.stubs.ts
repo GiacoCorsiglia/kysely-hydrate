@@ -78,8 +78,8 @@ export class DurationStub extends TemporalStub {
 		if (a.#hasCalendarUnits() || b.#hasCalendarUnits()) {
 			throw new RangeError("A starting point is required for years, months, or weeks comparison");
 		}
-		const aTotal = a.minutes + a.hours * 60 + a.days * 24 * 60;
-		const bTotal = b.minutes + b.hours * 60 + b.days * 24 * 60;
+		const aTotal = a.seconds + (a.minutes + (a.hours + a.days * 24) * 60) * 60;
+		const bTotal = b.seconds + (b.minutes + (b.hours + b.days * 24) * 60) * 60;
 		return aTotal < bTotal ? -1 : aTotal > bTotal ? 1 : 0;
 	}
 

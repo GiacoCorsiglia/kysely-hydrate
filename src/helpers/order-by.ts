@@ -155,7 +155,9 @@ function temporalTag(value: unknown): string | undefined {
  * back to string forms. `Temporal.Duration` is special-cased; see
  * `durationNanos`.
  */
-function compareTemporal(a: object, b: object, aTag: string, bTag: string): number {
+function compareTemporal(a: object, b: object): number {
+	const aTag = temporalTag(a)!;
+	const bTag = temporalTag(b)!;
 	if (aTag !== bTag) {
 		return aTag < bTag ? -1 : 1;
 	}
@@ -166,17 +168,7 @@ function compareTemporal(a: object, b: object, aTag: string, bTag: string): numb
 	return typeof compare === "function" ? compare(a, b) : compareStringForms(a, b);
 }
 
-/**
- * Nanoseconds per `Temporal.Duration` field, using Postgres's interval
- * convention: a month is 30 days and a year is 12 of those. Calendar units have
- * no exact length, so any total order over them has to pick nominal ones, and
- * this is the one Postgres's own `ORDER BY` on an `interval` column uses.
- *
- * `Temporal.Duration.compare` is deliberately not used: it throws once years,
- * months, or weeks are involved (relating those to days needs a starting
- * point), and a partial order cannot be completed pairwise without becoming
- * intransitive.
- */
+/** Nanoseconds per `Temporal.Duration` field; see `durationNanos`. */
 const DURATION_FIELD_NANOS = {
 	years: 360 * 86_400e9,
 	months: 30 * 86_400e9,
@@ -190,6 +182,18 @@ const DURATION_FIELD_NANOS = {
 	nanoseconds: 1,
 };
 
+/**
+ * Projects a `Temporal.Duration` onto a nominal length using Postgres's
+ * interval convention: a month is 30 days and a year is 12 of those. Calendar
+ * units have no exact length, so any total order over them has to pick nominal
+ * ones, and this is the one Postgres's own `ORDER BY` on an `interval` column
+ * uses.
+ *
+ * `Temporal.Duration.compare` is deliberately not used: it throws once years,
+ * months, or weeks are involved (relating those to days needs a starting
+ * point), and a partial order cannot be completed pairwise without becoming
+ * intransitive.
+ */
 function durationNanos(duration: object): number {
 	let total = 0;
 	for (const [field, nanos] of Object.entries(DURATION_FIELD_NANOS)) {
@@ -295,7 +299,7 @@ export function sqlCompare(a: unknown, b: unknown): number {
 			return compareNumbers((a as Date).getTime(), (b as Date).getTime());
 
 		case TypeRank.Temporal:
-			return compareTemporal(a as object, b as object, temporalTag(a)!, temporalTag(b)!);
+			return compareTemporal(a as object, b as object);
 
 		case TypeRank.String:
 			// The equal case returned 0 above.
