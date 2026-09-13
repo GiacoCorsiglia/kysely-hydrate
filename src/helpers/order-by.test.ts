@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { DurationStub, PlainDateStub, PlainMonthDayStub, PlainTimeStub } from "./order-by.stubs.ts";
 import { type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
 
 describe("sqlCompare", () => {
@@ -148,6 +149,91 @@ describe("sqlCompare", () => {
 		assert.ok(sqlCompare([0], {}) < 0);
 	});
 
+	describe("Temporal", () => {
+		it("should order values via their type's static compare", () => {
+			const early = new PlainDateStub("2020-06-15");
+			const late = new PlainDateStub("2024-01-01");
+			assert.ok(sqlCompare(early, late) < 0);
+			assert.ok(sqlCompare(late, early) > 0);
+			assert.equal(sqlCompare(new PlainDateStub("2024-01-01"), new PlainDateStub("2024-01-01")), 0);
+		});
+
+		it("should never coerce a value with valueOf", () => {
+			// Temporal throws from valueOf to block `a < b`. Any code path that
+			// coerced instead of using compare would surface here.
+			const a = new PlainDateStub("2020-06-15");
+			const b = new PlainDateStub("2024-01-01");
+			assert.throws(() => a.valueOf());
+			assert.doesNotThrow(() => sqlCompare(a, b));
+			assert.doesNotThrow(() => sqlCompare(a, 1));
+			assert.doesNotThrow(() => sqlCompare(a, "x"));
+			assert.doesNotThrow(() => [b, a].sort(sqlCompare));
+		});
+
+		it("should separate distinct Temporal types by name rather than comparing them", () => {
+			// PlainDate.compare throws when handed a PlainTime, so unlike types
+			// must never reach it.
+			const date = new PlainDateStub("2024-01-01");
+			const time = new PlainTimeStub("10:00:00");
+			assert.doesNotThrow(() => sqlCompare(date, time));
+			assert.ok(sqlCompare(date, time) < 0);
+			assert.ok(sqlCompare(time, date) > 0);
+		});
+
+		it("should fall back to string forms for a type without compare", () => {
+			// PlainMonthDay has no static compare at all.
+			const a = new PlainMonthDayStub("01-01");
+			const b = new PlainMonthDayStub("06-15");
+			assert.ok(sqlCompare(a, b) < 0);
+			assert.ok(sqlCompare(b, a) > 0);
+			assert.equal(sqlCompare(a, new PlainMonthDayStub("01-01")), 0);
+		});
+
+		it("should order Durations by nominal length like a Postgres interval", () => {
+			const duration = (iso: string) => new DurationStub(iso);
+			assert.ok(sqlCompare(duration("PT90M"), duration("PT2H")) < 0);
+			assert.equal(sqlCompare(duration("PT1H"), duration("PT60M")), 0);
+			// Temporal.Duration.compare would throw here; a month is nominally
+			// 30 days and a year 360, matching interval_cmp.
+			assert.doesNotThrow(() => sqlCompare(duration("P1M"), duration("P30D")));
+			assert.equal(sqlCompare(duration("P1M"), duration("P30D")), 0);
+			assert.ok(sqlCompare(duration("P1M"), duration("P31D")) < 0);
+			assert.equal(sqlCompare(duration("P1Y"), duration("P12M")), 0);
+			assert.ok(sqlCompare(duration("P1Y"), duration("P365D")) < 0);
+			assert.ok(sqlCompare(duration("P1W"), duration("P6DT23H")) > 0);
+			assert.ok(sqlCompare(duration("PT1M"), duration("PT59S")) > 0);
+		});
+
+		it("should stay transitive across Durations whose native compare is partial", () => {
+			const durations = ["P1M", "P5Y", "PT1H", "PT60M", "P10D", "P9D", "P2W"].map(
+				(iso) => new DurationStub(iso),
+			);
+			for (const a of durations) {
+				for (const b of durations) {
+					assert.ok(Math.sign(sqlCompare(a, b)) === -Math.sign(sqlCompare(b, a)), `${a} vs ${b}`);
+					for (const c of durations) {
+						if (sqlCompare(a, b) <= 0 && sqlCompare(b, c) <= 0) {
+							assert.ok(sqlCompare(a, c) <= 0, `${a} <= ${b} <= ${c} but ${a} > ${c}`);
+						}
+					}
+				}
+			}
+		});
+
+		it("should order subclass instances through the inherited static compare", () => {
+			class MyDate extends PlainDateStub {}
+			assert.ok(sqlCompare(new MyDate("2020-01-01"), new PlainDateStub("2024-01-01")) < 0);
+			assert.equal(sqlCompare(new MyDate("2024-01-01"), new PlainDateStub("2024-01-01")), 0);
+		});
+
+		it("should rank Temporal between Date and string", () => {
+			const date = new PlainDateStub("2024-01-01");
+			assert.ok(sqlCompare(new Date("2030-01-01"), date) < 0);
+			assert.ok(sqlCompare(date, "0") < 0);
+			assert.ok(sqlCompare(date, Buffer.from([0])) < 0);
+		});
+	});
+
 	// A pool of every value family the comparator must total-order together.
 	const mixedPool = [
 		null,
@@ -167,6 +253,12 @@ describe("sqlCompare", () => {
 		new Date("2020-06-15"),
 		new Date("2024-01-01"),
 		new Date(NaN),
+		new DurationStub("P1M"),
+		new DurationStub("PT1H"),
+		new PlainDateStub("2020-06-15"),
+		new PlainDateStub("2024-01-01"),
+		new PlainMonthDayStub("06-15"),
+		new PlainTimeStub("10:00:00"),
 		"10",
 		"2",
 		"apple",

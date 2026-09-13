@@ -76,11 +76,13 @@ const TypeRank = {
 	Boolean: 0,
 	Numeric: 1,
 	Date: 2,
-	String: 3,
+	/** Any `Temporal.*` value. */
+	Temporal: 3,
+	String: 4,
 	/** `Buffer` and `Uint8Array`, which is how drivers return binary columns. */
-	Bytes: 4,
-	Array: 5,
-	Other: 6,
+	Bytes: 5,
+	Array: 6,
+	Other: 7,
 } as const;
 
 type TypeRank = (typeof TypeRank)[keyof typeof TypeRank];
@@ -97,6 +99,9 @@ function typeRankOf(value: unknown): TypeRank {
 		default:
 			if (value instanceof Date) {
 				return TypeRank.Date;
+			}
+			if (temporalTag(value) !== undefined) {
+				return TypeRank.Temporal;
 			}
 			if (value instanceof Uint8Array) {
 				return TypeRank.Bytes;
@@ -126,6 +131,83 @@ function compareLexicographic<T>(
 		}
 	}
 	return a.length - b.length;
+}
+
+/**
+ * Every `Temporal.*` prototype carries its type name as `Symbol.toStringTag`
+ * ("Temporal.PlainDate", "Temporal.Instant", ...). Detecting by tag rather
+ * than `instanceof` needs no reference to a `Temporal` global, which matters
+ * because Temporal is not available on every supported runtime -- and a
+ * polyfill's values are recognized the same way.
+ */
+function temporalTag(value: unknown): string | undefined {
+	const tag = (value as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag];
+	return typeof tag === "string" && tag.startsWith("Temporal.") ? tag : undefined;
+}
+
+/**
+ * Compares two `Temporal.*` values.
+ *
+ * Temporal types expose ordering as a *static* `compare` on the constructor,
+ * which throws when handed a value of a different Temporal type, so unlike
+ * types are ordered by tag instead of reaching it. `Temporal.PlainMonthDay`
+ * has no `compare` at all (a month/day pair has no inherent order) and falls
+ * back to string forms. `Temporal.Duration` is special-cased; see
+ * `durationNanos`.
+ */
+function compareTemporal(a: object, b: object, aTag: string, bTag: string): number {
+	if (aTag !== bTag) {
+		return aTag < bTag ? -1 : 1;
+	}
+	if (aTag === "Temporal.Duration") {
+		return durationNanos(a) - durationNanos(b);
+	}
+	const compare = (a.constructor as { compare?: (x: object, y: object) => number }).compare;
+	return typeof compare === "function" ? compare(a, b) : compareStringForms(a, b);
+}
+
+/**
+ * Nanoseconds per `Temporal.Duration` field, using Postgres's interval
+ * convention: a month is 30 days and a year is 12 of those. Calendar units have
+ * no exact length, so any total order over them has to pick nominal ones, and
+ * this is the one Postgres's own `ORDER BY` on an `interval` column uses.
+ *
+ * `Temporal.Duration.compare` is deliberately not used: it throws once years,
+ * months, or weeks are involved (relating those to days needs a starting
+ * point), and a partial order cannot be completed pairwise without becoming
+ * intransitive.
+ */
+const DURATION_FIELD_NANOS = {
+	years: 360 * 86_400e9,
+	months: 30 * 86_400e9,
+	weeks: 7 * 86_400e9,
+	days: 86_400e9,
+	hours: 3_600e9,
+	minutes: 60e9,
+	seconds: 1e9,
+	milliseconds: 1e6,
+	microseconds: 1e3,
+	nanoseconds: 1,
+};
+
+function durationNanos(duration: object): number {
+	let total = 0;
+	for (const [field, nanos] of Object.entries(DURATION_FIELD_NANOS)) {
+		total += ((duration as Record<string, number>)[field] ?? 0) * nanos;
+	}
+	return total;
+}
+
+/**
+ * Last-resort ordering: compare `String()` forms. Distinct values may share a
+ * string form (two plain objects are both "[object Object]"), and those must
+ * compare equal -- returning a nonzero constant would do so for both argument
+ * orders, breaking antisymmetry.
+ */
+function compareStringForms(a: unknown, b: unknown): number {
+	const aStr = String(a);
+	const bStr = String(b);
+	return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
 }
 
 /**
@@ -167,10 +249,15 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  *   strings lexicographically by code unit, binary data (`Buffer`,
  *   `Uint8Array`) byte-wise, and arrays element-wise -- with a prefix sorting
  *   before the longer value it prefixes, as in SQL.
+ * - `Temporal.*` values (detected by their `Symbol.toStringTag`, so no
+ *   `Temporal` global is required) sort via their type's static `compare`.
+ *   `Temporal.Duration` sorts by nominal length using Postgres's interval
+ *   convention (30-day months, 360-day years), matching `ORDER BY` on an
+ *   `interval` column. Different Temporal types are separated by type name.
  * - Cross-type comparisons (where SQL would error, but a JS comparator must
  *   still produce a total order) resolve by type rank:
- *   boolean < numeric (number/bigint) < Date < string < binary < array <
- *   everything else. Values ranked "everything else" compare by their
+ *   boolean < numeric (number/bigint) < Date < Temporal < string < binary <
+ *   array < everything else. Values ranked "everything else" compare by their
  *   String() forms.
  * - `NaN` sorts after all other numerics, and invalid Dates sort after all
  *   valid Dates; NaN vs NaN and invalid Date vs invalid Date compare equal.
@@ -207,6 +294,9 @@ export function sqlCompare(a: unknown, b: unknown): number {
 			// An invalid Date has a NaN timestamp, so it pins last like NaN.
 			return compareNumbers((a as Date).getTime(), (b as Date).getTime());
 
+		case TypeRank.Temporal:
+			return compareTemporal(a as object, b as object, temporalTag(a)!, temporalTag(b)!);
+
 		case TypeRank.String:
 			// The equal case returned 0 above.
 			return (a as string) < (b as string) ? -1 : 1;
@@ -220,18 +310,8 @@ export function sqlCompare(a: unknown, b: unknown): number {
 			// arrays and nulls included.
 			return compareLexicographic(a as unknown[], b as unknown[], sqlCompare);
 
-		case TypeRank.Other: {
-			// Fallback: compare String() forms. Distinct values may share a
-			// string form (e.g. two different objects), and those must compare
-			// equal — returning 1 unconditionally would do so for both argument
-			// orders, breaking the comparator contract.
-			const aStr = String(a);
-			const bStr = String(b);
-			if (aStr === bStr) {
-				return 0;
-			}
-			return aStr < bStr ? -1 : 1;
-		}
+		case TypeRank.Other:
+			return compareStringForms(a, b);
 	}
 }
 
