@@ -128,8 +128,8 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  * Total-order comparator emulating SQL ORDER BY semantics in JavaScript.
  *
  * - `null`/`undefined` compare equal to each other and less than everything
- *   else. (`makeOrderByComparator` handles NULLS FIRST/LAST separately, so
- *   this branch only matters when `sqlCompare` is used directly.)
+ *   else. (`sortBy` handles NULLS FIRST/LAST separately, so this branch only
+ *   matters when `sqlCompare` is used directly.)
  * - Same-type comparisons match SQL: booleans (false < true), numbers and
  *   bigints numerically (including mixed number/bigint), Dates by timestamp,
  *   strings lexicographically by code unit.
@@ -238,30 +238,12 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 	return sqlCompare(a, b) * plan.direction;
 }
 
-export function makeOrderByComparator<T>(
-	orderings: readonly OrderBy<T>[],
-	getValue: GetValue<T> = defaultGetter,
-) {
-	const plans = planColumns(orderings);
-
-	return (lhs: T, rhs: T): number => {
-		for (let i = 0; i < orderings.length; i++) {
-			const key = orderings[i]!.key;
-			const cmp = compareColumn(getValue(lhs, key), getValue(rhs, key), plans[i]!);
-			if (cmp !== 0) {
-				return cmp;
-			}
-		}
-		return 0;
-	};
-}
-
 /**
  * Sorts rows by the given orderings, returning a new array.
  *
- * Equivalent to `rows.slice().sort(makeOrderByComparator(orderings, getValue))`
- * but extracts each row's sort keys once up front rather than on every
- * comparison, taking key extraction from O(n log n) calls to O(n).
+ * Rather than sorting with a comparator that extracts both rows' keys on
+ * every call, every row's keys are extracted once up front, taking key
+ * extraction from O(n log n) calls to O(n).
  *
  * That matters because `getValue` is not always cheap: for function keys the
  * hydrator builds a Proxy per extraction, which at 10k rows is the difference
@@ -284,8 +266,7 @@ export function sortBy<T>(
 	// allocations measured ~1.5x the whole sort.
 	//
 	// One flat array per ordering, holding that column's key for every row.
-	// Per-row key arrays (which would let this share a loop with
-	// makeOrderByComparator) measured 1.5-2x slower on 1e5 rows.
+	// Per-row key arrays measured 1.5-2x slower on 1e5 rows.
 	const columns: unknown[][] = new Array(orderings.length);
 	for (let c = 0; c < orderings.length; c++) {
 		const key = orderings[c]!.key;
