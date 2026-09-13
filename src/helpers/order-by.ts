@@ -128,8 +128,8 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  * Total-order comparator emulating SQL ORDER BY semantics in JavaScript.
  *
  * - `null`/`undefined` compare equal to each other and less than everything
- *   else. (`makeOrderByComparator` handles NULLS FIRST/LAST separately, so
- *   this branch only matters when `sqlCompare` is used directly.)
+ *   else. (`sortBy` handles NULLS FIRST/LAST separately, so this branch only
+ *   matters when `sqlCompare` is used directly.)
  * - Same-type comparisons match SQL: booleans (false < true), numbers and
  *   bigints numerically (including mixed number/bigint), Dates by timestamp,
  *   strings lexicographically by code unit.
@@ -191,6 +191,8 @@ export function sqlCompare(a: unknown, b: unknown): number {
 	}
 }
 
+type GetValue<T> = (obj: T, key: keyof T | ((input: T) => unknown)) => unknown;
+
 const defaultGetter = <T>(obj: T, key: keyof T | ((input: T) => unknown)) => {
 	if (typeof key === "function") {
 		return key(obj);
@@ -198,32 +200,103 @@ const defaultGetter = <T>(obj: T, key: keyof T | ((input: T) => unknown)) => {
 	return (obj as any)[key];
 };
 
-export function makeOrderByComparator<T>(
+/**
+ * An ordering reduced to what the comparison loop needs, so direction and
+ * null placement are resolved once rather than on every comparison.
+ */
+interface ColumnPlan {
+	readonly direction: 1 | -1;
+	readonly nullsFirst: boolean;
+}
+
+function planColumns<T>(orderings: readonly OrderBy<T>[]): ColumnPlan[] {
+	return orderings.map(({ direction, nulls }) => ({
+		direction: direction === "asc" ? 1 : -1,
+		nullsFirst: (nulls ?? nullsDefault(direction)) === "first",
+	}));
+}
+
+/**
+ * Compares one column's values. Returns 0 when the two are indistinguishable
+ * for this column (including both null), leaving the caller to move on to the
+ * next ordering.
+ */
+function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
+	const aNull = isNil(a);
+	const bNull = isNil(b);
+
+	if (aNull || bNull) {
+		if (aNull && bNull) {
+			return 0;
+		}
+		// NULLS FIRST/LAST is independent of ASC/DESC, so the ordering
+		// direction deliberately does not apply here.
+		const nullFirst = aNull ? -1 : 1;
+		return plan.nullsFirst ? nullFirst : -nullFirst;
+	}
+
+	return sqlCompare(a, b) * plan.direction;
+}
+
+/**
+ * Sorts rows by the given orderings, returning a new array.
+ *
+ * Rather than sorting with a comparator that extracts both rows' keys on
+ * every call, every row's keys are extracted once up front, taking key
+ * extraction from O(n log n) calls to O(n).
+ *
+ * That matters because `getValue` is not always cheap: for function keys the
+ * hydrator builds a Proxy per extraction, which at 10k rows is the difference
+ * between ~10k and ~218k Proxy allocations.
+ */
+export function sortBy<T>(
+	rows: readonly T[],
 	orderings: readonly OrderBy<T>[],
-	getValue: (obj: T, key: keyof T | ((input: T) => unknown)) => unknown = defaultGetter,
-) {
-	return (lhs: T, rhs: T): number => {
-		for (const { key, direction, nulls } of orderings) {
-			const a = getValue(lhs, key);
-			const b = getValue(rhs, key);
+	getValue: GetValue<T> = defaultGetter,
+): T[] {
+	if (orderings.length === 0 || rows.length < 2) {
+		return rows.slice();
+	}
 
-			const aNull = isNil(a);
-			const bNull = isNil(b);
+	const plans = planColumns(orderings);
+	const n = rows.length;
 
-			if (aNull || bNull) {
-				if (aNull && bNull) {
-					continue;
-				}
-				const dir = aNull ? -1 : 1;
-				const effectiveNulls = nulls ?? nullsDefault(direction);
-				return effectiveNulls === "first" ? dir : -dir;
-			}
+	// Plain loops throughout rather than map/Array.from: the hydrator calls
+	// this once per parent group, typically on 10-100 rows, where the closure
+	// allocations measured ~1.5x the whole sort.
+	//
+	// One flat array per ordering, holding that column's key for every row.
+	// Per-row key arrays measured 1.5-2x slower on 1e5 rows.
+	const columns: unknown[][] = new Array(orderings.length);
+	for (let c = 0; c < orderings.length; c++) {
+		const key = orderings[c]!.key;
+		const column = new Array<unknown>(n);
+		for (let i = 0; i < n; i++) {
+			column[i] = getValue(rows[i]!, key);
+		}
+		columns[c] = column;
+	}
 
-			const cmp = sqlCompare(a, b);
+	const indices = new Array<number>(n);
+	for (let i = 0; i < n; i++) {
+		indices[i] = i;
+	}
+	indices.sort((x, y) => {
+		for (let i = 0; i < columns.length; i++) {
+			const cmp = compareColumn(columns[i]![x], columns[i]![y], plans[i]!);
 			if (cmp !== 0) {
-				return direction === "asc" ? cmp : -cmp;
+				return cmp;
 			}
 		}
-		return 0;
-	};
+		// Array.sort is stable, but sorting indices rather than the rows
+		// themselves would leave equal rows in whatever order the sort put
+		// their indices. Falling back to the original index restores it.
+		return x - y;
+	});
+
+	const sorted = new Array<T>(n);
+	for (let i = 0; i < n; i++) {
+		sorted[i] = rows[indices[i]!]!;
+	}
+	return sorted;
 }

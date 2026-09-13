@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { sqlCompare, makeOrderByComparator } from "./order-by.ts";
+import { type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
 
 describe("sqlCompare", () => {
 	it("should return 0 for equal values", () => {
@@ -189,7 +189,7 @@ describe("sqlCompare", () => {
 	});
 });
 
-describe("makeOrderByComparator", () => {
+describe("sortBy", () => {
 	interface TestRow {
 		id: number;
 		name: string;
@@ -204,15 +204,11 @@ describe("makeOrderByComparator", () => {
 			{ id: 2, name: "Bob", age: 35, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
-			{ key: "id", direction: "asc", nulls: "first" },
-		]);
+		const sorted = sortBy(rows, [{ key: "id", direction: "asc", nulls: "first" }]);
 
-		rows.sort(comparator);
-
-		assert.equal(rows[0]!.id, 1);
-		assert.equal(rows[1]!.id, 2);
-		assert.equal(rows[2]!.id, 3);
+		assert.equal(sorted[0]!.id, 1);
+		assert.equal(sorted[1]!.id, 2);
+		assert.equal(sorted[2]!.id, 3);
 	});
 
 	it("should sort by single column descending", () => {
@@ -222,15 +218,11 @@ describe("makeOrderByComparator", () => {
 			{ id: 2, name: "Bob", age: 35, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
-			{ key: "age", direction: "desc", nulls: "first" },
-		]);
+		const sorted = sortBy(rows, [{ key: "age", direction: "desc", nulls: "first" }]);
 
-		rows.sort(comparator);
-
-		assert.equal(rows[0]!.age, 35);
-		assert.equal(rows[1]!.age, 30);
-		assert.equal(rows[2]!.age, 25);
+		assert.equal(sorted[0]!.age, 35);
+		assert.equal(sorted[1]!.age, 30);
+		assert.equal(sorted[2]!.age, 25);
 	});
 
 	it("should handle nulls first", () => {
@@ -241,16 +233,12 @@ describe("makeOrderByComparator", () => {
 			{ id: 4, name: "David", age: null, active: false },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
-			{ key: "age", direction: "asc", nulls: "first" },
-		]);
+		const sorted = sortBy(rows, [{ key: "age", direction: "asc", nulls: "first" }]);
 
-		rows.sort(comparator);
-
-		assert.equal(rows[0]!.age, null);
-		assert.equal(rows[1]!.age, null);
-		assert.equal(rows[2]!.age, 25);
-		assert.equal(rows[3]!.age, 30);
+		assert.equal(sorted[0]!.age, null);
+		assert.equal(sorted[1]!.age, null);
+		assert.equal(sorted[2]!.age, 25);
+		assert.equal(sorted[3]!.age, 30);
 	});
 
 	it("should handle nulls last", () => {
@@ -261,16 +249,12 @@ describe("makeOrderByComparator", () => {
 			{ id: 4, name: "David", age: null, active: false },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
-			{ key: "age", direction: "asc", nulls: "last" },
-		]);
+		const sorted = sortBy(rows, [{ key: "age", direction: "asc", nulls: "last" }]);
 
-		rows.sort(comparator);
-
-		assert.equal(rows[0]!.age, 25);
-		assert.equal(rows[1]!.age, 30);
-		assert.equal(rows[2]!.age, null);
-		assert.equal(rows[3]!.age, null);
+		assert.equal(sorted[0]!.age, 25);
+		assert.equal(sorted[1]!.age, 30);
+		assert.equal(sorted[2]!.age, null);
+		assert.equal(sorted[3]!.age, null);
 	});
 
 	it("should handle nulls last with descending order", () => {
@@ -280,15 +264,11 @@ describe("makeOrderByComparator", () => {
 			{ id: 3, name: "Charlie", age: 30, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
-			{ key: "age", direction: "desc", nulls: "last" },
-		]);
+		const sorted = sortBy(rows, [{ key: "age", direction: "desc", nulls: "last" }]);
 
-		rows.sort(comparator);
-
-		assert.equal(rows[0]!.age, 30);
-		assert.equal(rows[1]!.age, 25);
-		assert.equal(rows[2]!.age, null);
+		assert.equal(sorted[0]!.age, 30);
+		assert.equal(sorted[1]!.age, 25);
+		assert.equal(sorted[2]!.age, null);
 	});
 
 	it("should sort by multiple columns", () => {
@@ -299,19 +279,17 @@ describe("makeOrderByComparator", () => {
 			{ id: 4, name: "David", age: 25, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
+		const sorted = sortBy(rows, [
 			{ key: "age", direction: "asc", nulls: "first" },
 			{ key: "name", direction: "asc", nulls: "first" },
 		]);
 
-		rows.sort(comparator);
-
 		// All age 25 should come first, sorted by name
-		assert.equal(rows[0]!.name, "Alice");
-		assert.equal(rows[1]!.name, "Bob");
-		assert.equal(rows[2]!.name, "David");
+		assert.equal(sorted[0]!.name, "Alice");
+		assert.equal(sorted[1]!.name, "Bob");
+		assert.equal(sorted[2]!.name, "David");
 		// Then age 30
-		assert.equal(rows[3]!.name, "Charlie");
+		assert.equal(sorted[3]!.name, "Charlie");
 	});
 
 	it("should sort by multiple columns with mixed directions", () => {
@@ -322,19 +300,17 @@ describe("makeOrderByComparator", () => {
 			{ id: 4, name: "David", age: 25, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
+		const sorted = sortBy(rows, [
 			{ key: "age", direction: "asc", nulls: "first" },
 			{ key: "name", direction: "desc", nulls: "first" },
 		]);
 
-		rows.sort(comparator);
-
 		// All age 25 should come first, sorted by name descending
-		assert.equal(rows[0]!.name, "David");
-		assert.equal(rows[1]!.name, "Bob");
-		assert.equal(rows[2]!.name, "Alice");
+		assert.equal(sorted[0]!.name, "David");
+		assert.equal(sorted[1]!.name, "Bob");
+		assert.equal(sorted[2]!.name, "Alice");
 		// Then age 30
-		assert.equal(rows[3]!.name, "Charlie");
+		assert.equal(sorted[3]!.name, "Charlie");
 	});
 
 	it("should handle all nulls in both values", () => {
@@ -344,17 +320,15 @@ describe("makeOrderByComparator", () => {
 			{ id: 3, name: "Charlie", age: null, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
+		const sorted = sortBy(rows, [
 			{ key: "age", direction: "asc", nulls: "first" },
 			{ key: "name", direction: "asc", nulls: "first" },
 		]);
 
-		rows.sort(comparator);
-
 		// When age is null for all, should fall back to name sorting
-		assert.equal(rows[0]!.name, "Alice");
-		assert.equal(rows[1]!.name, "Bob");
-		assert.equal(rows[2]!.name, "Charlie");
+		assert.equal(sorted[0]!.name, "Alice");
+		assert.equal(sorted[1]!.name, "Bob");
+		assert.equal(sorted[2]!.name, "Charlie");
 	});
 
 	it("should handle boolean sorting", () => {
@@ -365,29 +339,25 @@ describe("makeOrderByComparator", () => {
 			{ id: 4, name: "David", age: 40, active: false },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
-			{ key: "active", direction: "asc", nulls: "first" },
-		]);
-
-		rows.sort(comparator);
+		const sorted = sortBy(rows, [{ key: "active", direction: "asc", nulls: "first" }]);
 
 		// false < true
-		assert.equal(rows[0]!.active, false);
-		assert.equal(rows[1]!.active, false);
-		assert.equal(rows[2]!.active, true);
-		assert.equal(rows[3]!.active, true);
+		assert.equal(sorted[0]!.active, false);
+		assert.equal(sorted[1]!.active, false);
+		assert.equal(sorted[2]!.active, true);
+		assert.equal(sorted[3]!.active, true);
 	});
 
-	it("should return 0 for identical rows", () => {
+	it("should keep identical rows in input order", () => {
 		const row1: TestRow = { id: 1, name: "Alice", age: 25, active: true };
 		const row2: TestRow = { id: 1, name: "Alice", age: 25, active: true };
-
-		const comparator = makeOrderByComparator<TestRow>([
+		const orderings: OrderBy<TestRow>[] = [
 			{ key: "id", direction: "asc", nulls: "first" },
 			{ key: "name", direction: "asc", nulls: "first" },
-		]);
+		];
 
-		assert.equal(comparator(row1, row2), 0);
+		assert.deepEqual(sortBy([row1, row2], orderings), [row1, row2]);
+		assert.deepEqual(sortBy([row2, row1], orderings), [row2, row1]);
 	});
 
 	it("should handle empty orderings array", () => {
@@ -396,13 +366,11 @@ describe("makeOrderByComparator", () => {
 			{ id: 1, name: "Alice", age: 25, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([]);
-
-		rows.sort(comparator);
+		const sorted = sortBy(rows, []);
 
 		// Should return 0 for all comparisons, maintaining original order (stable sort)
-		assert.equal(rows[0]!.id, 2);
-		assert.equal(rows[1]!.id, 1);
+		assert.equal(sorted[0]!.id, 2);
+		assert.equal(sorted[1]!.id, 1);
 	});
 
 	it("should support ordering by computed values using functions", () => {
@@ -413,16 +381,14 @@ describe("makeOrderByComparator", () => {
 		];
 
 		// Sort by lowercase name for case-insensitive ordering
-		const comparator = makeOrderByComparator<TestRow>([
+		const sorted = sortBy(rows, [
 			{ key: (row) => row.name.toLowerCase(), direction: "asc", nulls: "first" },
 		]);
 
-		rows.sort(comparator);
-
 		// Should be sorted case-insensitively: Alice, bob, Charlie
-		assert.equal(rows[0]!.name, "Alice");
-		assert.equal(rows[1]!.name, "bob");
-		assert.equal(rows[2]!.name, "Charlie");
+		assert.equal(sorted[0]!.name, "Alice");
+		assert.equal(sorted[1]!.name, "bob");
+		assert.equal(sorted[2]!.name, "Charlie");
 	});
 
 	it("should support mixing field keys and functions in orderings", () => {
@@ -432,20 +398,129 @@ describe("makeOrderByComparator", () => {
 			{ id: 3, name: "Bob", age: 25, active: true },
 		];
 
-		const comparator = makeOrderByComparator<TestRow>([
+		const sorted = sortBy(rows, [
 			{ key: "age", direction: "asc", nulls: "first" },
 			{ key: (row) => row.name.toLowerCase(), direction: "asc", nulls: "first" },
 		]);
 
-		rows.sort(comparator);
-
 		// Age 25: Alice, Bob (sorted by lowercase name)
-		assert.equal(rows[0]!.age, 25);
-		assert.equal(rows[0]!.name, "Alice");
-		assert.equal(rows[1]!.age, 25);
-		assert.equal(rows[1]!.name, "Bob");
+		assert.equal(sorted[0]!.age, 25);
+		assert.equal(sorted[0]!.name, "Alice");
+		assert.equal(sorted[1]!.age, 25);
+		assert.equal(sorted[1]!.name, "Bob");
 		// Age 30: alice
-		assert.equal(rows[2]!.age, 30);
-		assert.equal(rows[2]!.name, "alice");
+		assert.equal(sorted[2]!.age, 30);
+		assert.equal(sorted[2]!.name, "alice");
+	});
+});
+
+describe("sortBy key extraction", () => {
+	interface Row {
+		readonly id: number;
+		readonly group: string | null;
+		readonly score: number;
+	}
+
+	const rows: Row[] = [
+		{ id: 1, group: "b", score: 2 },
+		{ id: 2, group: "a", score: 1 },
+		{ id: 3, group: null, score: 3 },
+		{ id: 4, group: "a", score: 2 },
+		{ id: 5, group: "b", score: 1 },
+		{ id: 6, group: null, score: 1 },
+	];
+
+	it("should apply direction and null placement for every ordering shape", () => {
+		const cases: [OrderBy<Row>[], number[]][] = [
+			[[{ key: "score", direction: "asc" }], [2, 5, 6, 1, 4, 3]],
+			[[{ key: "score", direction: "desc" }], [3, 1, 4, 2, 5, 6]],
+			// ASC defaults to NULLS LAST, DESC to NULLS FIRST.
+			[[{ key: "group", direction: "asc" }], [2, 4, 1, 5, 3, 6]],
+			[[{ key: "group", direction: "asc", nulls: "first" }], [3, 6, 2, 4, 1, 5]],
+			[[{ key: "group", direction: "asc", nulls: "last" }], [2, 4, 1, 5, 3, 6]],
+			[[{ key: "group", direction: "desc" }], [3, 6, 1, 5, 2, 4]],
+			[[{ key: "group", direction: "desc", nulls: "first" }], [3, 6, 1, 5, 2, 4]],
+			[[{ key: "group", direction: "desc", nulls: "last" }], [1, 5, 2, 4, 3, 6]],
+			[
+				[
+					{ key: "group", direction: "asc" },
+					{ key: "score", direction: "desc" },
+				],
+				[4, 2, 1, 5, 3, 6],
+			],
+			[[{ key: (row: Row) => row.score * -1, direction: "asc" }], [3, 1, 4, 2, 5, 6]],
+		];
+
+		for (const [orderings, expected] of cases) {
+			assert.deepEqual(
+				sortBy(rows, orderings).map((row) => row.id),
+				expected,
+				JSON.stringify(orderings.map((o) => ({ ...o, key: String(o.key) }))),
+			);
+		}
+	});
+
+	it("should be stable for rows that compare equal", () => {
+		// Sorting an index array rather than the rows themselves loses
+		// Array.sort's stability guarantee unless it is restored explicitly.
+		const ties = Array.from({ length: 50 }, (_, i) => ({ id: i, group: "same", score: 0 }));
+		const sorted = sortBy(ties, [{ key: "group", direction: "asc" }]);
+		assert.deepEqual(
+			sorted.map((row) => row.id),
+			ties.map((row) => row.id),
+		);
+
+		// Stability must also hold when an earlier column breaks some ties but
+		// not others.
+		const partial = [
+			{ id: 1, group: "b", score: 0 },
+			{ id: 2, group: "a", score: 0 },
+			{ id: 3, group: "b", score: 0 },
+			{ id: 4, group: "a", score: 0 },
+		];
+		assert.deepEqual(
+			sortBy(partial, [{ key: "group", direction: "asc" }]).map((row) => row.id),
+			[2, 4, 1, 3],
+		);
+	});
+
+	it("should not mutate the input array", () => {
+		const original = [...rows];
+		const sorted = sortBy(rows, [{ key: "score", direction: "desc" }]);
+		assert.deepEqual(rows, original);
+		assert.notEqual(sorted, rows);
+	});
+
+	it("should handle empty orderings and trivial inputs", () => {
+		assert.deepEqual(sortBy(rows, []), rows);
+		assert.notEqual(sortBy(rows, []), rows);
+		assert.deepEqual(sortBy([], [{ key: "score", direction: "asc" }]), []);
+		assert.deepEqual(sortBy([rows[0]!], [{ key: "score", direction: "asc" }]), [rows[0]]);
+	});
+
+	it("should extract each row's key exactly once per ordering", () => {
+		// The reason sortBy exists: the hydrator's getValue allocates a Proxy
+		// per extraction, so O(n log n) extractions is the dominant cost.
+		let extractions = 0;
+		const many = Array.from({ length: 500 }, (_, i) => ({
+			id: i,
+			group: "g",
+			score: (i * 7) % 500,
+		}));
+		sortBy(many, [{ key: "score", direction: "asc" }], (row, key) => {
+			extractions++;
+			return (row as any)[key as string];
+		});
+		assert.equal(extractions, many.length);
+	});
+
+	it("should apply a custom getValue to function keys", () => {
+		const sorted = sortBy(rows, [{ key: (row: Row) => row.score, direction: "asc" }], (row, key) =>
+			typeof key === "function" ? key({ ...row, score: -row.score }) : (row as any)[key],
+		);
+		assert.deepEqual(
+			sorted.map((row) => row.score),
+			[3, 2, 2, 1, 1, 1],
+		);
 	});
 });
