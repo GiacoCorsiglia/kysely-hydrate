@@ -109,6 +109,22 @@ function compareNaNs(aIsNaN: boolean, bIsNaN: boolean): number {
 }
 
 /**
+ * Numeric ordering with NaN pinned last. `<`, `>`, and the equality
+ * fallthrough work correctly on mixed number/bigint operands, so e.g.
+ * `sqlCompare(1, 1n) === 0`.
+ */
+function compareNumbers(a: number | bigint, b: number | bigint): number {
+	if (a < b) {
+		return -1;
+	}
+	if (a > b) {
+		return 1;
+	}
+	// Neither ordered: equal, or at least one is NaN (bigint is never NaN).
+	return compareNaNs(a !== a, b !== b);
+}
+
+/**
  * Total-order comparator emulating SQL ORDER BY semantics in JavaScript.
  *
  * - `null`/`undefined` compare equal to each other and less than everything
@@ -149,32 +165,12 @@ export function sqlCompare(a: unknown, b: unknown): number {
 			// false < true; the equal cases returned 0 above.
 			return a ? 1 : -1;
 
-		case TypeRank.Numeric: {
-			const aNum = a as number | bigint;
-			const bNum = b as number | bigint;
-			const aIsNaN = typeof aNum === "number" && Number.isNaN(aNum);
-			const bIsNaN = typeof bNum === "number" && Number.isNaN(bNum);
-			if (aIsNaN || bIsNaN) {
-				return compareNaNs(aIsNaN, bIsNaN);
-			}
-			// <, >, and the equality fallthrough work correctly on mixed
-			// number/bigint operands, so e.g. sqlCompare(1, 1n) === 0.
-			if (aNum < bNum) {
-				return -1;
-			}
-			return aNum > bNum ? 1 : 0;
-		}
+		case TypeRank.Numeric:
+			return compareNumbers(a as number | bigint, b as number | bigint);
 
-		case TypeRank.Date: {
-			const aTime = (a as Date).getTime();
-			const bTime = (b as Date).getTime();
-			const aIsNaN = Number.isNaN(aTime);
-			const bIsNaN = Number.isNaN(bTime);
-			if (aIsNaN || bIsNaN) {
-				return compareNaNs(aIsNaN, bIsNaN);
-			}
-			return aTime - bTime;
-		}
+		case TypeRank.Date:
+			// An invalid Date has a NaN timestamp, so it pins last like NaN.
+			return compareNumbers((a as Date).getTime(), (b as Date).getTime());
 
 		case TypeRank.String:
 			// The equal case returned 0 above.

@@ -25,7 +25,6 @@ describe("sqlCompare", () => {
 		assert.ok(sqlCompare(2, 1) > 0);
 		assert.ok(sqlCompare(-5, 3) < 0);
 		assert.equal(sqlCompare(0, 0), 0);
-		// Check sign rather than exact value due to floating point precision
 		assert.ok(sqlCompare(1.5, 1.2) > 0);
 		assert.ok(sqlCompare(1.2, 1.5) < 0);
 	});
@@ -63,11 +62,11 @@ describe("sqlCompare", () => {
 	});
 
 	it("should resolve mixed types by type rank", () => {
-		// Cross-type pairs resolve by type rank (boolean < numeric < Date <
-		// string < other), never by stringification — comparing 10 vs "10" as
-		// equal while 2 vs "10" compares lexicographically breaks transitivity
-		// (2 < 10 numerically but "10" < "2" lexicographically), making sort
-		// output depend on input order.
+		// Cross-type pairs resolve by type rank (see the TypeRank table), never
+		// by stringification — comparing 10 vs "10" as equal while 2 vs "10"
+		// compares lexicographically breaks transitivity (2 < 10 numerically but
+		// "10" < "2" lexicographically), making sort output depend on input
+		// order.
 		assert.ok(sqlCompare(1, "1") < 0);
 		assert.ok(sqlCompare("1", 1) > 0);
 		assert.ok(sqlCompare(1, "2") < 0);
@@ -77,8 +76,11 @@ describe("sqlCompare", () => {
 		assert.ok(sqlCompare(new Date(0), 1) > 0);
 		assert.ok(sqlCompare("a", {}) < 0);
 
-		// Objects fall back to comparing String() forms.
-		assert.ok(sqlCompare({}, []) !== 0);
+		// Unrecognized objects compare by String() form: distinct forms order,
+		// identical forms are equal.
+		assert.ok(sqlCompare({}, new Map()) > 0);
+		assert.ok(sqlCompare(new Map(), {}) < 0);
+		assert.equal(sqlCompare({}, { a: 1 }), 0);
 
 		// number and bigint are the same rank and compare numerically.
 		assert.equal(sqlCompare(1, 1n), 0);
@@ -133,6 +135,7 @@ describe("sqlCompare", () => {
 		"2",
 		"apple",
 		{},
+		new Map(),
 		[1, 2],
 	];
 
