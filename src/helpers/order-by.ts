@@ -77,7 +77,10 @@ const TypeRank = {
 	Numeric: 1,
 	Date: 2,
 	String: 3,
-	Other: 4,
+	/** `Buffer` and `Uint8Array`, which is how drivers return binary columns. */
+	Bytes: 4,
+	Array: 5,
+	Other: 6,
 } as const;
 
 type TypeRank = (typeof TypeRank)[keyof typeof TypeRank];
@@ -92,8 +95,37 @@ function typeRankOf(value: unknown): TypeRank {
 		case "string":
 			return TypeRank.String;
 		default:
-			return value instanceof Date ? TypeRank.Date : TypeRank.Other;
+			if (value instanceof Date) {
+				return TypeRank.Date;
+			}
+			if (value instanceof Uint8Array) {
+				return TypeRank.Bytes;
+			}
+			if (Array.isArray(value)) {
+				return TypeRank.Array;
+			}
+			return TypeRank.Other;
 	}
+}
+
+/**
+ * Lexicographic ordering shared by binary data and arrays, matching how SQL
+ * orders both: compare position by position, and when one is a prefix of the
+ * other the shorter sorts first.
+ */
+function compareLexicographic<T>(
+	a: ArrayLike<T>,
+	b: ArrayLike<T>,
+	compareElement: (x: T, y: T) => number,
+): number {
+	const shared = Math.min(a.length, b.length);
+	for (let i = 0; i < shared; i++) {
+		const cmp = compareElement(a[i]!, b[i]!);
+		if (cmp !== 0) {
+			return cmp;
+		}
+	}
+	return a.length - b.length;
 }
 
 /**
@@ -128,15 +160,18 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  * Total-order comparator emulating SQL ORDER BY semantics in JavaScript.
  *
  * - `null`/`undefined` compare equal to each other and less than everything
- *   else. (`sortBy` handles NULLS FIRST/LAST separately, so this branch only
- *   matters when `sqlCompare` is used directly.)
+ *   else. (`sortBy` handles NULLS FIRST/LAST for top-level values itself, so
+ *   this matters for array elements and direct `sqlCompare` callers.)
  * - Same-type comparisons match SQL: booleans (false < true), numbers and
  *   bigints numerically (including mixed number/bigint), Dates by timestamp,
- *   strings lexicographically by code unit.
+ *   strings lexicographically by code unit, binary data (`Buffer`,
+ *   `Uint8Array`) byte-wise, and arrays element-wise -- with a prefix sorting
+ *   before the longer value it prefixes, as in SQL.
  * - Cross-type comparisons (where SQL would error, but a JS comparator must
  *   still produce a total order) resolve by type rank:
- *   boolean < numeric (number/bigint) < Date < string < everything else.
- *   Values ranked "everything else" compare by their String() forms.
+ *   boolean < numeric (number/bigint) < Date < string < binary < array <
+ *   everything else. Values ranked "everything else" compare by their
+ *   String() forms.
  * - `NaN` sorts after all other numerics, and invalid Dates sort after all
  *   valid Dates; NaN vs NaN and invalid Date vs invalid Date compare equal.
  *   (Returning NaN from a comparator, as `a - b` would, makes Array.sort
@@ -175,6 +210,15 @@ export function sqlCompare(a: unknown, b: unknown): number {
 		case TypeRank.String:
 			// The equal case returned 0 above.
 			return (a as string) < (b as string) ? -1 : 1;
+
+		case TypeRank.Bytes:
+			// Bytes are unsigned integers, so plain subtraction is a valid comparison.
+			return compareLexicographic(a as Uint8Array, b as Uint8Array, (x, y) => x - y);
+
+		case TypeRank.Array:
+			// Elements recurse, so arrays of any supported type work, nested
+			// arrays and nulls included.
+			return compareLexicographic(a as unknown[], b as unknown[], sqlCompare);
 
 		case TypeRank.Other: {
 			// Fallback: compare String() forms. Distinct values may share a
