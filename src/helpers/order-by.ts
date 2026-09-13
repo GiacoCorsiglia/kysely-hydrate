@@ -75,13 +75,14 @@ function isNil(value: unknown): value is null | undefined {
 const TypeRank = {
 	Boolean: 0,
 	Numeric: 1,
-	Date: 2,
-	Temporal: 3,
-	String: 4,
+	Decimal: 2,
+	Date: 3,
+	Temporal: 4,
+	String: 5,
 	/** `Buffer` and `Uint8Array`, which is how drivers return binary columns. */
-	Bytes: 5,
-	Array: 6,
-	Other: 7,
+	Bytes: 6,
+	Array: 7,
+	Other: 8,
 } as const;
 
 type TypeRank = (typeof TypeRank)[keyof typeof TypeRank];
@@ -107,6 +108,9 @@ function typeRankOf(value: unknown): TypeRank {
 			}
 			if (Array.isArray(value)) {
 				return TypeRank.Array;
+			}
+			if (decimalCompareOf(value) !== undefined) {
+				return TypeRank.Decimal;
 			}
 			return TypeRank.Other;
 	}
@@ -178,6 +182,34 @@ function durationNanos(duration: object): number {
 }
 
 /**
+ * Decimal libraries are detected structurally, so none is a dependency:
+ * decimal.js and big.js expose `cmp`, bignumber.js `comparedTo`.
+ */
+function decimalCompareOf(value: unknown): ((other: unknown) => unknown) | undefined {
+	const shape = value as { cmp?: unknown; comparedTo?: unknown };
+	if (typeof shape.cmp === "function") {
+		return shape.cmp as (other: unknown) => unknown;
+	}
+	if (typeof shape.comparedTo === "function") {
+		return shape.comparedTo as (other: unknown) => unknown;
+	}
+	return undefined;
+}
+
+/**
+ * A comparison against a decimal NaN yields `NaN` (decimal.js) or `null`
+ * (bignumber.js, which would coerce to 0), so any non-number result pins the
+ * NaN operand last, like a `number` NaN.
+ */
+function compareDecimals(a: object, b: object): number {
+	const result = decimalCompareOf(a)!.call(a, b);
+	if (typeof result === "number" && !Number.isNaN(result)) {
+		return result;
+	}
+	return compareNaNs(Number.isNaN(Number(String(a))), Number.isNaN(Number(String(b))));
+}
+
+/**
  * Last resort: compare `String()` forms. Distinct values sharing a form must
  * compare equal, or antisymmetry breaks.
  */
@@ -226,16 +258,20 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  *   strings lexicographically by code unit, binary data (`Buffer`,
  *   `Uint8Array`) byte-wise, and arrays element-wise -- with a prefix sorting
  *   before the longer value it prefixes, as in SQL.
+ * - Decimals (anything exposing `cmp` or `comparedTo`: decimal.js, big.js,
+ *   bignumber.js) sort via that method, in their own rank rather than
+ *   interleaved with numbers.
  * - `Temporal.*` values sort via their type's static `compare`, except
  *   `Duration`, which sorts by nominal length as a Postgres `interval` does.
  *   Different Temporal types are separated by type name.
  * - Cross-type comparisons (where SQL would error, but a JS comparator must
  *   still produce a total order) resolve by type rank:
- *   boolean < numeric (number/bigint) < Date < Temporal < string < binary <
- *   array < everything else. Values ranked "everything else" compare by their
- *   String() forms.
- * - `NaN` sorts after all other numerics, and invalid Dates sort after all
- *   valid Dates; NaN vs NaN and invalid Date vs invalid Date compare equal.
+ *   boolean < numeric (number/bigint) < decimal < Date < Temporal < string <
+ *   binary < array < everything else. Values ranked "everything else" compare
+ *   by their String() forms.
+ * - `NaN` sorts after all other numerics (decimal NaN likewise), and invalid
+ *   Dates sort after all valid Dates; NaN vs NaN and invalid Date vs invalid
+ *   Date compare equal.
  *   (Returning NaN from a comparator, as `a - b` would, makes Array.sort
  *   behavior implementation-defined and can leave the array unsorted.)
  */
@@ -264,6 +300,9 @@ export function sqlCompare(a: unknown, b: unknown): number {
 
 		case TypeRank.Numeric:
 			return compareNumbers(a as number | bigint, b as number | bigint);
+
+		case TypeRank.Decimal:
+			return compareDecimals(a as object, b as object);
 
 		case TypeRank.Date:
 			// An invalid Date has a NaN timestamp, so it pins last like NaN.
