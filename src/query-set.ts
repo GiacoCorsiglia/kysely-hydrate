@@ -18,7 +18,6 @@
 
 import * as k from "kysely";
 
-import { MAX_IDENTIFIER_BYTES } from "./fix-long-aliases.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -74,16 +73,6 @@ import {
 	EnableAutoInclusion,
 } from "./hydrator.ts";
 import { InvalidJoinedQuerySetError } from "./index.ts";
-
-export interface QuerySetOptions {
-	/**
-	 * Building a query whose generated column aliases exceed this many UTF-8
-	 * bytes throws {@link AliasTooLongError}. Defaults to 63, PostgreSQL's
-	 * limit. `null` disables the check. Measured after plugins, so the
-	 * `fixLongAliases()` plugin satisfies it.
-	 */
-	maxAliasBytes?: number | null;
-}
 
 /**
  * A stateless Kysely plugin that strips the WITH clause from a
@@ -2681,7 +2670,6 @@ interface QuerySetProps {
 	frontModifiers: readonly k.Expression<any>[];
 	endModifiers: readonly k.Expression<any>[];
 	writeQueryCreator: k.QueryCreator<any> | null;
-	maxAliasBytes: number | null;
 }
 
 /**
@@ -2999,7 +2987,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toJoinedQuery(): AnySelectQueryBuilder {
-		return assertAliasesFit(this.#toJoinedQuery(false, false), this.#props.maxAliasBytes);
+		return assertAliasesFit(this.#toJoinedQuery(false, false));
 	}
 
 	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
@@ -3104,7 +3092,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toQuery(): any {
-		return assertAliasesFit(this.#toQuery(false, false), this.#props.maxAliasBytes);
+		return assertAliasesFit(this.#toQuery(false, false));
 	}
 
 	toCountQuery(): OpaqueCountQueryBuilder {
@@ -3610,11 +3598,9 @@ type InferO<X> = X extends k.SelectQueryBuilder<any, any, infer O> ? O : never;
  */
 class QuerySetCreator<in out DB> {
 	#db: k.Kysely<DB>;
-	#maxAliasBytes: number | null;
 
-	constructor(db: k.Kysely<DB>, { maxAliasBytes = MAX_IDENTIFIER_BYTES }: QuerySetOptions) {
+	constructor(db: k.Kysely<DB>) {
 		this.#db = db;
-		this.#maxAliasBytes = maxAliasBytes;
 	}
 
 	#createQuerySet(
@@ -3639,7 +3625,6 @@ class QuerySetCreator<in out DB> {
 			frontModifiers: [],
 			endModifiers: [],
 			writeQueryCreator: null,
-			maxAliasBytes: this.#maxAliasBytes,
 		}) as any;
 	}
 
@@ -3855,7 +3840,6 @@ class QuerySetCreator<in out DB> {
 			frontModifiers: [],
 			endModifiers: [],
 			writeQueryCreator: qc,
-			maxAliasBytes: this.#maxAliasBytes,
 		});
 	}
 }
@@ -3887,9 +3871,8 @@ class QuerySetCreator<in out DB> {
  * ```
  *
  * @param db - A Kysely database instance.
- * @param options - See {@link QuerySetOptions}.
  * @returns A QuerySetCreator for building query sets.
  */
-export function querySet<DB>(db: k.Kysely<DB>, options: QuerySetOptions = {}): QuerySetCreator<DB> {
-	return new QuerySetCreator(db, options);
+export function querySet<DB>(db: k.Kysely<DB>): QuerySetCreator<DB> {
+	return new QuerySetCreator(db);
 }

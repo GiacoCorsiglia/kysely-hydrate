@@ -152,7 +152,7 @@ type Result = Array<{
     - [Counting](#counting)
     - [Existence](#existence)
     - [Inspecting the SQL](#inspecting-the-sql)
-    - [Long aliases and PostgreSQL's 63-byte identifier limit](#long-aliases-and-postgresqls-63-byte-identifier-limit)
+    - [PostgreSQL's 63-byte identifier limit](#postgresqls-63-byte-identifier-limit)
     - [Hydrating pre-fetched rows with `.hydrate()`](#hydrating-pre-fetched-rows-with-hydrate)
     - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
     - [Computed properties with `.extras()`](#computed-properties-with-extras)
@@ -860,7 +860,7 @@ You can inspect the generated SQL using `.toQuery()`, `.toJoinedQuery()`, or `.t
 - `toJoinedQuery()`: Returns the query with all joins applied (subject to row explosion).
 - `toBaseQuery()`: Returns the base query without any joins (but with modifications).
 
-### Long aliases and PostgreSQL's 63-byte identifier limit
+### PostgreSQL's 63-byte identifier limit
 
 Joined columns are selected under prefixed aliases like
 `posts$$comments$$author_id` (see [Isolation and prefixing](#isolation-and-prefixing)).
@@ -868,17 +868,17 @@ PostgreSQL silently truncates identifiers longer than 63 bytes, which would
 mangle field names or collapse two columns into one. So building a query whose
 aliases are too long throws an `AliasTooLongError`.
 
-The fix is the `fixLongAliases()` plugin. Add it last. If you use
+The fix is the `fixLongIdentifiers()` plugin. Add it last. If you use
 `CamelCasePlugin`, wrap it, so lengths are measured on the snake_cased names
 the database sees:
 
 ```ts
 import { CamelCasePlugin, Kysely } from "kysely";
-import { fixLongAliases } from "kysely-hydrate";
+import { fixLongIdentifiers } from "kysely-hydrate";
 
 const db = new Kysely<DB>({
 	dialect,
-	plugins: [fixLongAliases(new CamelCasePlugin())], // or [fixLongAliases()]
+	plugins: [fixLongIdentifiers(new CamelCasePlugin())], // or [fixLongIdentifiers()]
 });
 ```
 
@@ -889,8 +889,8 @@ can only restore rows that came through the plugin. Table and column names are
 rewritten too, so a schema that relies on PostgreSQL's own truncation will not
 work with it.
 
-`querySet(db, { maxAliasBytes })` changes the limit the check uses; pass
-`null` to turn it off, for example on SQLite.
+`fixLongIdentifiers(inner, { maxBytes })` lowers the limit; pass `undefined`
+as the first argument if there is no plugin to wrap.
 
 ### Hydrating pre-fetched rows with `.hydrate()`
 

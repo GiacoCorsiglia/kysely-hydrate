@@ -4,10 +4,10 @@ import { describe, test } from "node:test";
 import { CamelCasePlugin, type Compilable, type Kysely, type KyselyPlugin, sql } from "kysely";
 
 import { getDbForTest } from "./__tests__/db.ts";
-import { fixLongAliases } from "./fix-long-aliases.ts";
+import { fixLongIdentifiers } from "./fix-long-identifiers.ts";
 
 const rawDb = getDbForTest();
-const db = rawDb.withPlugin(fixLongAliases());
+const db = rawDb.withPlugin(fixLongIdentifiers());
 
 const bytes = (s: string) => Buffer.byteLength(s);
 
@@ -26,7 +26,7 @@ const ALIAS_93 =
 const ALIAS_97 =
 	"departmentalEmployeeRecordsWithVerboseNamingConventions$$employee_secondary_contact_email_address";
 
-describe("fix-long-aliases", () => {
+describe("fix-long-identifiers", () => {
 	assert.strictEqual(bytes(ALIAS_63), 63);
 	assert.strictEqual(bytes(ALIAS_64), 64);
 
@@ -54,7 +54,7 @@ describe("fix-long-aliases", () => {
 	});
 
 	test("is deterministic across plugin instances", () => {
-		const other = rawDb.withPlugin(fixLongAliases());
+		const other = rawDb.withPlugin(fixLongIdentifiers());
 
 		assert.strictEqual(
 			selectLiterals(db, { [ALIAS_64]: 1 }).compile().sql,
@@ -113,8 +113,19 @@ describe("fix-long-aliases", () => {
 		}
 	});
 
+	test("maxBytes lowers the limit", async () => {
+		const tight = rawDb.withPlugin(fixLongIdentifiers(undefined, { maxBytes: 30 }));
+		const alias = "a".repeat(31);
+		const query = selectLiterals(tight, { [alias]: 1 });
+
+		const [shortAlias] = aliasesIn(query);
+		assert.ok(shortAlias);
+		assert.ok(bytes(shortAlias) <= 30);
+		assert.deepStrictEqual(await query.executeTakeFirstOrThrow(), { [alias]: 1 });
+	});
+
 	describe("wrapping CamelCasePlugin", () => {
-		const camelDb = rawDb.withPlugin(fixLongAliases(new CamelCasePlugin()));
+		const camelDb = rawDb.withPlugin(fixLongIdentifiers(new CamelCasePlugin()));
 
 		// 58 bytes as written, 64 once snake_cased.
 		const CAMEL_58 = "employeeDirectoryEntries$$employeePreferredFullDisplayName";
@@ -149,7 +160,7 @@ describe("fix-long-aliases", () => {
 			},
 		};
 
-		await selectLiterals(rawDb.withPlugin(fixLongAliases(spy)), {
+		await selectLiterals(rawDb.withPlugin(fixLongIdentifiers(spy)), {
 			[ALIAS_64]: 1,
 		}).executeTakeFirstOrThrow();
 

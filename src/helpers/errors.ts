@@ -123,11 +123,10 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 }
 
 export class AliasTooLongError extends KyselyHydrateError {
-	constructor(alias: string, bytes: number, maxBytes: number) {
+	constructor(alias: string, bytes: number) {
 		super(
-			`Column alias "${alias}" is ${bytes} bytes; the limit is ${maxBytes}. Add the ` +
-				`fixLongAliases() plugin (wrapping CamelCasePlugin if you use it), or pass ` +
-				`{ maxAliasBytes: null } to querySet().`,
+			`Column alias "${alias}" is ${bytes} bytes; PostgreSQL's limit is 63. Add the ` +
+				`fixLongIdentifiers() plugin to your Kysely instance (wrapping CamelCasePlugin if you use it).`,
 		);
 	}
 }

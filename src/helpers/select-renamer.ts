@@ -1,5 +1,6 @@
 import * as k from "kysely";
 
+import { MAX_IDENTIFIER_BYTES } from "../fix-long-identifiers.ts";
 import {
 	AliasTooLongError,
 	UnexpectedComplexAliasError,
@@ -109,22 +110,19 @@ function extractSelectionName(selectionNode: k.SelectionNode): string {
 }
 
 /**
- * Throws if an output column alias is over `maxBytes` (`null` disables the
- * check). Runs after plugins, so it measures what the database sees. Skips
- * `selectAll()` and raw aliases, whose names are not known here.
+ * Throws if an output column alias is over PostgreSQL's 63-byte limit. Runs
+ * after plugins, so it measures what the database sees. Skips `selectAll()`
+ * and raw aliases, whose names are not known here.
  */
-export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB, maxBytes: number | null): QB {
-	if (maxBytes === null) {
-		return qb;
-	}
+export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB): QB {
 	for (const selectionNode of getSelections(qb) ?? []) {
 		const name = getSelectionName(selectionNode);
 		if (name === undefined) {
 			continue;
 		}
 		const bytes = byteLength(name);
-		if (bytes > maxBytes) {
-			throw new AliasTooLongError(name, bytes, maxBytes);
+		if (bytes > MAX_IDENTIFIER_BYTES) {
+			throw new AliasTooLongError(name, bytes);
 		}
 	}
 	return qb;

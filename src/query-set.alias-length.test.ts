@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { CamelCasePlugin, sql } from "kysely";
 
 import { getDbForTest } from "./__tests__/db.ts";
-import { fixLongAliases } from "./fix-long-aliases.ts";
+import { fixLongIdentifiers } from "./fix-long-identifiers.ts";
 import { AliasTooLongError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
@@ -16,12 +16,8 @@ const bytes = (s: string) => Buffer.byteLength(s);
 const KEY_54 = "postsWrittenByThisUserWithVerboseNamingConventionsForT";
 const KEY_55 = "postsWrittenByThisUserWithVerboseNamingConventionsForTe";
 
-function selectUserWithPostsUnder(
-	key: string,
-	dbToUse = db,
-	options?: { maxAliasBytes?: number | null },
-) {
-	return querySet(dbToUse, options)
+function selectUserWithPostsUnder(key: string, dbToUse = db) {
+	return querySet(dbToUse)
 		.selectAs("user", dbToUse.selectFrom("users").select(["id", "username"]))
 		.where("users.id", "=", 1)
 		.leftJoinMany(
@@ -46,7 +42,7 @@ describe("query-set: alias length guard", () => {
 			(error: unknown) =>
 				error instanceof AliasTooLongError &&
 				error.message.includes(`"${KEY_55}$$user_id" is 64 bytes`) &&
-				error.message.includes("fixLongAliases()"),
+				error.message.includes("fixLongIdentifiers()"),
 		);
 	});
 
@@ -77,23 +73,10 @@ describe("query-set: alias length guard", () => {
 		);
 	});
 
-	test("passes once the fixLongAliases() plugin is installed", () => {
-		const fixedDb = db.withPlugin(fixLongAliases());
+	test("passes once the fixLongIdentifiers() plugin is installed", () => {
+		const fixedDb = db.withPlugin(fixLongIdentifiers());
 
 		assert.doesNotThrow(() => selectUserWithPostsUnder(KEY_55, fixedDb).toQuery());
-	});
-
-	test("maxAliasBytes: null disables the guard", () => {
-		assert.doesNotThrow(() =>
-			selectUserWithPostsUnder(KEY_55, db, { maxAliasBytes: null }).toQuery(),
-		);
-	});
-
-	test("maxAliasBytes can be lowered", () => {
-		assert.throws(
-			() => selectUserWithPostsUnder("posts", db, { maxAliasBytes: 10 }).toQuery(),
-			AliasTooLongError,
-		);
 	});
 
 	test("skips a raw alias, which cannot be measured", () => {

@@ -6,6 +6,11 @@ import { byteLength, utf8 } from "./helpers/utils.ts";
 /** PostgreSQL truncates identifiers longer than this (NAMEDATALEN - 1). */
 export const MAX_IDENTIFIER_BYTES = 63;
 
+export interface FixLongIdentifiersOptions {
+	/** Identifiers longer than this many bytes are shortened. Defaults to 63. */
+	maxBytes?: number;
+}
+
 // A shortened identifier is the start of the original followed by "~" and a
 // 14-letter hash. 26^14 > 2^64, so a 64-bit hash always fits. Lowercase
 // letters only, so a second CamelCasePlugin pass (Kysely re-transforms
@@ -13,7 +18,6 @@ export const MAX_IDENTIFIER_BYTES = 63;
 const HASH_LENGTH = 14;
 
 // Module level so that any plugin instance restores what any other shortened.
-const shortByName = new Map<string, string>();
 const originalByShort = new Map<string, string>();
 const restoredByKey = new Map<string, string>();
 
@@ -30,29 +34,24 @@ function hash(name: string): string {
 	return out;
 }
 
-function shorten(name: string): string {
-	let short = shortByName.get(name);
-	if (short !== undefined) {
-		return short;
+function shorten(name: string, maxBytes: number): string {
+	if (byteLength(name) <= maxBytes) {
+		return name;
 	}
-	short = name;
-	if (byteLength(name) > MAX_IDENTIFIER_BYTES) {
-		const tail = "~" + hash(name);
-		let head = "";
-		for (const char of name) {
-			if (byteLength(head + char + tail) > MAX_IDENTIFIER_BYTES) {
-				break;
-			}
-			head += char;
+	const tail = "~" + hash(name);
+	let head = "";
+	for (const char of name) {
+		if (byteLength(head + char + tail) > maxBytes) {
+			break;
 		}
-		short = head + tail;
-		const other = originalByShort.get(short);
-		if (other !== undefined && other !== name) {
-			throw new AliasHashCollisionError(name, other);
-		}
-		originalByShort.set(short, name);
+		head += char;
 	}
-	shortByName.set(name, short);
+	const short = head + tail;
+	const other = originalByShort.get(short);
+	if (other !== undefined && other !== name) {
+		throw new AliasHashCollisionError(name, other);
+	}
+	originalByShort.set(short, name);
 	return short;
 }
 
@@ -77,16 +76,27 @@ function restoreRow(row: k.UnknownRow): k.UnknownRow {
 	return Object.fromEntries(Object.entries(row).map(([key, value]) => [restore(key), value]));
 }
 
-const transformer = new (class extends k.OperationNodeTransformer {
+class ShortenIdentifiers extends k.OperationNodeTransformer {
+	readonly #maxBytes: number;
+	readonly #shortByName = new Map<string, string>();
+
+	constructor(maxBytes: number) {
+		super();
+		this.#maxBytes = maxBytes;
+	}
+
 	protected override transformIdentifier(
 		node: k.IdentifierNode,
 		queryId?: k.QueryId,
 	): k.IdentifierNode {
 		node = super.transformIdentifier(node, queryId);
-		const short = shorten(node.name);
+		let short = this.#shortByName.get(node.name);
+		if (short === undefined) {
+			this.#shortByName.set(node.name, (short = shorten(node.name, this.#maxBytes)));
+		}
 		return short === node.name ? node : { ...node, name: short };
 	}
-})();
+}
 
 /**
  * A Kysely plugin that shortens identifiers over PostgreSQL's 63-byte limit
@@ -98,10 +108,14 @@ const transformer = new (class extends k.OperationNodeTransformer {
  * are measured on the snake_cased names the database sees:
  *
  * ```ts
- * plugins: [fixLongAliases(new CamelCasePlugin())]
+ * plugins: [fixLongIdentifiers(new CamelCasePlugin())]
  * ```
  */
-export function fixLongAliases(inner?: k.KyselyPlugin): k.KyselyPlugin {
+export function fixLongIdentifiers(
+	inner?: k.KyselyPlugin,
+	{ maxBytes = MAX_IDENTIFIER_BYTES }: FixLongIdentifiersOptions = {},
+): k.KyselyPlugin {
+	const transformer = new ShortenIdentifiers(maxBytes);
 	return {
 		transformQuery(args) {
 			const node = inner ? inner.transformQuery(args) : args.node;
