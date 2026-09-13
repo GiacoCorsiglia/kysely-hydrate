@@ -131,9 +131,21 @@ export function isSelectQueryBuilder(o: unknown): o is AnySelectQueryBuilder {
 	return typeof o === "object" && o !== null && "isSelectQueryBuilder" in o;
 }
 
-export const utf8 = new TextEncoder();
-
 /** Length in UTF-8 bytes, which is how databases measure identifiers. */
 export function byteLength(input: string): number {
-	return utf8.encode(input).length;
+	let bytes = 0;
+	for (let i = 0; i < input.length; i++) {
+		const code = input.charCodeAt(i);
+		if (code < 0x80) {
+			bytes += 1;
+		} else if (code < 0x800) {
+			bytes += 2;
+		} else if (code >= 0xd800 && code <= 0xdbff && (input.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+			bytes += 4; // Surrogate pair; skip the low half.
+			i++;
+		} else {
+			bytes += 3;
+		}
+	}
+	return bytes;
 }

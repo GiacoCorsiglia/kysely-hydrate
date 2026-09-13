@@ -5,6 +5,7 @@ import { CamelCasePlugin, type Compilable, type Kysely, type KyselyPlugin, sql }
 
 import { getDbForTest } from "./__tests__/db.ts";
 import { fixLongAliases } from "./fix-long-aliases.ts";
+import { byteLength } from "./helpers/utils.ts";
 
 const rawDb = getDbForTest();
 const db = rawDb.withPlugin(fixLongAliases());
@@ -51,6 +52,18 @@ describe("fix-long-aliases", () => {
 		const row = await selectLiterals(db, { [ALIAS_64]: 1, short: 2 }).executeTakeFirstOrThrow();
 
 		assert.deepStrictEqual(row, { [ALIAS_64]: 1, short: 2 });
+	});
+
+	test("passes rows through untouched when the query has nothing to restore", async () => {
+		const plugin = fixLongAliases();
+		const pluginDb = rawDb.withPlugin(plugin);
+		selectLiterals(pluginDb, { [ALIAS_64]: 1 }).compile(); // Something else has been shortened.
+		const { queryId } = selectLiterals(pluginDb, { [ALIAS_63]: 1 }).compile();
+		const rows = [{ [ALIAS_63]: 1 }];
+
+		const result = await plugin.transformResult({ result: { rows }, queryId });
+
+		assert.strictEqual(result.rows, rows);
 	});
 
 	test("is deterministic across plugin instances", () => {
@@ -166,4 +179,23 @@ describe("fix-long-aliases", () => {
 
 		assert.deepStrictEqual(seen, ["query", "result"]);
 	});
+});
+
+test("byteLength matches TextEncoder", () => {
+	for (const s of [
+		"",
+		"abc",
+		"\u00fc",
+		"\u00fcn\u00efc\u00f6d\u00e9$$x",
+		"\u20ac",
+		"\u{1f600}a",
+		"a\u{1f600}b\u20ac\u00fc",
+		"\u07ff\u0800\uffff",
+		"\ud800",
+		"\ud800a",
+		"a\udc00",
+		"\udc00\ud800",
+	]) {
+		assert.strictEqual(byteLength(s), Buffer.byteLength(s), s);
+	}
 });

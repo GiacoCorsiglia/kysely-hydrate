@@ -1,7 +1,7 @@
 import * as k from "kysely";
 
 import { AliasHashCollisionError } from "./helpers/errors.ts";
-import { byteLength, utf8 } from "./helpers/utils.ts";
+import { byteLength } from "./helpers/utils.ts";
 
 /** PostgreSQL truncates identifiers longer than this (NAMEDATALEN - 1). */
 export const MAX_IDENTIFIER_BYTES = 63;
@@ -15,15 +15,20 @@ export interface FixLongAliasesOptions {
 // 14-letter hash. 26^14 > 2^64, so a 64-bit hash always fits. Lowercase
 // letters only, so a second CamelCasePlugin pass (Kysely re-transforms
 // embedded subqueries) leaves it alone.
+const MARKER = "~";
 const HASH_LENGTH = 14;
 
 // Module level so that any plugin instance restores what any other shortened.
 const originalByShort = new Map<string, string>();
 const restoredByKey = new Map<string, string>();
 
+// Queries whose rows may contain shortened names. Kysely passes the same
+// QueryId object to transformQuery and transformResult.
+const queriesToRestore = new WeakSet<k.QueryId>();
+
 function hash(name: string): string {
 	let h = 0xcbf29ce484222325n; // FNV-1a
-	for (const byte of utf8.encode(name)) {
+	for (const byte of new TextEncoder().encode(name)) {
 		h = ((h ^ BigInt(byte)) * 0x100000001b3n) & 0xffffffffffffffffn;
 	}
 	let out = "";
@@ -35,10 +40,7 @@ function hash(name: string): string {
 }
 
 function shorten(name: string, maxBytes: number): string {
-	if (byteLength(name) <= maxBytes) {
-		return name;
-	}
-	const tail = "~" + hash(name);
+	const tail = MARKER + hash(name);
 	let head = "";
 	for (const char of name) {
 		if (byteLength(head + char + tail) > maxBytes) {
@@ -73,7 +75,11 @@ function restore(key: string): string {
 }
 
 function restoreRow(row: k.UnknownRow): k.UnknownRow {
-	return Object.fromEntries(Object.entries(row).map(([key, value]) => [restore(key), value]));
+	const restored: k.UnknownRow = {};
+	for (const key in row) {
+		restored[restore(key)] = row[key];
+	}
+	return restored;
 }
 
 class ShortenIdentifiers extends k.OperationNodeTransformer {
@@ -85,16 +91,51 @@ class ShortenIdentifiers extends k.OperationNodeTransformer {
 		this.#maxBytes = maxBytes;
 	}
 
+	// A UTF-16 code unit is 1 to 3 bytes, so most names need no counting.
+	#fits(name: string): boolean {
+		return (
+			name.length * 3 <= this.#maxBytes ||
+			(name.length <= this.#maxBytes && byteLength(name) <= this.#maxBytes)
+		);
+	}
+
+	/**
+	 * Whether `node` has an identifier that needs shortening ("long") or that
+	 * may already be shortened ("marked"). Kysely's transformer clones every
+	 * node, so this read-only pass lets the common case skip it entirely.
+	 */
+	scan(node: unknown, found = { long: false, marked: false }): typeof found {
+		if (Array.isArray(node)) {
+			for (const item of node) {
+				this.scan(item, found);
+			}
+		} else if (typeof node === "object" && node !== null && "kind" in node) {
+			if (k.IdentifierNode.is(node as k.OperationNode)) {
+				const { name } = node as k.IdentifierNode;
+				found.long ||= !this.#fits(name);
+				found.marked ||= name.includes(MARKER);
+			} else if (!k.ValueNode.is(node as k.OperationNode)) {
+				for (const key in node) {
+					this.scan((node as Record<string, unknown>)[key], found);
+				}
+			}
+		}
+		return found;
+	}
+
 	protected override transformIdentifier(
 		node: k.IdentifierNode,
 		queryId?: k.QueryId,
 	): k.IdentifierNode {
 		node = super.transformIdentifier(node, queryId);
+		if (this.#fits(node.name)) {
+			return node;
+		}
 		let short = this.#shortByName.get(node.name);
 		if (short === undefined) {
 			this.#shortByName.set(node.name, (short = shorten(node.name, this.#maxBytes)));
 		}
-		return short === node.name ? node : { ...node, name: short };
+		return { ...node, name: short };
 	}
 }
 
@@ -118,12 +159,19 @@ export function fixLongAliases(
 	const transformer = new ShortenIdentifiers(maxBytes);
 	return {
 		transformQuery(args) {
-			const node = inner ? inner.transformQuery(args) : args.node;
-			return transformer.transformNode(node, args.queryId);
+			let node = inner ? inner.transformQuery(args) : args.node;
+			const { long, marked } = transformer.scan(node);
+			if (long) {
+				node = transformer.transformNode(node, args.queryId);
+			}
+			if (long || marked) {
+				queriesToRestore.add(args.queryId);
+			}
+			return node;
 		},
 		async transformResult(args) {
 			let { result } = args;
-			if (originalByShort.size > 0) {
+			if (queriesToRestore.has(args.queryId)) {
 				result = { ...result, rows: result.rows.map(restoreRow) };
 			}
 			return inner ? inner.transformResult({ ...args, result }) : result;
