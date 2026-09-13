@@ -534,31 +534,195 @@ test("composite keys: skips rows where any key part is null", async () => {
 	assert.deepStrictEqual(result[0], { key1: "a", key2: 1, value: "valid" });
 });
 
-test("composite keys: values containing the separator do not collide", async () => {
+test("composite keys: a nil part after the first does not strand its branch", async () => {
 	interface CompositeRow {
 		key1: string;
-		key2: string;
-		nested$$id: number | null;
+		key2: number | null;
+		value: string;
 	}
 
-	// Regression test: composite keys were built by joining the parts with
-	// "::", so these two distinct entities produced the same key ("x::y::z")
-	// and were merged into one.
+	// A row whose second part is nil is abandoned after its first part was
+	// already matched; later rows sharing that first part must still group.
 	const rows: CompositeRow[] = [
-		{ key1: "x::y", key2: "z", nested$$id: 1 },
-		{ key1: "x", key2: "y::z", nested$$id: 2 },
+		{ key1: "a", key2: null, value: "invalid" },
+		{ key1: "a", key2: 1, value: "a1" },
+		{ key1: "a", key2: null, value: "invalid" },
+		{ key1: "a", key2: 2, value: "a2" },
+		{ key1: "a", key2: 1, value: "a1 again" },
 	];
 
-	const hydrator = createHydrator<CompositeRow>(["key1", "key2"])
-		.fields({ key1: true, key2: true })
-		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+	const hydrator = createHydrator<CompositeRow>(["key1", "key2"]).fields({
+		key1: true,
+		key2: true,
+		value: true,
+	});
 
 	const result = await hydrate(rows, hydrator);
 
-	assert.strictEqual(result.length, 2);
-	assert.deepStrictEqual(result[0], { key1: "x::y", key2: "z", items: [{ id: 1 }] });
-	assert.deepStrictEqual(result[1], { key1: "x", key2: "y::z", items: [{ id: 2 }] });
+	assert.deepStrictEqual(result, [
+		{ key1: "a", key2: 1, value: "a1" },
+		{ key1: "a", key2: 2, value: "a2" },
+	]);
 });
+
+interface KeyPartRow {
+	key1: unknown;
+	key2: unknown;
+	nested$$id: number;
+}
+
+/**
+ * Hydrates one row per `[key1, key2]` pair (each carrying a distinct child)
+ * and asserts how the rows grouped: `groups[i]` names the group row `i`
+ * belongs to, and groups are expected in the order their keys first appear.
+ */
+async function assertKeyGrouping(
+	keyBy: "key1" | ["key1", "key2"],
+	rows: readonly (readonly [key1: unknown, key2: unknown])[],
+	groups: readonly number[],
+) {
+	const hydrator = createHydrator<KeyPartRow>(keyBy)
+		.fields({ key1: true, key2: true })
+		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
+
+	const expected: { key1: unknown; key2: unknown; items: { id: number }[] }[] = [];
+	const byGroup = new Map<number, (typeof expected)[number]>();
+	rows.forEach(([key1, key2], index) => {
+		const item = { id: index + 1 };
+		const existing = byGroup.get(groups[index]!);
+		if (existing) {
+			existing.items.push(item);
+			return;
+		}
+		const entity = { key1, key2, items: [item] };
+		byGroup.set(groups[index]!, entity);
+		expected.push(entity);
+	});
+
+	const result = await hydrate(
+		rows.map(([key1, key2], index) => ({ key1, key2, nested$$id: index + 1 })),
+		hydrator,
+	);
+
+	assert.deepStrictEqual(result, expected);
+}
+
+const date = new Date("2026-01-02T03:04:05.678Z");
+const nullPrototypeValue = Object.create(null);
+const stringLikeObject = { toString: () => "true" };
+
+/** A grouping case: the rows' key parts, and the group each row belongs to. */
+type GroupingCase<Row> = [name: string, rows: Row[], groups: number[]];
+
+// Values for a key's first part, each paired with the group it belongs to:
+// values in the same group are one entity, values in different groups must not
+// collide.  Every case must hold for both `keyBy` shapes, since a single key
+// and a one-part composite key canonicalize their parts the same way.
+const keyPartCases: GroupingCase<unknown>[] = [
+	// Regression: bigints were encoded as `${value}n`, colliding with "123n".
+	["bigints do not collide with their string form", [123n, "123n"], [0, 1]],
+	// Regression: NaN and Infinity both JSON-serialize to null.
+	[
+		"NaN groups with NaN and does not collide with Infinity",
+		[Number.NaN, Number.NaN, Number.POSITIVE_INFINITY],
+		[0, 0, 1],
+	],
+	// Regression: Date#toJSON made a Date and its ISO string produce one key.
+	// The millisecond apart pins the time value: a Date's String() form is only
+	// second-resolution, so canonicalizing by it would merge these two.
+	[
+		"Dates group by time value and do not collide with their ISO string",
+		[date, new Date(date.getTime()), date.toISOString(), new Date(date.getTime() + 1)],
+		[0, 0, 1, 2],
+	],
+	// Buffer#toString() decodes as UTF-8, which is lossy: distinct invalid
+	// sequences both decode to U+FFFD, so bytes must be compared as bytes.
+	[
+		"binary values group by content, keeping byte boundaries",
+		[
+			new Uint8Array([1, 2]),
+			new Uint8Array([1, 2]),
+			new Uint8Array([12]),
+			Buffer.from([0xc0]),
+			Buffer.from([0xc1]),
+		],
+		[0, 0, 1, 2, 3],
+	],
+	// SQL types a column, so a part holds one type across rows and equal string
+	// forms across types are accepted as one key rather than defended against.
+	// Primitives of different types still never collide.
+	[
+		"values of different types with equal string forms share a key",
+		[true, "true", stringLikeObject],
+		[0, 1, 1],
+	],
+	// String() throws for null-prototype objects; the fallback must still key.
+	[
+		"values without a primitive conversion group rather than reject",
+		[nullPrototypeValue, nullPrototypeValue],
+		[0, 0],
+	],
+];
+
+for (const [name, values, groups] of keyPartCases) {
+	test(`keys: ${name}`, async () => {
+		const rows = values.map((key1) => [key1, "x"] as const);
+		await assertKeyGrouping("key1", rows, groups);
+		await assertKeyGrouping(["key1", "key2"], rows, groups);
+	});
+}
+
+// Whole composite keys, as `[key1, key2]` pairs, with the group each belongs
+// to.  These cases vary both parts, so they have no single-key equivalent.
+const compositeKeyCases: GroupingCase<readonly [unknown, unknown]>[] = [
+	// Regression: parts were joined with "::", so both of these keyed "x::y::z".
+	[
+		"values containing a separator do not collide",
+		[
+			["x::y", "z"],
+			["x", "y::z"],
+		],
+		[0, 1],
+	],
+	// Quotes and backslashes are what a text encoding would have to escape.
+	[
+		"values containing quotes and backslashes do not collide",
+		[
+			['a"s"b', "c"],
+			["a", 'b"s"c'],
+			['a\\"s"b', "c"],
+			["a\\", '"s"b\\"c'],
+		],
+		[0, 1, 2, 3],
+	],
+	[
+		"part boundaries cannot shift",
+		[
+			["a", "b"],
+			["ab", ""],
+			["", "ab"],
+		],
+		[0, 1, 2],
+	],
+	// Entities sharing a first part are adjacent in the lookup structure, but
+	// output order must follow first appearance in the rows.
+	[
+		"entities keep first-appearance order, not key order",
+		[
+			["a", 1],
+			["b", 1],
+			["a", 2],
+			["b", 1],
+		],
+		[0, 1, 2, 1],
+	],
+];
+
+for (const [name, rows, groups] of compositeKeyCases) {
+	test(`composite keys: ${name}`, async () => {
+		await assertKeyGrouping(["key1", "key2"], rows, groups);
+	});
+}
 
 //
 // Nested Collections (has/hasMany/hasOne/hasOneOrThrow)
@@ -1135,6 +1299,76 @@ test("attachMany: works with composite keys", async () => {
 	assert.strictEqual(result[0]?.related.length, 2);
 	assert.strictEqual(result[1]?.related.length, 1);
 });
+
+test("attachMany: composite keys sharing a first part match separately", async () => {
+	interface Entity {
+		key1: string;
+		key2: number;
+	}
+
+	// Parents sharing a first part share a branch of the lookup structure: each
+	// must still see only its own children, and a nil child part matches none.
+	const entities: Entity[] = [
+		{ key1: "a", key2: 1 },
+		{ key1: "a", key2: 2 },
+		{ key1: "b", key2: 1 },
+	];
+
+	const fetchRelated = async () => [
+		{ relKey1: "a", relKey2: 2, data: "a2" },
+		{ relKey1: "a", relKey2: 1, data: "a1" },
+		{ relKey1: "b", relKey2: 1, data: "b1" },
+		{ relKey1: "a", relKey2: null, data: "orphan" },
+	];
+
+	const hydrator = createHydrator<Entity>(["key1", "key2"])
+		.fields({ key1: true, key2: true })
+		.attachMany("related", fetchRelated, {
+			matchChild: ["relKey1", "relKey2"],
+			toParent: ["key1", "key2"],
+		});
+
+	const result = await hydrate(entities, hydrator);
+
+	assert.deepStrictEqual(
+		result.map((entity) => entity.related.map((related) => related.data)),
+		[["a1"], ["a2"], ["b1"]],
+	);
+});
+
+// matchChild and toParent are independent, so they may describe a one-part key
+// with either `keyBy` shape, and may also disagree on how many parts the key
+// has — a lookup of the wrong arity must match nothing rather than matching
+// the wrong children (or failing).
+const matchKeyCases: [
+	name: string,
+	matchChild: "id" | readonly ["id" | "other", ...("id" | "other")[]],
+	toParent: "id" | readonly ["id", ..."id"[]],
+	matched: string[],
+][] = [
+	["a one-part array matchChild matches a string toParent", ["id"], "id", ["child"]],
+	["a string matchChild matches a one-part array toParent", "id", ["id"], ["child"]],
+	["too many matchChild parts match nothing", ["id", "other"], "id", []],
+	["too many toParent parts match nothing", "id", ["id", "id"], []],
+];
+
+for (const [name, matchChild, toParent, matched] of matchKeyCases) {
+	test(`attachMany: ${name}`, async () => {
+		const hydrator = createHydrator<{ id: number }>("id")
+			.fields({ id: true })
+			.attachMany("related", async () => [{ id: 1, other: 1, data: "child" }], {
+				matchChild,
+				toParent,
+			});
+
+		const result = await hydrate([{ id: 1 }], hydrator);
+
+		assert.deepStrictEqual(
+			result.map((entity) => entity.related.map((related) => related.data)),
+			[matched],
+		);
+	});
+}
 
 test("attachOne: returns single match or null", async () => {
 	const usersWithMatch: User[] = [{ id: 1, name: "Alice" }];
