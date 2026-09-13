@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 
 import {
+	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
@@ -1337,22 +1338,17 @@ test("attachMany: composite keys sharing a first part match separately", async (
 });
 
 // matchChild and toParent are independent, so they may describe a one-part key
-// with either `keyBy` shape, and may also disagree on how many parts the key
-// has — a lookup of the wrong arity must match nothing rather than matching
-// the wrong children (or failing).
+// with either `keyBy` shape.
 const matchKeyCases: [
 	name: string,
-	matchChild: "id" | readonly ["id" | "other", ...("id" | "other")[]],
-	toParent: "id" | readonly ["id", ..."id"[]],
-	matched: string[],
+	matchChild: "id" | readonly ["id"],
+	toParent: "id" | readonly ["id"],
 ][] = [
-	["a one-part array matchChild matches a string toParent", ["id"], "id", ["child"]],
-	["a string matchChild matches a one-part array toParent", "id", ["id"], ["child"]],
-	["too many matchChild parts match nothing", ["id", "other"], "id", []],
-	["too many toParent parts match nothing", "id", ["id", "id"], []],
+	["a one-part array matchChild matches a string toParent", ["id"], "id"],
+	["a string matchChild matches a one-part array toParent", "id", ["id"]],
 ];
 
-for (const [name, matchChild, toParent, matched] of matchKeyCases) {
+for (const [name, matchChild, toParent] of matchKeyCases) {
 	test(`attachMany: ${name}`, async () => {
 		const hydrator = createHydrator<{ id: number }>("id")
 			.fields({ id: true })
@@ -1365,10 +1361,51 @@ for (const [name, matchChild, toParent, matched] of matchKeyCases) {
 
 		assert.deepStrictEqual(
 			result.map((entity) => entity.related.map((related) => related.data)),
-			[matched],
+			[["child"]],
 		);
 	});
 }
+
+// Keys of different arity can never match, so registering them is a mistake
+// that would otherwise surface as every parent attaching nothing.
+const arityMismatchCases: [name: string, keys: any][] = [
+	["more matchChild parts than toParent", { matchChild: ["id", "other"], toParent: "id" }],
+	["more toParent parts than matchChild", { matchChild: "id", toParent: ["id", "id"] }],
+	[
+		"a one-part array does not excuse a mismatch",
+		{ matchChild: ["id", "other"], toParent: ["id"] },
+	],
+	// toParent defaults to the parent's keyBy, which is one part here.
+	["a mismatch against the default toParent", { matchChild: ["id", "other"] }],
+];
+
+for (const [name, keys] of arityMismatchCases) {
+	test(`attach: throws on ${name}`, () => {
+		const hydrator = createHydrator<{ id: number }>("id").fields({ id: true });
+
+		assert.throws(
+			() => hydrator.attachMany("related", async () => [], keys),
+			AttachedKeysArityMismatchError,
+		);
+	});
+}
+
+test("attach: the arity mismatch error names the collection and both arities", () => {
+	const hydrator = createHydrator<{ id: number }>("id").fields({ id: true });
+
+	assert.throws(
+		() =>
+			hydrator.attachMany("related", async () => [], {
+				matchChild: ["id", "other"],
+				toParent: "id",
+			} as any),
+		(error: Error) => {
+			assert.match(error.message, /"related"/);
+			assert.match(error.message, /2 key part\(s\) but toParent has 1/);
+			return true;
+		},
+	);
+});
 
 test("attachOne: returns single match or null", async () => {
 	const usersWithMatch: User[] = [{ id: 1, name: "Alice" }];
