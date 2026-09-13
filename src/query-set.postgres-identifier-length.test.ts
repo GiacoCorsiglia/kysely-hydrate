@@ -1,6 +1,6 @@
 /**
  * Query sets whose generated aliases (`parent$$child$$column`) exceed
- * PostgreSQL's 63-byte identifier limit, run with the fixLongIdentifiers() plugin.
+ * PostgreSQL's 63-byte identifier limit, run with the fixLongAliases() plugin.
  * Every test asserts hydrated output only. Postgres-only: SQLite has no limit.
  */
 
@@ -11,7 +11,7 @@ import { CamelCasePlugin, type CamelCasePluginOptions } from "kysely";
 
 import { getDbForTest } from "./__tests__/db.ts";
 import { describePg } from "./__tests__/helpers.ts";
-import { fixLongIdentifiers } from "./fix-long-identifiers.ts";
+import { fixLongAliases } from "./fix-long-aliases.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest({ fixture: "identifier-length-fixture" });
@@ -26,7 +26,7 @@ function assertBytes(identifier: string, bytes: number) {
 
 describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 	describe("without CamelCasePlugin", () => {
-		const snakeDb = db.withPlugin(fixLongIdentifiers()).withTables<{
+		const snakeDb = db.withPlugin(fixLongAliases()).withTables<{
 			organizations: { id: number; organization_name: string };
 			organizational_departments: { id: number; organization_id: number; department_name: string };
 			departmental_employee_records: {
@@ -407,7 +407,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 
 	describe("with CamelCasePlugin", () => {
 		const camelDbWith = (options?: CamelCasePluginOptions) =>
-			db.withPlugin(fixLongIdentifiers(new CamelCasePlugin(options))).withTables<{
+			db.withPlugin(fixLongAliases(new CamelCasePlugin(options))).withTables<{
 				organizations: { id: number; organizationName: string };
 				organizationalDepartments: { id: number; organizationId: number; departmentName: string };
 				departmentalEmployeeRecords: {

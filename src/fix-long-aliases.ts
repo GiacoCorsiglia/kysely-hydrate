@@ -6,7 +6,7 @@ import { byteLength, utf8 } from "./helpers/utils.ts";
 /** PostgreSQL truncates identifiers longer than this (NAMEDATALEN - 1). */
 export const MAX_IDENTIFIER_BYTES = 63;
 
-export interface FixLongIdentifiersOptions {
+export interface FixLongAliasesOptions {
 	/** Identifiers longer than this many bytes are shortened. Defaults to 63. */
 	maxBytes?: number;
 }
@@ -108,12 +108,12 @@ class ShortenIdentifiers extends k.OperationNodeTransformer {
  * are measured on the snake_cased names the database sees:
  *
  * ```ts
- * plugins: [fixLongIdentifiers(new CamelCasePlugin())]
+ * plugins: [fixLongAliases(new CamelCasePlugin())]
  * ```
  */
-export function fixLongIdentifiers(
+export function fixLongAliases(
 	inner?: k.KyselyPlugin,
-	{ maxBytes = MAX_IDENTIFIER_BYTES }: FixLongIdentifiersOptions = {},
+	{ maxBytes = MAX_IDENTIFIER_BYTES }: FixLongAliasesOptions = {},
 ): k.KyselyPlugin {
 	const transformer = new ShortenIdentifiers(maxBytes);
 	return {

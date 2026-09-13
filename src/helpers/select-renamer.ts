@@ -1,6 +1,6 @@
 import * as k from "kysely";
 
-import { MAX_IDENTIFIER_BYTES } from "../fix-long-identifiers.ts";
+import { MAX_IDENTIFIER_BYTES } from "../fix-long-aliases.ts";
 import {
 	AliasTooLongError,
 	UnexpectedComplexAliasError,

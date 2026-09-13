@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { CamelCasePlugin, sql } from "kysely";
 
 import { getDbForTest } from "./__tests__/db.ts";
-import { fixLongIdentifiers } from "./fix-long-identifiers.ts";
+import { fixLongAliases } from "./fix-long-aliases.ts";
 import { AliasTooLongError } from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
@@ -42,7 +42,7 @@ describe("query-set: alias length guard", () => {
 			(error: unknown) =>
 				error instanceof AliasTooLongError &&
 				error.message.includes(`"${KEY_55}$$user_id" is 64 bytes`) &&
-				error.message.includes("fixLongIdentifiers()"),
+				error.message.includes("fixLongAliases()"),
 		);
 	});
 
@@ -73,8 +73,8 @@ describe("query-set: alias length guard", () => {
 		);
 	});
 
-	test("passes once the fixLongIdentifiers() plugin is installed", () => {
-		const fixedDb = db.withPlugin(fixLongIdentifiers());
+	test("passes once the fixLongAliases() plugin is installed", () => {
+		const fixedDb = db.withPlugin(fixLongAliases());
 
 		assert.doesNotThrow(() => selectUserWithPostsUnder(KEY_55, fixedDb).toQuery());
 	});

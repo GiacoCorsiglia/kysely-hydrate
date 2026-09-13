@@ -862,35 +862,22 @@ You can inspect the generated SQL using `.toQuery()`, `.toJoinedQuery()`, or `.t
 
 ### PostgreSQL's 63-byte identifier limit
 
-Joined columns are selected under prefixed aliases like
-`posts$$comments$$author_id` (see [Isolation and prefixing](#isolation-and-prefixing)).
-PostgreSQL silently truncates identifiers longer than 63 bytes, which would
-mangle field names or collapse two columns into one. So building a query whose
-aliases are too long throws an `AliasTooLongError`.
-
-The fix is the `fixLongIdentifiers()` plugin. Add it last. If you use
-`CamelCasePlugin`, wrap it, so lengths are measured on the snake_cased names
-the database sees:
+PostgreSQL silently truncates identifiers longer than 63 bytes. Prefixed
+aliases like `posts$$comments$$author_id` can exceed that with deep nesting or
+long names, so building such a query throws an `AliasTooLongError`. The fix is
+the `fixLongAliases()` plugin, which shortens over-long identifiers and restores
+the original names in result rows. Add it last, wrapping `CamelCasePlugin` if
+you use it:
 
 ```ts
 import { CamelCasePlugin, Kysely } from "kysely";
-import { fixLongIdentifiers } from "kysely-hydrate";
+import { fixLongAliases } from "kysely-hydrate";
 
 const db = new Kysely<DB>({
 	dialect,
-	plugins: [fixLongIdentifiers(new CamelCasePlugin())], // or [fixLongIdentifiers()]
+	plugins: [fixLongAliases(new CamelCasePlugin())], // or [fixLongAliases()]
 });
 ```
-
-The plugin shortens any identifier over 63 bytes to `<start of name>~<hash>`
-and restores the original names in result rows. Shortening is deterministic
-and leaves identifiers that already fit untouched. Like `CamelCasePlugin`, it
-can only restore rows that came through the plugin. Table and column names are
-rewritten too, so a schema that relies on PostgreSQL's own truncation will not
-work with it.
-
-`fixLongIdentifiers(inner, { maxBytes })` lowers the limit; pass `undefined`
-as the first argument if there is no plugin to wrap.
 
 ### Hydrating pre-fetched rows with `.hydrate()`
 
