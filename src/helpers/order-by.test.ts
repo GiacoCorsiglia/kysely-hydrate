@@ -112,6 +112,42 @@ describe("sqlCompare", () => {
 		assert.ok(sqlCompare(valid, invalid1) < 0);
 	});
 
+	it("should order binary data byte-wise, shorter prefix first", () => {
+		assert.ok(sqlCompare(Buffer.from([1, 2]), Buffer.from([1, 3])) < 0);
+		assert.ok(sqlCompare(Buffer.from([1, 3]), Buffer.from([1, 2])) > 0);
+		assert.equal(sqlCompare(Buffer.from([1, 2]), Buffer.from([1, 2])), 0);
+		// A prefix sorts before the longer value it prefixes.
+		assert.ok(sqlCompare(Buffer.from([1, 2]), Buffer.from([1, 2, 0])) < 0);
+		assert.ok(sqlCompare(Buffer.alloc(0), Buffer.from([0])) < 0);
+		// Byte-wise, not stringified: String() of both of these is "1,2".
+		assert.equal(sqlCompare(Buffer.from([1, 2]), new Uint8Array([1, 2])), 0);
+		// High bytes compare as unsigned, where a signed read would invert them.
+		assert.ok(sqlCompare(Buffer.from([0x7f]), Buffer.from([0x80])) < 0);
+	});
+
+	it("should order arrays element-wise, not by string form", () => {
+		assert.ok(sqlCompare([1, 2], [1, 3]) < 0);
+		assert.ok(sqlCompare([1, 3], [1, 2]) > 0);
+		assert.equal(sqlCompare([1, 2], [1, 2]), 0);
+		assert.ok(sqlCompare([], [0]) < 0);
+		// The case stringification gets wrong: "10" < "2" lexicographically,
+		// but 2 < 10 numerically.
+		assert.ok(sqlCompare([2], [10]) < 0);
+		// Nested arrays recurse.
+		assert.ok(sqlCompare([[1, 2]], [[1, 3]]) < 0);
+		// Elements of any supported type, including nulls (which sort first).
+		assert.ok(sqlCompare([null, 1], [1, 1]) < 0);
+		assert.ok(sqlCompare(["a", 1], ["a", 2]) < 0);
+	});
+
+	it("should keep binary data and arrays in separate ranks", () => {
+		// Same String() form, different types: must not compare equal.
+		assert.notEqual(sqlCompare(Buffer.from([1, 2]), [1, 2]), 0);
+		assert.ok(sqlCompare("z", Buffer.from([1])) < 0);
+		assert.ok(sqlCompare(Buffer.from([1]), [0]) < 0);
+		assert.ok(sqlCompare([0], {}) < 0);
+	});
+
 	// A pool of every value family the comparator must total-order together.
 	const mixedPool = [
 		null,
@@ -134,9 +170,15 @@ describe("sqlCompare", () => {
 		"10",
 		"2",
 		"apple",
+		Buffer.from([1, 2]),
+		Buffer.from([1, 2, 3]),
+		new Uint8Array([0x80]),
+		[],
+		[1, 2],
+		[1, 10],
+		[[1], [2]],
 		{},
 		new Map(),
-		[1, 2],
 	];
 
 	it("should produce the same sorted order for any input permutation", () => {
