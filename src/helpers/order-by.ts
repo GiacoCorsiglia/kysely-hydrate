@@ -128,9 +128,6 @@ function compareLexicographic<T>(
 	return a.length - b.length;
 }
 
-/** Bytes are unsigned integers, so plain subtraction is a valid comparison. */
-const compareByte = (x: number, y: number) => x - y;
-
 /**
  * Compares "not a value" values (NaN numbers, invalid Dates) against their
  * well-ordered peers: not-a-value sorts after every real value, and two
@@ -163,8 +160,8 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  * Total-order comparator emulating SQL ORDER BY semantics in JavaScript.
  *
  * - `null`/`undefined` compare equal to each other and less than everything
- *   else. (`sortBy` handles NULLS FIRST/LAST separately, so this branch only
- *   matters when `sqlCompare` is used directly.)
+ *   else. (`sortBy` handles NULLS FIRST/LAST for top-level values itself, so
+ *   this matters for array elements and direct `sqlCompare` callers.)
  * - Same-type comparisons match SQL: booleans (false < true), numbers and
  *   bigints numerically (including mixed number/bigint), Dates by timestamp,
  *   strings lexicographically by code unit, binary data (`Buffer`,
@@ -215,7 +212,8 @@ export function sqlCompare(a: unknown, b: unknown): number {
 			return (a as string) < (b as string) ? -1 : 1;
 
 		case TypeRank.Bytes:
-			return compareLexicographic(a as Uint8Array, b as Uint8Array, compareByte);
+			// Bytes are unsigned integers, so plain subtraction is a valid comparison.
+			return compareLexicographic(a as Uint8Array, b as Uint8Array, (x, y) => x - y);
 
 		case TypeRank.Array:
 			// Elements recurse, so arrays of any supported type work, nested
