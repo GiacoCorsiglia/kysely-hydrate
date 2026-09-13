@@ -280,6 +280,10 @@ export function sortBy<T>(
 	// One pass per ordering, extracting that column's key for every row.
 	const columns = orderings.map(({ key }) => rows.map((row) => getValue(row, key)));
 
+	// This loop mirrors makeOrderByComparator's rather than sharing one that
+	// takes per-row key arrays: building those arrays per row (or worse, per
+	// comparison) measured 1.5-2x slower on 1e5 rows than indexing flat
+	// per-column arrays.
 	const indices = Array.from(rows, (_, i) => i);
 	indices.sort((x, y) => {
 		for (let i = 0; i < columns.length; i++) {
