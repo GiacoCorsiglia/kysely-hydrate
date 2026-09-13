@@ -10,6 +10,7 @@ import {
 	isIterable,
 	isSelectQueryBuilder,
 	mapWithDeleted,
+	byteLength,
 } from "./utils.ts";
 
 // assertNever tests
@@ -189,4 +190,23 @@ test("isSelectQueryBuilder: duck-types on the isSelectQueryBuilder property", ()
 	// marker property), not an instanceof — any object carrying the marker
 	// passes. Pinned so a future "fix" doesn't silently change the contract.
 	assert.strictEqual(isSelectQueryBuilder({ isSelectQueryBuilder: false }), true);
+});
+
+test("byteLength: matches Buffer.byteLength", () => {
+	for (const s of [
+		"",
+		"abc",
+		"\u00fc",
+		"\u00fcn\u00efc\u00f6d\u00e9$$x",
+		"\u20ac",
+		"\u{1f600}a",
+		"a\u{1f600}b\u20ac\u00fc",
+		"\u07ff\u0800\uffff",
+		"\ud800",
+		"\ud800a",
+		"a\udc00",
+		"\udc00\ud800",
+	]) {
+		assert.equal(byteLength(s), Buffer.byteLength(s), s);
+	}
 });

@@ -121,3 +121,9 @@ export class InvalidJoinedQuerySetError extends KyselyHydrateError {
 		);
 	}
 }
+
+export class AliasHashCollisionError extends KyselyHydrateError {
+	constructor(alias: string, otherAlias: string) {
+		super(`Aliases "${alias}" and "${otherAlias}" shorten to the same identifier`);
+	}
+}

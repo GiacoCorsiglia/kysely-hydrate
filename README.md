@@ -152,6 +152,7 @@ type Result = Array<{
     - [Counting](#counting)
     - [Existence](#existence)
     - [Inspecting the SQL](#inspecting-the-sql)
+    - [PostgreSQL's 63-byte identifier limit](#postgresqls-63-byte-identifier-limit)
     - [Hydrating pre-fetched rows with `.hydrate()`](#hydrating-pre-fetched-rows-with-hydrate)
     - [Mapped properties with `.mapFields()`](#mapped-properties-with-mapfields)
     - [Computed properties with `.extras()`](#computed-properties-with-extras)
@@ -858,6 +859,24 @@ You can inspect the generated SQL using `.toQuery()`, `.toJoinedQuery()`, or `.t
 - `toExistsQuery()` Returns the exact query that `executeExists()` will run.
 - `toJoinedQuery()`: Returns the query with all joins applied (subject to row explosion).
 - `toBaseQuery()`: Returns the base query without any joins (but with modifications).
+
+### PostgreSQL's 63-byte identifier limit
+
+PostgreSQL silently truncates identifiers longer than 63 bytes, and prefixed
+aliases like `posts$$comments$$author_id` can exceed that with deep nesting or
+long names. On PostgreSQL, always install the `fixLongAliases()` plugin, which
+shortens over-long identifiers and restores the original names in result rows.
+Add it last, wrapping `CamelCasePlugin` if you use it:
+
+```ts
+import { CamelCasePlugin, Kysely } from "kysely";
+import { fixLongAliases } from "kysely-hydrate";
+
+const db = new Kysely<DB>({
+	dialect,
+	plugins: [fixLongAliases(new CamelCasePlugin())], // or [fixLongAliases()]
+});
+```
 
 ### Hydrating pre-fetched rows with `.hydrate()`
 

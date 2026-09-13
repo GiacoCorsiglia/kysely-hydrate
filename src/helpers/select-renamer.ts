@@ -72,36 +72,23 @@ class PrefixedAliasedExpression<
 	}
 }
 
-function extractSelectionName(selectionNode: k.SelectionNode): string {
-	const { selection } = selectionNode;
-
-	if (k.ColumnNode.is(selection)) {
-		return selection.column.name;
-	}
-
-	if (k.ReferenceNode.is(selection)) {
-		const { column } = selection;
-
-		if (k.SelectAllNode.is(column)) {
+function extractSelectionName({ selection }: k.SelectionNode): string {
+	switch (selection.kind) {
+		case "ColumnNode":
+			return selection.column.name;
+		case "ReferenceNode":
+			if (k.SelectAllNode.is(selection.column)) {
+				throw new UnexpectedSelectAllError();
+			}
+			return selection.column.column.name;
+		case "AliasNode":
+			if (!k.IdentifierNode.is(selection.alias)) {
+				throw new UnexpectedComplexAliasError();
+			}
+			return selection.alias.name;
+		case "SelectAllNode":
 			throw new UnexpectedSelectAllError();
-		}
-
-		return column.column.name;
+		default:
+			assertNever(selection);
 	}
-
-	if (k.AliasNode.is(selection)) {
-		const alias = selection.alias;
-
-		if (!k.IdentifierNode.is(alias)) {
-			throw new UnexpectedComplexAliasError();
-		}
-
-		return alias.name;
-	}
-
-	if (k.SelectAllNode.is(selection)) {
-		throw new UnexpectedSelectAllError();
-	}
-
-	assertNever(selection);
 }
