@@ -607,7 +607,6 @@ async function assertKeyGrouping(
 	assert.deepStrictEqual(result, expected);
 }
 
-const NUL = "\u0000";
 const date = new Date("2026-01-02T03:04:05.678Z");
 const nullPrototypeValue = Object.create(null);
 const stringLikeObject = { toString: () => "true" };
@@ -649,36 +648,19 @@ const keyPartCases: GroupingCase<unknown>[] = [
 		],
 		[0, 0, 1, 2, 3],
 	],
+	// SQL types a column, so a part holds one type across rows and equal string
+	// forms across types are accepted as one key rather than defended against.
+	// Primitives of different types still never collide.
 	[
-		"values with equal string forms are separated by type",
+		"values of different types with equal string forms share a key",
 		[true, "true", stringLikeObject],
-		[0, 1, 2],
+		[0, 1, 1],
 	],
 	// String() throws for null-prototype objects; the fallback must still key.
 	[
 		"values without a primitive conversion group rather than reject",
 		[nullPrototypeValue, nullPrototypeValue],
 		[0, 0],
-	],
-	// Values compared by content are canonicalized to a tagged string; strings
-	// that imitate one of those forms (including the escaped form of an
-	// imitation) must stay distinct from it, and must still group with
-	// themselves — hence every value appearing twice.
-	[
-		"strings cannot imitate a canonicalized part",
-		[
-			new Date(123),
-			`${NUL}d123`,
-			new Uint8Array([1, 2]),
-			`${NUL}u1,2`,
-			`${NUL}s${NUL}d123`,
-			new Date(123),
-			`${NUL}d123`,
-			new Uint8Array([1, 2]),
-			`${NUL}u1,2`,
-			`${NUL}s${NUL}d123`,
-		],
-		[0, 1, 2, 3, 4, 0, 1, 2, 3, 4],
 	],
 ];
 

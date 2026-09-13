@@ -1514,72 +1514,59 @@ function keyArity(keyBy: string | readonly string[]): number {
 }
 
 /**
- * Marks a key part canonicalized by {@link keyPart}.  Practically no real
- * column value starts with `NUL`, so the escape branch for strings is
- * practically never taken.
- */
-const KEY_PART_TAG = "\u0000";
-
-/**
  * Reads one part of an input's key and canonicalizes it into a value that
  * compares correctly as a `Map` key, i.e. under SameValueZero.  Returns
  * undefined if the part is nil, meaning the entity does not exist.
  *
- * Primitives already compare by value, so they pass through untouched and the
- * common case costs one `typeof` check.  Values that must compare by content
- * rather than by identity become a tagged string: `Date`s by time value (so
- * all invalid dates are equal), `Uint8Array`s by bytes, and anything else by
- * its `String()` form.
+ * Primitives already compare by value, so they pass through.  Objects compare
+ * by content instead of identity: `Date`s by time value (so all invalid dates
+ * are equal), `Uint8Array`s by bytes -- `String()` would decode them as UTF-8,
+ * which is lossy -- and everything else by its `String()` form.
  *
- * Injectivity: primitives of different types are never SameValueZero-equal, so
- * `1n`, `1`, `"1"` and `true` are four parts; the canonical forms carry
- * distinct tags; and a string that could otherwise imitate one of them — one
- * already starting with the tag — is itself tagged.
+ * SQL types a column, so one key part holds one type across rows, and the
+ * canonical forms above only have to be injective within their own type.
+ * Values of different types that share a string form -- an object and a string,
+ * say -- are deliberately one key rather than two.
  *
  * Deliberate equivalences: `-0` and `0` are the same part (SameValueZero), as
  * SQL does not distinguish negative zero, while `NaN` groups only with `NaN`.
  */
 function keyPart(prefix: string, input: unknown, partKey: string): unknown {
 	const value = getPrefixedValue(prefix, input, partKey);
-	switch (typeof value) {
-		case "string":
-			return value.charCodeAt(0) === 0 ? `${KEY_PART_TAG}s${value}` : value;
-		case "object":
-			if (value === null) {
-				return undefined;
-			}
-			if (value instanceof Date) {
-				return `${KEY_PART_TAG}d${value.getTime()}`;
-			}
-			if (value instanceof Uint8Array) {
-				return `${KEY_PART_TAG}u${value.join(",")}`;
-			}
-			return stringifyKeyPart(value);
-		default:
-			// Numbers, bigints and booleans compare by value already; symbols and
-			// functions have no meaningful content, so identity is right for them.
-			// `undefined` falls through here too, as the nil sentinel.
-			return value;
+	if (typeof value !== "object") {
+		// Symbols and functions have no content to compare, so they keep
+		// identity; undefined passes through as the nil sentinel.
+		return value;
 	}
+	if (value === null) {
+		return undefined;
+	}
+	if (value instanceof Date) {
+		return value.getTime();
+	}
+	if (value instanceof Uint8Array) {
+		return value.join(",");
+	}
+	return stringifyKeyPart(value);
 }
 
 /**
- * The tagged `String()` form of a key part that is neither a primitive nor a
- * type {@link keyPart} knows, so that exotic values still group
- * deterministically (if not always distinctly — every plain object stringifies
- * to `[object Object]`).
+ * The `String()` form of a key part that is neither a primitive nor a type
+ * {@link keyPart} knows, so exotic values still group deterministically (if
+ * not always distinctly — every plain object stringifies to
+ * `[object Object]`).
  *
  * Kept out of keyPart because a `try` block would stop that hot function from
  * being inlined.
  */
 function stringifyKeyPart(value: object): string {
 	try {
-		return `${KEY_PART_TAG}x${String(value)}`;
+		return String(value);
 	} catch {
 		// String() throws for values with no primitive conversion (e.g.
 		// null-prototype objects); fall back to the default toString form rather
 		// than rejecting.
-		return `${KEY_PART_TAG}x${Object.prototype.toString.call(value)}`;
+		return Object.prototype.toString.call(value);
 	}
 }
 
