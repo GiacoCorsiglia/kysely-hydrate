@@ -277,14 +277,29 @@ export function sortBy<T>(
 	}
 
 	const plans = planColumns(orderings);
-	// One pass per ordering, extracting that column's key for every row.
-	const columns = orderings.map(({ key }) => rows.map((row) => getValue(row, key)));
+	const n = rows.length;
 
-	// This loop mirrors makeOrderByComparator's rather than sharing one that
-	// takes per-row key arrays: building those arrays per row (or worse, per
-	// comparison) measured 1.5-2x slower on 1e5 rows than indexing flat
-	// per-column arrays.
-	const indices = Array.from(rows, (_, i) => i);
+	// Plain loops throughout rather than map/Array.from: the hydrator calls
+	// this once per parent group, typically on 10-100 rows, where the closure
+	// allocations measured ~1.5x the whole sort.
+	//
+	// One flat array per ordering, holding that column's key for every row.
+	// Per-row key arrays (which would let this share a loop with
+	// makeOrderByComparator) measured 1.5-2x slower on 1e5 rows.
+	const columns: unknown[][] = new Array(orderings.length);
+	for (let c = 0; c < orderings.length; c++) {
+		const key = orderings[c]!.key;
+		const column = new Array<unknown>(n);
+		for (let i = 0; i < n; i++) {
+			column[i] = getValue(rows[i]!, key);
+		}
+		columns[c] = column;
+	}
+
+	const indices = new Array<number>(n);
+	for (let i = 0; i < n; i++) {
+		indices[i] = i;
+	}
 	indices.sort((x, y) => {
 		for (let i = 0; i < columns.length; i++) {
 			const cmp = compareColumn(columns[i]![x], columns[i]![y], plans[i]!);
@@ -298,5 +313,9 @@ export function sortBy<T>(
 		return x - y;
 	});
 
-	return indices.map((i) => rows[i]!);
+	const sorted = new Array<T>(n);
+	for (let i = 0; i < n; i++) {
+		sorted[i] = rows[indices[i]!]!;
+	}
+	return sorted;
 }
