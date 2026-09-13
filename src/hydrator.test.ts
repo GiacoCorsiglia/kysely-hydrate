@@ -2554,3 +2554,46 @@ test("extend: a nullish extension is a no-op, matching Object.assign", async () 
 
 	assert.deepStrictEqual(result, [{ id: 1, name: "Alice" }]);
 });
+
+//
+// Nested callback arguments
+//
+// Nested levels receive a prefixed accessor over the raw input row rather than
+// the row itself.
+//
+
+test("extend: a nested callback can enumerate a frozen input row", async () => {
+	// Callers hydrating pre-fetched rows may hand over frozen objects.
+	const rows = [Object.freeze({ id: 1, posts$$id: 7, posts$$title: "t" })] as any[];
+
+	const hydrator = createHydrator<any>("id")
+		.fields({ id: true })
+		.hasMany("posts", "posts$$", (h: any) =>
+			h("id").extend((post: any) => ({ ...post, seen: true })),
+		);
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, posts: [{ id: 7, title: "t", seen: true }] }]);
+});
+
+test("extras: a nested callback writing to its argument stays at its own level", async () => {
+	const rows = [{ id: 1, name: "Alice", posts$$id: 7 }] as any[];
+
+	const hydrator = createHydrator<any>("id")
+		.fields({ id: true })
+		.hasMany("posts", "posts$$", (h: any) =>
+			h("id").extras({
+				// Memoizing onto the row is the shape that used to write an
+				// unprefixed key onto the caller's row.
+				slug: (post: any) => (post.slug ??= `post-${post.id}`),
+			}),
+		);
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(result, [{ id: 1, posts: [{ slug: "post-7" }] }]);
+	// The write landed at the nested level, so no key appears unprefixed where
+	// the parent level (or a later hydration of these rows) would pick it up.
+	assert.deepStrictEqual(Object.keys(rows[0]), ["id", "name", "posts$$id", "posts$$slug"]);
+});
