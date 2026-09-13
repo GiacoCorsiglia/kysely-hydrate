@@ -26,9 +26,11 @@ const restoredByKey = new Map<string, string>();
 // QueryId object to transformQuery and transformResult.
 const queriesToRestore = new WeakSet<k.QueryId>();
 
+const utf8 = new TextEncoder();
+
 function hash(name: string): string {
 	let h = 0xcbf29ce484222325n; // FNV-1a
-	for (const byte of new TextEncoder().encode(name)) {
+	for (const byte of utf8.encode(name)) {
 		h = ((h ^ BigInt(byte)) * 0x100000001b3n) & 0xffffffffffffffffn;
 	}
 	let out = "";
@@ -91,31 +93,31 @@ class ShortenIdentifiers extends k.OperationNodeTransformer {
 		this.#maxBytes = maxBytes;
 	}
 
-	// A UTF-16 code unit is 1 to 3 bytes, so most names need no counting.
+	// 1 to 3 UTF-8 bytes per UTF-16 code unit, so length alone usually decides.
 	#fits(name: string): boolean {
-		return (
-			name.length * 3 <= this.#maxBytes ||
-			(name.length <= this.#maxBytes && byteLength(name) <= this.#maxBytes)
-		);
+		return name.length * 3 <= this.#maxBytes || byteLength(name) <= this.#maxBytes;
 	}
 
 	/**
-	 * Whether `node` has an identifier that needs shortening ("long") or that
-	 * may already be shortened ("marked"). Kysely's transformer clones every
-	 * node, so this read-only pass lets the common case skip it entirely.
+	 * Does the tree contain an identifier to shorten ("long") or one already
+	 * shortened ("marked")? Kysely's transformer deep-clones, so only clone
+	 * when it must.
 	 */
 	scan(node: unknown, found = { long: false, marked: false }): typeof found {
+		if (found.long && found.marked) {
+			return found;
+		}
 		if (Array.isArray(node)) {
 			for (const item of node) {
 				this.scan(item, found);
 			}
 		} else if (typeof node === "object" && node !== null && "kind" in node) {
-			if (k.IdentifierNode.is(node as k.OperationNode)) {
-				const { name } = node as k.IdentifierNode;
-				found.long ||= !this.#fits(name);
-				found.marked ||= name.includes(MARKER);
-			} else if (!k.ValueNode.is(node as k.OperationNode)) {
-				for (const key in node) {
+			const n = node as k.OperationNode;
+			if (k.IdentifierNode.is(n)) {
+				found.long ||= !this.#fits(n.name);
+				found.marked ||= n.name.includes(MARKER);
+			} else if (!k.ValueNode.is(n) && !k.PrimitiveValueListNode.is(n)) {
+				for (const key in n) {
 					this.scan((node as Record<string, unknown>)[key], found);
 				}
 			}
