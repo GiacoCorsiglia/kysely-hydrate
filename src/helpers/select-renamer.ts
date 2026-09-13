@@ -10,7 +10,7 @@ import {
 	type AnyQueryBuilder,
 	type AnySelectQueryBuilder,
 	assertNever,
-	utf8ByteLength,
+	byteLength,
 } from "./utils.ts";
 
 function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefined {
@@ -81,10 +81,7 @@ class PrefixedAliasedExpression<
 	}
 }
 
-/**
- * The output column name of a selection, or `undefined` when it cannot be known
- * statically: `*`, `table.*`, or an alias that is not a plain identifier.
- */
+/** The output column name, or `undefined` for `*`, `table.*`, and non-identifier aliases. */
 function getSelectionName({ selection }: k.SelectionNode): string | undefined {
 	switch (selection.kind) {
 		case "ColumnNode":
@@ -100,10 +97,7 @@ function getSelectionName({ selection }: k.SelectionNode): string | undefined {
 	}
 }
 
-/**
- * Like {@link getSelectionName}, but throws when the name cannot be known,
- * because hoisting a selection into a parent query requires it.
- */
+/** Like `getSelectionName`, but throws: hoisting a selection needs its name. */
 function extractSelectionName(selectionNode: k.SelectionNode): string {
 	const name = getSelectionName(selectionNode);
 	if (name === undefined) {
@@ -115,11 +109,9 @@ function extractSelectionName(selectionNode: k.SelectionNode): string {
 }
 
 /**
- * Throws if any output column of the query, as the database will see it after
- * plugins, is longer than `maxBytes` (PostgreSQL would silently truncate it).
- * `null` disables the check. Selections without a statically known name are
- * skipped: `selectAll()` outputs real columns, which are the user's
- * responsibility, and a raw alias cannot be measured.
+ * Throws if an output column alias is over `maxBytes` (`null` disables the
+ * check). Runs after plugins, so it measures what the database sees. Skips
+ * `selectAll()` and raw aliases, whose names are not known here.
  */
 export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB, maxBytes: number | null): QB {
 	if (maxBytes === null) {
@@ -127,8 +119,8 @@ export function assertAliasesFit<QB extends AnyQueryBuilder>(qb: QB, maxBytes: n
 	}
 	for (const selectionNode of getSelections(qb) ?? []) {
 		const name = getSelectionName(selectionNode);
-		if (name !== undefined && utf8ByteLength(name) > maxBytes) {
-			throw new AliasTooLongError(name, utf8ByteLength(name), maxBytes);
+		if (name !== undefined && byteLength(name) > maxBytes) {
+			throw new AliasTooLongError(name, byteLength(name), maxBytes);
 		}
 	}
 	return qb;

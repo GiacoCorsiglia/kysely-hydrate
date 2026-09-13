@@ -1,9 +1,3 @@
-/**
- * Tests for the query set's guard against over-long generated aliases (the
- * `maxAliasBytes` option). The guard runs when the query is built, so these
- * tests need no database round trip and run on every dialect.
- */
-
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
@@ -18,8 +12,7 @@ const db = getDbForTest();
 
 const bytes = (s: string) => Buffer.byteLength(s);
 
-// The longest generated alias is "<key>$$user_id": 63 bytes for KEY_54 and
-// 64 bytes for KEY_55.
+// The longest generated alias is "<key>$$user_id".
 const KEY_54 = "postsWrittenByThisUserWithVerboseNamingConventionsForT";
 const KEY_55 = "postsWrittenByThisUserWithVerboseNamingConventionsForTe";
 
@@ -103,10 +96,9 @@ describe("query-set: alias length guard", () => {
 		);
 	});
 
-	test("skips a raw alias, which cannot be measured, instead of rejecting the query", () => {
-		// With no joins, ordering, or pagination the base query is returned as
-		// is, so a raw alias reaches the guard; it must not throw where the
-		// query previously built.
+	test("skips a raw alias, which cannot be measured", () => {
+		// Without joins, ordering, or pagination the base query is used as is,
+		// so its raw alias reaches the guard.
 		const qs = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", sql.lit(1).as(sql`"one"`)]) as any)
 			.orderByKeys(false);
@@ -114,9 +106,7 @@ describe("query-set: alias length guard", () => {
 		assert.doesNotThrow(() => qs.toQuery());
 	});
 
-	test("ignores returningAll() on write bases, which output real columns", () => {
-		// Write query sets cannot be built without a database round trip, so
-		// only assert that building the query does not throw.
+	test("ignores returningAll() on write bases", () => {
 		const write = querySet(db).insertAs("user", (qc) =>
 			qc.insertInto("users").values({ username: "x", email: "x@example.com" }).returningAll(),
 		);

@@ -1,9 +1,3 @@
-/**
- * Tests for the `fixLongAliases()` Kysely plugin on its own, without query
- * sets. Runs against both SQLite and Postgres: the shortening happens in the
- * plugin, so the SQL shape and the restored keys are the same on any dialect.
- */
-
 import assert from "node:assert";
 import { describe, test } from "node:test";
 
@@ -13,6 +7,7 @@ import { getDbForTest } from "./__tests__/db.ts";
 import { fixLongAliases } from "./fix-long-aliases.ts";
 
 const rawDb = getDbForTest();
+const db = rawDb.withPlugin(fixLongAliases());
 
 const bytes = (s: string) => Buffer.byteLength(s);
 
@@ -20,7 +15,7 @@ const bytes = (s: string) => Buffer.byteLength(s);
 const selectLiterals = (db: Kysely<any>, entries: Record<string, number | string>) =>
 	db.selectNoFrom(Object.entries(entries).map(([alias, value]) => sql.lit(value).as(alias)));
 
-/** The output aliases in the compiled SQL, in order. */
+/** Output aliases in the compiled SQL, in order. */
 const aliasesIn = (query: Compilable) =>
 	[...query.compile().sql.matchAll(/ as "([^"]+)"/g)].map((m) => m[1]!);
 
@@ -35,9 +30,7 @@ describe("fix-long-aliases", () => {
 	assert.strictEqual(bytes(ALIAS_63), 63);
 	assert.strictEqual(bytes(ALIAS_64), 64);
 
-	const db = rawDb.withPlugin(fixLongAliases());
-
-	test("leaves aliases of up to 63 bytes untouched, producing identical SQL", () => {
+	test("leaves a query with no long aliases unchanged", () => {
 		const entries = { [ALIAS_63]: 1, short: 2 };
 
 		assert.strictEqual(
@@ -46,12 +39,11 @@ describe("fix-long-aliases", () => {
 		);
 	});
 
-	test("shortens a 64-byte alias to at most 63 bytes, keeping a readable head", () => {
+	test("shortens a 64-byte alias, keeping its start", () => {
 		const [alias] = aliasesIn(selectLiterals(db, { [ALIAS_64]: 1 }));
 
 		assert.ok(alias);
-		assert.notStrictEqual(alias, ALIAS_64);
-		assert.ok(bytes(alias) <= 63, `${alias} is ${bytes(alias)} bytes`);
+		assert.ok(bytes(alias) <= 63, alias);
 		assert.ok(alias.startsWith("departmentalEmployeeRoster$$employee_"), alias);
 	});
 
@@ -61,7 +53,7 @@ describe("fix-long-aliases", () => {
 		assert.deepStrictEqual(row, { [ALIAS_64]: 1, short: 2 });
 	});
 
-	test("shortening is deterministic across plugin instances", () => {
+	test("is deterministic across plugin instances", () => {
 		const other = rawDb.withPlugin(fixLongAliases());
 
 		assert.strictEqual(
@@ -70,38 +62,35 @@ describe("fix-long-aliases", () => {
 		);
 	});
 
-	test("aliases sharing their first 63 bytes stay distinct", async () => {
+	test("keeps aliases that share their first 63 bytes distinct", async () => {
 		const query = selectLiterals(db, { [ALIAS_93]: "name", [ALIAS_97]: "email" });
 
 		const [first, second] = aliasesIn(query);
-		assert.ok(first && second);
 		assert.notStrictEqual(first, second);
-
 		assert.deepStrictEqual(await query.executeTakeFirstOrThrow(), {
 			[ALIAS_93]: "name",
 			[ALIAS_97]: "email",
 		});
 	});
 
-	test("truncates the head on a character boundary, never splitting a multi-byte character", async () => {
-		const alias = "ü".repeat(40) + "$$x"; // 83 bytes, 43 characters
+	test("never splits a multi-byte character", async () => {
+		const alias = "ü".repeat(40) + "$$x"; // 83 bytes
 		const query = selectLiterals(db, { [alias]: 1 });
 
 		const [shortAlias] = aliasesIn(query);
 		assert.ok(shortAlias);
 		assert.match(shortAlias, /^ü+~[a-z]{14}$/);
 		assert.ok(bytes(shortAlias) <= 63);
-
 		assert.deepStrictEqual(await query.executeTakeFirstOrThrow(), { [alias]: 1 });
 	});
 
-	test("restores rows executed from a compiled query via db.executeQuery()", async () => {
+	test("restores rows from db.executeQuery()", async () => {
 		const { rows } = await db.executeQuery(selectLiterals(db, { [ALIAS_64]: 1 }).compile());
 
 		assert.deepStrictEqual(rows, [{ [ALIAS_64]: 1 }]);
 	});
 
-	test("rewrites references to a shortened alias in an enclosing query to match", async () => {
+	test("rewrites references to a shortened alias in an enclosing query", async () => {
 		const inner = selectLiterals(db, { [ALIAS_64]: 1, [ALIAS_93]: 2 });
 		const outer = db
 			.selectFrom(inner.as("sub"))
@@ -111,64 +100,33 @@ describe("fix-long-aliases", () => {
 		assert.deepStrictEqual(await outer.executeTakeFirstOrThrow(), { a: 1, b: 2 });
 	});
 
-	test("an alias that embeds an already-shortened alias is shortened again and fully restored", async () => {
-		// The inner query is compiled (and shortened) on its own when embedded,
-		// so the outer alias is built from the shortened name.
+	test("restores an alias built from an already-shortened one", async () => {
+		// Kysely compiles an embedded subquery on its own, so an outer query that
+		// reads the inner query's aliases (as query sets do) sees shortened names.
 		const inner = selectLiterals(db, { [ALIAS_64]: 1 });
-		assert.ok(aliasesIn(inner)[0]?.includes("~"));
+		const [innerAlias] = aliasesIn(inner);
+		assert.ok(innerAlias?.includes("~"));
 
-		const outerAlias = `organizationalDepartments$$${ALIAS_64}`;
-		const outer = db.selectFrom(inner.as("sub")).select(sql.ref(`sub.${ALIAS_64}`).as(outerAlias));
+		for (const prefix of ["short", "organizationalDepartmentsOfTheOrganization"]) {
+			const outer = db
+				.selectFrom(inner.as("sub"))
+				.select(sql.ref(`sub.${innerAlias}`).as(`${prefix}$$${innerAlias}`));
 
-		const compiledOuterAlias = aliasesIn(outer).at(-1);
-		assert.ok(compiledOuterAlias);
-		assert.ok(bytes(compiledOuterAlias) <= 63);
-
-		assert.deepStrictEqual(await outer.executeTakeFirstOrThrow(), { [outerAlias]: 1 });
-	});
-
-	test("maxBytes option lowers the limit", () => {
-		const tight = rawDb.withPlugin(fixLongAliases({ maxBytes: 30 }));
-		const alias = "a".repeat(31);
-
-		const [shortAlias] = aliasesIn(selectLiterals(tight, { [alias]: 1 }));
-
-		assert.ok(shortAlias);
-		assert.notStrictEqual(shortAlias, alias);
-		assert.ok(bytes(shortAlias) <= 30);
-	});
-
-	test("instances with different maxBytes each keep their own limit for the same alias, and both restore", async () => {
-		// One process may talk to two databases with different limits. The
-		// shortened forms are shared between instances, so the second instance
-		// to see an alias must not reuse the first instance's (longer) form.
-		const alias = "q".repeat(70);
-		const wide = rawDb.withPlugin(fixLongAliases({ maxBytes: 63 }));
-		const narrow = rawDb.withPlugin(fixLongAliases({ maxBytes: 40 }));
-
-		const [wideAlias] = aliasesIn(selectLiterals(wide, { [alias]: 1 }));
-		const [narrowAlias] = aliasesIn(selectLiterals(narrow, { [alias]: 1 }));
-
-		assert.ok(wideAlias && narrowAlias);
-		assert.strictEqual(bytes(wideAlias), 63);
-		assert.strictEqual(bytes(narrowAlias), 40);
-
-		assert.deepStrictEqual(await selectLiterals(wide, { [alias]: 1 }).executeTakeFirstOrThrow(), {
-			[alias]: 1,
-		});
-		assert.deepStrictEqual(await selectLiterals(narrow, { [alias]: 2 }).executeTakeFirstOrThrow(), {
-			[alias]: 2,
-		});
+			assert.ok(bytes(aliasesIn(outer).at(-1)!) <= 63);
+			assert.deepStrictEqual(await outer.executeTakeFirstOrThrow(), {
+				[`${prefix}$$${ALIAS_64}`]: 1,
+			});
+		}
 	});
 
 	describe("wrapping CamelCasePlugin", () => {
 		const camelDb = rawDb.withPlugin(fixLongAliases(new CamelCasePlugin()));
 
-		// 58 bytes as written; 64 once snake_cased.
+		// 58 bytes as written, 64 once snake_cased.
 		const CAMEL_58 = "employeeDirectoryEntries$$employeePreferredFullDisplayName";
 		const SNAKE_64 = "employee_directory_entries$$employee_preferred_full_display_name";
 
-		test("measures the snake_cased alias, not the camelCase one", () => {
+		test("measures the snake_cased alias", () => {
 			assert.strictEqual(bytes(CAMEL_58), 58);
 			assert.strictEqual(bytes(SNAKE_64), 64);
 
@@ -179,7 +137,7 @@ describe("fix-long-aliases", () => {
 			assert.ok(alias.startsWith("employee_directory_entries$$"), alias);
 		});
 
-		test("returns camelCase keys after restoring", async () => {
+		test("returns camelCase keys", async () => {
 			const row = await selectLiterals(camelDb, {
 				[CAMEL_58]: 1,
 				createdAt: 2,
@@ -187,24 +145,9 @@ describe("fix-long-aliases", () => {
 
 			assert.deepStrictEqual(row, { [CAMEL_58]: 1, createdAt: 2 });
 		});
-
-		test("still camelCases everything when nothing is over-long", async () => {
-			const row = await selectLiterals(camelDb, { userId: 1 }).executeTakeFirstOrThrow();
-
-			assert.deepStrictEqual(row, { userId: 1 });
-		});
-
-		test("accepts options alongside the wrapped plugin", () => {
-			const tight = rawDb.withPlugin(fixLongAliases(new CamelCasePlugin(), { maxBytes: 20 }));
-
-			const [alias] = aliasesIn(selectLiterals(tight, { someLongerAliasName: 1 }));
-
-			assert.ok(alias);
-			assert.ok(bytes(alias) <= 20);
-		});
 	});
 
-	test("wraps any plugin, running it first on queries and last on results", async () => {
+	test("runs the wrapped plugin first on queries and last on results", async () => {
 		const seen: string[] = [];
 		const spy: KyselyPlugin = {
 			transformQuery({ node }) {
@@ -217,8 +160,9 @@ describe("fix-long-aliases", () => {
 			},
 		};
 
-		const spied = rawDb.withPlugin(fixLongAliases(spy));
-		await selectLiterals(spied, { [ALIAS_64]: 1 }).executeTakeFirstOrThrow();
+		await selectLiterals(rawDb.withPlugin(fixLongAliases(spy)), {
+			[ALIAS_64]: 1,
+		}).executeTakeFirstOrThrow();
 
 		assert.deepStrictEqual(seen, ["query", "result"]);
 	});

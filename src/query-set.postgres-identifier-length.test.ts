@@ -1,30 +1,7 @@
 /**
- * PostgreSQL identifier-length (63-byte truncation) tests for QuerySet.
- *
- * PostgreSQL silently truncates identifiers longer than 63 bytes
- * (NAMEDATALEN - 1), emitting only a NOTICE. QuerySet builds prefixed column
- * aliases when nesting relations (`parent$$child$$column`), so deep nesting or
- * long names push the generated alias past 63 bytes, and hydration then
- * silently produces wrong output:
- *
- * 1. A truncated alias yields a mangled field name in the hydrated object. If
- *    it is the nested KEY column, the hydrator cannot find the key and treats
- *    matched left-join rows as null (or a nested collection as empty).
- * 2. Two aliases sharing their first 63 bytes truncate to the same identifier;
- *    the later column silently clobbers the earlier one.
- * 3. The same as 1 and 2 under Kysely's CamelCasePlugin, which snake_cases the
- *    alias before Postgres sees it (adding a byte per camel hump).
- * 4. Under CamelCasePlugin only: an alias that is itself under 63 bytes fails
- *    because its snake_case form is 64+ bytes.
- *
- * Every test asserts the CORRECT observable behavior (full field names, no
- * lost data, correct ordering) and says nothing about how the SQL identifiers
- * are kept legal. The fix under test is the `fixLongAliases()` plugin,
- * installed on the Kysely instance (wrapping `CamelCasePlugin` where one is
- * used). Every identifier in the fixture DDL is itself under 63 bytes; only
- * the generated alias chains are over-long.
- *
- * SQLite has no identifier-length limit, so this suite is Postgres-only.
+ * Query sets whose generated aliases (`parent$$child$$column`) exceed
+ * PostgreSQL's 63-byte identifier limit, run with the fixLongAliases() plugin.
+ * Every test asserts hydrated output only. Postgres-only: SQLite has no limit.
  */
 
 import assert from "node:assert";
@@ -39,7 +16,6 @@ import { querySet } from "./query-set.ts";
 
 const db = getDbForTest({ fixture: "identifier-length-fixture" });
 
-/** Checks a test's premise: the byte length of a would-be SQL identifier. */
 function assertBytes(identifier: string, bytes: number) {
 	assert.strictEqual(
 		Buffer.byteLength(identifier),
@@ -117,7 +93,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 				.innerJoinMany(key, employees, `${key}.organizational_department_id`, "department.id")
 				.execute();
 
-		// Postgres measures identifiers in bytes, not characters: "ü" is two bytes.
+		// Postgres counts bytes, not characters.
 		const NAME = "employee_preferred_full_display_name";
 		for (const [key, bytes, chars] of [
 			["departmentEmployeeRecords", 63, 63],
@@ -201,7 +177,6 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 				97,
 			);
 
-			// Built with the callback form, so that nesting path is covered too.
 			const result = await acmeOnly
 				.innerJoinMany(
 					"organizationalDepartments",
@@ -275,8 +250,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		test("toJoinedQuery() rows carry every selected column's value", async () => {
 			const rows = await verboseEmployees.toJoinedQuery().execute();
 
-			// Three department columns plus four employee columns; the raw row
-			// shape is otherwise an implementation detail.
+			// Three department columns plus four employee columns.
 			assert.strictEqual(rows.length, 2);
 			for (const row of rows) {
 				assert.strictEqual(Object.keys(row).length, 7);
@@ -331,8 +305,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		});
 
 		test("leftJoinOne whose key column alias is over-long hydrates matches as objects and non-matches as null", async () => {
-			// The hydrator decides between "matched" and "null" by the nested key
-			// column, whose alias "<key>$$id" is itself over-long here.
+			// Matched vs. null is decided by the nested key column, "<key>$$id".
 			const key = "organizationalDepartmentAssignmentRecordForThisEmployeeIfAny";
 			assertBytes(`${key}$$id`, 64);
 
@@ -349,13 +322,8 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
-		/**
-		 * All departments with their parent organization (one-join) and
-		 * employees (many-join), by organization name descending. Pagination on
-		 * top of a many-join makes QuerySet wrap the cardinality-one part in a
-		 * subquery and re-hoist its columns, so the outer ORDER BY references the
-		 * hoisted over-long alias: a different code path from a plain ORDER BY.
-		 */
+		// Pagination over a many-join wraps the one-part in a subquery and
+		// re-hoists its columns, so the outer ORDER BY references a hoisted alias.
 		const parent = "parentOrganizationRecordForOrganizationalDepartment";
 		const departmentsByOrganization = () =>
 			departments
@@ -398,8 +366,6 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		});
 
 		test("hydrate() accepts rows executed by an identically built query set", async () => {
-			// hydrate() is documented for rows that come from elsewhere (another
-			// query, a cache), so two equal query sets must agree on the row shape.
 			const rows = await departmentsByOrganization().toQuery().execute();
 
 			assert.deepStrictEqual(await departmentsByOrganization().hydrate(rows), [
@@ -416,8 +382,7 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		});
 
 		test("attaches at the top level and nested under an over-long join receive full field names", async () => {
-			// The nested attach's fetchFn receives the parent rows through the
-			// prefixed accessor, which must expose full-length field names.
+			// The nested fetchFn reads parent rows through the prefixed accessor.
 			const result = await engineeringOnly
 				.innerJoinMany(
 					verbose,
@@ -489,7 +454,6 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			employee(4, 2, "Dan Diaz"),
 		];
 
-		// Builders take the db because each CamelCasePlugin option set needs its own.
 		const organizations = (db: CamelDb) =>
 			querySet(db).selectAs(
 				"org",
@@ -522,11 +486,9 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 				.innerJoinMany(key, employees(db), `${key}.organizationalDepartmentId`, "department.id")
 				.execute();
 
-		// [CamelCasePlugin options, join key, the key's snake_case form, bytes of
-		// the snake_cased alias, an extra (legal) alias form to measure]. The
-		// options each add underscores, so one key can be legal under the
-		// default options and over-long under another set.
-		// `upperCase: true` is a separate, known Kysely incompatibility.
+		// [CamelCasePlugin options, key, its snake_case form, bytes of the
+		// snake_cased alias, another alias form to measure]. Each option adds
+		// underscores, so a key can fit under one option set and not another.
 		const SNAKE_NAME = "$$employee_preferred_full_display_name";
 		const digits = { underscoreBeforeDigits: true };
 		const uppercase = { underscoreBetweenUppercaseLetters: true };
@@ -570,7 +532,6 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		test("two-level nesting hydrates with full camelCase field names", async () => {
 			assertBytes(`organizational_departments$$departmental_employee_records${SNAKE_NAME}`, 95);
 
-			// Built with the callback form, so that nesting path is covered too.
 			const result = await organizations(camelDb)
 				.where("organizations.id", "=", 1)
 				.innerJoinMany(
@@ -611,8 +572,8 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 		});
 
 		test("sibling columns whose snake_cased aliases share their first 63 bytes are all hydrated", async () => {
-			// The snake_cased key plus "$$" is exactly 63 bytes, so EVERY nested
-			// column alias truncates to the same identifier.
+			// The snake_cased key plus "$$" is 63 bytes, so every nested column
+			// alias would truncate to the same identifier.
 			const key = "departmentalEmployeeRecordsWithVerboseNamingConventions";
 			assertBytes("departmental_employee_records_with_verbose_naming_conventions$$", 63);
 
@@ -677,7 +638,6 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 				.offset(1)
 				.execute();
 
-			// Organization name descending (Zenith, Acme); offset 1 picks Acme.
 			assert.deepStrictEqual(result, [
 				{ ...engineering, [parent]: acme, departmentalEmployeeRecords: [alice, bob] },
 			]);

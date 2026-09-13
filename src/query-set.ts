@@ -18,7 +18,7 @@
 
 import * as k from "kysely";
 
-import { POSTGRES_MAX_IDENTIFIER_BYTES } from "./fix-long-aliases.ts";
+import { MAX_IDENTIFIER_BYTES } from "./fix-long-aliases.ts";
 import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
@@ -77,14 +77,10 @@ import { InvalidJoinedQuerySetError } from "./index.ts";
 
 export interface QuerySetOptions {
 	/**
-	 * Maximum length, in UTF-8 bytes, of the column aliases a query set may
-	 * generate. Building a query (`toQuery()`, `execute()`, ...) whose aliases
-	 * exceed it throws {@link AliasTooLongError} instead of letting the database
-	 * silently truncate them. Measured after plugins, so installing the
-	 * `fixLongAliases()` plugin satisfies the check.
-	 *
-	 * Defaults to 63, PostgreSQL's limit. Pass `null` to disable the check (for
-	 * example on SQLite, which has no limit).
+	 * Building a query whose generated column aliases exceed this many UTF-8
+	 * bytes throws {@link AliasTooLongError}. Defaults to 63, PostgreSQL's
+	 * limit. `null` disables the check. Measured after plugins, so the
+	 * `fixLongAliases()` plugin satisfies it.
 	 */
 	maxAliasBytes?: number | null;
 }
@@ -3616,10 +3612,7 @@ class QuerySetCreator<in out DB> {
 	#db: k.Kysely<DB>;
 	#maxAliasBytes: number | null;
 
-	constructor(
-		db: k.Kysely<DB>,
-		{ maxAliasBytes = POSTGRES_MAX_IDENTIFIER_BYTES }: QuerySetOptions,
-	) {
+	constructor(db: k.Kysely<DB>, { maxAliasBytes = MAX_IDENTIFIER_BYTES }: QuerySetOptions) {
 		this.#db = db;
 		this.#maxAliasBytes = maxAliasBytes;
 	}

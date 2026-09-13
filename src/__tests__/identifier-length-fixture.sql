@@ -1,9 +1,6 @@
--- Fixture for src/query-set.postgres-identifier-length.test.ts.
---
--- Tables and columns with long — but individually legal (< 63 byte) —
--- identifiers. The generated join aliases (`key$$nestedKey$$column`) built
--- from these names exceed PostgreSQL's 63-byte identifier limit
--- (NAMEDATALEN - 1), which Postgres silently truncates with only a NOTICE.
+-- Fixture for src/query-set.postgres-identifier-length.test.ts. Every
+-- identifier fits in 63 bytes; only the aliases query sets build from them
+-- (`key$$nestedKey$$column`) do not.
 
 CREATE TABLE IF NOT EXISTS organizations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
