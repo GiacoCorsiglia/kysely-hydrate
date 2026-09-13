@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { sqlCompare, makeOrderByComparator } from "./order-by.ts";
+import { makeOrderByComparator, type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
 
 describe("sqlCompare", () => {
 	it("should return 0 for equal values", () => {
@@ -447,5 +447,111 @@ describe("makeOrderByComparator", () => {
 		// Age 30: alice
 		assert.equal(rows[2]!.age, 30);
 		assert.equal(rows[2]!.name, "alice");
+	});
+});
+
+describe("sortBy", () => {
+	interface Row {
+		readonly id: number;
+		readonly group: string | null;
+		readonly score: number;
+	}
+
+	const rows: Row[] = [
+		{ id: 1, group: "b", score: 2 },
+		{ id: 2, group: "a", score: 1 },
+		{ id: 3, group: null, score: 3 },
+		{ id: 4, group: "a", score: 2 },
+		{ id: 5, group: "b", score: 1 },
+		{ id: 6, group: null, score: 1 },
+	];
+
+	it("should match makeOrderByComparator for every ordering shape", () => {
+		const orderingSets: OrderBy<Row>[][] = [
+			[{ key: "score", direction: "asc" }],
+			[{ key: "score", direction: "desc" }],
+			[{ key: "group", direction: "asc" }],
+			[{ key: "group", direction: "asc", nulls: "first" }],
+			[{ key: "group", direction: "asc", nulls: "last" }],
+			[{ key: "group", direction: "desc", nulls: "first" }],
+			[{ key: "group", direction: "desc", nulls: "last" }],
+			[
+				{ key: "group", direction: "asc" },
+				{ key: "score", direction: "desc" },
+			],
+			[{ key: (row: Row) => row.score * -1, direction: "asc" }],
+		];
+
+		for (const orderings of orderingSets) {
+			assert.deepEqual(
+				sortBy(rows, orderings),
+				[...rows].sort(makeOrderByComparator(orderings)),
+				JSON.stringify(orderings.map((o) => ({ ...o, key: String(o.key) }))),
+			);
+		}
+	});
+
+	it("should be stable for rows that compare equal", () => {
+		// Sorting an index array rather than the rows themselves loses
+		// Array.sort's stability guarantee unless it is restored explicitly.
+		const ties = Array.from({ length: 50 }, (_, i) => ({ id: i, group: "same", score: 0 }));
+		const sorted = sortBy(ties, [{ key: "group", direction: "asc" }]);
+		assert.deepEqual(
+			sorted.map((row) => row.id),
+			ties.map((row) => row.id),
+		);
+
+		// Stability must also hold when an earlier column breaks some ties but
+		// not others.
+		const partial = [
+			{ id: 1, group: "b", score: 0 },
+			{ id: 2, group: "a", score: 0 },
+			{ id: 3, group: "b", score: 0 },
+			{ id: 4, group: "a", score: 0 },
+		];
+		assert.deepEqual(
+			sortBy(partial, [{ key: "group", direction: "asc" }]).map((row) => row.id),
+			[2, 4, 1, 3],
+		);
+	});
+
+	it("should not mutate the input array", () => {
+		const original = [...rows];
+		const sorted = sortBy(rows, [{ key: "score", direction: "desc" }]);
+		assert.deepEqual(rows, original);
+		assert.notEqual(sorted, rows);
+	});
+
+	it("should handle empty orderings and trivial inputs", () => {
+		assert.deepEqual(sortBy(rows, []), rows);
+		assert.notEqual(sortBy(rows, []), rows);
+		assert.deepEqual(sortBy([], [{ key: "score", direction: "asc" }]), []);
+		assert.deepEqual(sortBy([rows[0]!], [{ key: "score", direction: "asc" }]), [rows[0]]);
+	});
+
+	it("should extract each row's key exactly once per ordering", () => {
+		// The reason sortBy exists: the hydrator's getValue allocates a Proxy
+		// per extraction, so O(n log n) extractions is the dominant cost.
+		let extractions = 0;
+		const many = Array.from({ length: 500 }, (_, i) => ({
+			id: i,
+			group: "g",
+			score: (i * 7) % 500,
+		}));
+		sortBy(many, [{ key: "score", direction: "asc" }], (row, key) => {
+			extractions++;
+			return (row as any)[key as string];
+		});
+		assert.equal(extractions, many.length);
+	});
+
+	it("should apply a custom getValue to function keys", () => {
+		const sorted = sortBy(rows, [{ key: (row: Row) => row.score, direction: "asc" }], (row, key) =>
+			typeof key === "function" ? key({ ...row, score: -row.score }) : (row as any)[key],
+		);
+		assert.deepEqual(
+			sorted.map((row) => row.score),
+			[3, 2, 2, 1, 1, 1],
+		);
 	});
 });
