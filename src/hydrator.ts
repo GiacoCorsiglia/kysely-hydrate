@@ -1,4 +1,5 @@
 import {
+	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
 	KeyByMismatchError,
@@ -971,6 +972,20 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		fetchFn: FetchFn<any, any>,
 		keys: AttachedKeysArg<any, any>,
 	): any {
+		const { matchChild } = keys;
+		const toParent = keys.toParent ?? this.#props.keyBy;
+
+		// Keys are matched part by part, so keys of different arity never match
+		// and the collection would attach nothing to every parent.  Say so here
+		// rather than at hydration time, where it looks like missing rows.  The
+		// two `keyBy` shapes describe the same one-part key, so only the number
+		// of parts matters, not whether a side is a string or an array.
+		const matchChildArity = keyArity(matchChild);
+		const toParentArity = keyArity(toParent);
+		if (matchChildArity !== toParentArity) {
+			throw new AttachedKeysArityMismatchError(key, matchChildArity, toParentArity);
+		}
+
 		return new HydratorImpl({
 			...this.#props,
 
@@ -980,8 +995,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			attachedCollections: new Map(this.#props.attachedCollections).set(key, {
 				mode,
 				fetchFn,
-				matchChild: keys.matchChild,
-				toParent: keys.toParent ?? this.#props.keyBy,
+				matchChild,
+				toParent,
 			} satisfies AttachedCollection<any, any>),
 		});
 	}

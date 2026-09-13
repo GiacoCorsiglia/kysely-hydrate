@@ -4,13 +4,32 @@ import { describe, test } from "node:test";
 import { getDbForTest } from "./__tests__/db.ts";
 
 const db = getDbForTest();
-import { CardinalityViolationError, ExpectedOneItemError } from "./helpers/errors.ts";
+import {
+	AttachedKeysArityMismatchError,
+	CardinalityViolationError,
+	ExpectedOneItemError,
+} from "./helpers/errors.ts";
 import { querySet } from "./query-set.ts";
 
 describe("query-set: attach", () => {
 	//
 	// Attach Methods - attachMany, attachOne, attachOneOrThrow
 	//
+
+	test("attachMany: throws at registration on mismatched key arity", () => {
+		// The hydrator is built as the collection is added, so a match that could
+		// never work is reported here rather than as empty attachments later.
+		assert.throws(
+			() =>
+				querySet(db)
+					.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+					.attachMany("posts", async () => [], {
+						matchChild: ["user_id", "id"],
+						toParent: "id",
+					} as any),
+			AttachedKeysArityMismatchError,
+		);
+	});
 
 	test("attachMany: fetches and matches related entities", async () => {
 		const fetchPosts = async () => {

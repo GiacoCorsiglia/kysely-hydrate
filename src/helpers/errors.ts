@@ -97,6 +97,20 @@ export class KeyByMismatchError extends KyselyHydrateError {
 }
 
 /**
+ * Error thrown when configuring an attached collection whose `matchChild` and
+ * `toParent` keys describe a different number of parts.  Keys are matched part
+ * by part, so keys of different arity can never match, and the collection
+ * would silently attach nothing to every parent.
+ */
+export class AttachedKeysArityMismatchError extends KyselyHydrateError {
+	constructor(key: string, matchChildArity: number, toParentArity: number) {
+		super(
+			`Attached collection "${key}" cannot match: matchChild has ${matchChildArity} key part(s) but toParent has ${toParentArity}`,
+		);
+	}
+}
+
+/**
  * Error thrown when attempting to nest a `QuerySet` with a write operation as a
  * join inside another `QuerySet`.
  */
