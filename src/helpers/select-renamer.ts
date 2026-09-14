@@ -68,6 +68,9 @@ export function hoistAndPrefixSelections(prefix: string, from: AliasedQueryNode)
 	// Reference nodes are built directly rather than parsed from
 	// `"alias.name"`: this runs for every hoisted column of every subquery on
 	// every query build, and parsing would also misread a name containing a dot.
+	// `alias` is typed as `A | Expression<unknown>` because dynamic column references can be
+	// aliased with an expression, but we always construct `AliasedQueryNode.aliased` with a
+	// plain string alias.
 	const alias = from.aliased.alias as string;
 	const table = k.TableNode.create(alias);
 
