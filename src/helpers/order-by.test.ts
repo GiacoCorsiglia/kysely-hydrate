@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+	ComparedToDecimalStub,
+	DecimalStub,
 	DurationStub,
 	PlainDateStub,
 	PlainMonthDayStub,
@@ -221,6 +223,38 @@ describe("sqlCompare", () => {
 		});
 	});
 
+	describe("decimals", () => {
+		it("should order instances via the library's cmp", () => {
+			assert.ok(sqlCompare(new DecimalStub(2), new DecimalStub(10)) < 0);
+			assert.ok(sqlCompare(new DecimalStub(10), new DecimalStub(2)) > 0);
+			assert.equal(sqlCompare(new DecimalStub(5), new DecimalStub(5)), 0);
+		});
+
+		it("should order instances via comparedTo when there is no cmp", () => {
+			assert.ok(sqlCompare(new ComparedToDecimalStub(2), new ComparedToDecimalStub(10)) < 0);
+			assert.ok(sqlCompare(new ComparedToDecimalStub(10), new ComparedToDecimalStub(2)) > 0);
+			assert.equal(sqlCompare(new ComparedToDecimalStub(5), new ComparedToDecimalStub(5)), 0);
+		});
+
+		it("should pin decimal NaN last whether the library reports NaN or null", () => {
+			// decimal.js reports an unorderable comparison as NaN...
+			assert.ok(sqlCompare(new DecimalStub(NaN), new DecimalStub(1)) > 0);
+			assert.ok(sqlCompare(new DecimalStub(1), new DecimalStub(NaN)) < 0);
+			assert.equal(sqlCompare(new DecimalStub(NaN), new DecimalStub(NaN)), 0);
+			// ...and bignumber.js as null, which must not be read as "equal".
+			const nullNaN = new ComparedToDecimalStub(NaN, null);
+			assert.ok(sqlCompare(nullNaN, new ComparedToDecimalStub(1)) > 0);
+			assert.ok(sqlCompare(new ComparedToDecimalStub(1), nullNaN) < 0);
+			assert.equal(sqlCompare(nullNaN, new ComparedToDecimalStub(NaN, null)), 0);
+		});
+
+		it("should rank decimals between plain numbers and Dates", () => {
+			assert.ok(sqlCompare(10, new DecimalStub(2)) < 0);
+			assert.ok(sqlCompare(new DecimalStub(2), 10) > 0);
+			assert.ok(sqlCompare(new DecimalStub(2), new Date(0)) < 0);
+		});
+	});
+
 	// A pool of every value family the comparator must total-order together.
 	const mixedPool = [
 		null,
@@ -237,6 +271,9 @@ describe("sqlCompare", () => {
 		NaN,
 		3n,
 		9007199254740993n,
+		new DecimalStub(2),
+		new DecimalStub(10),
+		new DecimalStub(NaN),
 		new Date("2020-06-15"),
 		new Date("2024-01-01"),
 		new Date(NaN),

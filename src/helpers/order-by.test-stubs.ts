@@ -1,9 +1,53 @@
 /**
- * Structural stand-ins for `Temporal.*` values, which Node 22 only ships
- * behind a flag. `sqlCompare` detects them by shape, so these reproduce the
- * shape V8 implements: tag as a prototype data property, a static `compare`
- * that throws across types, no `compare` on `PlainMonthDay`, and a throwing
- * `valueOf`.
+ * Structural stand-ins for the duck-typed values `sqlCompare` supports.
+ * Neither Temporal (behind a flag on Node 22) nor the decimal libraries are
+ * available here, and detection is by shape anyway.
+ */
+
+/**
+ * `unorderable` models a library divergence: comparing against NaN returns
+ * `NaN` in decimal.js but `null` in bignumber.js.
+ */
+abstract class BaseDecimalStub {
+	readonly n: number;
+	readonly #unorderable: number | null;
+
+	constructor(n: number, unorderable: number | null = Number.NaN) {
+		this.n = n;
+		this.#unorderable = unorderable;
+	}
+
+	protected compareValue(other: unknown): number | null {
+		const value = other instanceof BaseDecimalStub ? other.n : Number(other);
+		if (Number.isNaN(this.n) || Number.isNaN(value)) {
+			return this.#unorderable;
+		}
+		return this.n < value ? -1 : this.n > value ? 1 : 0;
+	}
+
+	toString(): string {
+		return String(this.n);
+	}
+}
+
+/** decimal.js and big.js expose `cmp`. */
+export class DecimalStub extends BaseDecimalStub {
+	cmp(other: unknown): number | null {
+		return this.compareValue(other);
+	}
+}
+
+/** bignumber.js exposes `comparedTo` but not `cmp`. */
+export class ComparedToDecimalStub extends BaseDecimalStub {
+	comparedTo(other: unknown): number | null {
+		return this.compareValue(other);
+	}
+}
+
+/**
+ * Temporal stubs reproduce the shape V8 implements: tag as a prototype data
+ * property, a static `compare` that throws across types, no `compare` on
+ * `PlainMonthDay`, and a throwing `valueOf`.
  */
 abstract class TemporalStub {
 	declare readonly [Symbol.toStringTag]: string;
