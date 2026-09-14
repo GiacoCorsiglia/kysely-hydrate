@@ -27,6 +27,7 @@ import {
 	SEP,
 } from "./helpers/prefixes.ts";
 import {
+	aliasQueryNode,
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
 	hoistAndPrefixSelections,
@@ -2751,8 +2752,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		// SELECT bases are inlined as a derived table; other bases are wrapped in the `__base` CTE.
+		const base = aliasQueryNode(baseQuery, baseAlias);
 		const qb = this.#getBaseCteCreator().selectFrom(
-			isSelect ? baseQuery.as(baseAlias) : `__base as ${baseAlias}`,
+			isSelect ? base.aliased : `__base as ${baseAlias}`,
 		);
 
 		// A write at the top level can use `.selectAll()`: writes can't be nested, so nothing will
@@ -2761,7 +2763,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// derived table) is re-selected by name by its wrapper, so its columns must be hoisted from
 		// the RETURNING clause (which therefore cannot be `returningAll()`).
 		if (isSelect || isLocalSubquery) {
-			return applyHoistedSelections(qb, baseQuery, baseAlias);
+			return applyHoistedSelections(qb, base);
 		}
 		return qb.selectAll(baseAlias);
 	}
@@ -2835,13 +2837,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		nestedQuery: AnySelectQueryBuilder = collection.querySet.#toQuery(true, true),
 	): AnySelectQueryBuilder {
 		// Add the join to the parent query.
-		const from = nestedQuery.as(key);
+		const from = aliasQueryNode(nestedQuery, key);
 		// This cast to a single method helps TypeScript follow the overloads.
-		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
+		qb = qb[collection.method as "innerJoin"](from.aliased, ...collection.args);
 
 		// Add the (prefixed) selections from the subquery to the parent query.
 		const prefix = makePrefix("", key);
-		qb = applyHoistedPrefixedSelections(prefix, qb, nestedQuery, key);
+		qb = applyHoistedPrefixedSelections(prefix, qb, from);
 
 		return qb;
 	}
@@ -2884,7 +2886,6 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 	#applyOrderBy(qb: AnySelectQueryBuilder, isOuter: boolean = false): AnySelectQueryBuilder {
 		const { baseAlias, keyBy, orderBy } = this.#props;
-		const eb = k.expressionBuilder<any, any>(qb);
 
 		let keyByArray: readonly string[] = typeof keyBy === "string" ? [keyBy] : keyBy;
 
@@ -2894,7 +2895,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			if (expr.includes(SEP)) {
 				if (isOuter) {
 					// For outer queries with pagination + many-joins, use hoisted column reference
-					orderExpr = eb.ref(`${baseAlias}.${expr}`);
+					orderExpr = k.expressionBuilder<any, any>(qb).ref(`${baseAlias}.${expr}`);
 				} else {
 					// For inner queries, convert $$ to .
 					orderExpr = expr.replace(SEP, ".");
@@ -3106,10 +3107,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// subquery even at the top level (a non-select base must hoist its RETURNING columns, which
 		// the wrapper re-selects by name), and its base CTEs must move up to the wrapper (see
 		// #getBaseCteCreator).
-		const cardinalityOneQuery = this.#toPaginatedCardinalityOneQuery(isNested, true, isReduced);
-		let qb = this.#getBaseCteCreator().selectFrom(
-			cardinalityOneQuery.withPlugin(stripWithPlugin).as(baseAlias),
+		const cardinalityOneQuery = aliasQueryNode(
+			this.#toPaginatedCardinalityOneQuery(isNested, true, isReduced).withPlugin(stripWithPlugin),
+			baseAlias,
 		);
+		let qb = this.#getBaseCteCreator().selectFrom(cardinalityOneQuery.aliased);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
 		// hoisted further by parent queries.  Reduced joins are skipped: they are re-added in full form
@@ -3118,7 +3120,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			.filter(([key, collection]) => this.#isReducedJoin(key, collection, isReduced))
 			.map(([key]) => makePrefix("", key));
 		qb = qb.select(
-			hoistAndPrefixSelections("", cardinalityOneQuery, baseAlias).filter(
+			hoistAndPrefixSelections("", cardinalityOneQuery).filter(
 				(s) => !reducedPrefixes.some((prefix) => s.originalName.startsWith(prefix)),
 			),
 		);
