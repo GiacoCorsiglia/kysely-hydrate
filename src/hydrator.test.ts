@@ -2868,3 +2868,63 @@ test("extras: a nested callback writing to its argument stays at its own level",
 	// the parent level (or a later hydration of these rows) would pick it up.
 	assert.deepStrictEqual(Object.keys(rows[0]), ["id", "name", "posts$$id", "posts$$slug"]);
 });
+
+//
+// Input Ownership
+//
+
+test("hydrate: does not mutate the caller's input array", async () => {
+	const users: User[] = [
+		{ id: 2, name: "Bob" },
+		{ id: 1, name: "Alice" },
+		{ id: 3, name: "Carol" },
+	];
+	const snapshot = users.map((user) => ({ ...user }));
+
+	const hydrator = createHydrator<User>("id").fields({ id: true, name: true }).orderBy("id");
+
+	const result = await hydrate(users, hydrator);
+
+	// The output is sorted...
+	assert.deepStrictEqual(result, [
+		{ id: 1, name: "Alice" },
+		{ id: 2, name: "Bob" },
+		{ id: 3, name: "Carol" },
+	]);
+	// ...but the caller's array keeps its original order.
+	assert.deepStrictEqual(users, snapshot);
+});
+
+test("hydrate: sorting one collection does not reorder its sibling's input rows", async () => {
+	// Sibling collections at the same level hydrate from the same underlying
+	// row array, so sorting must never reorder it in place. Observable here
+	// because `b` has no orderBy and so preserves input order.
+	interface Row extends User {
+		a$$id: number;
+		b$$id: number;
+	}
+
+	const rows: Row[] = [
+		{ id: 1, name: "Alice", a$$id: 1, b$$id: 10 },
+		{ id: 1, name: "Alice", a$$id: 2, b$$id: 30 },
+		{ id: 1, name: "Alice", a$$id: 3, b$$id: 20 },
+	];
+
+	const hydrator = createHydrator<Row>("id")
+		.fields({ id: true, name: true })
+		.hasMany("a", "a$$", (h) => h("id").fields({ id: true }).orderBy("id", "desc"))
+		.hasMany("b", "b$$", (h) => h("id").fields({ id: true }));
+
+	const result = await hydrate(rows, hydrator);
+
+	assert.deepStrictEqual(
+		result[0]?.a.map((item) => item.id),
+		[3, 2, 1],
+	);
+	// `b` must see the rows in their original input order, not in the order its
+	// sibling sorted them.
+	assert.deepStrictEqual(
+		result[0]?.b.map((item) => item.id),
+		[10, 30, 20],
+	);
+});
