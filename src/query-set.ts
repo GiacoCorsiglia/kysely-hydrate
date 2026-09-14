@@ -3056,15 +3056,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Strict null checks: an explicit limit/offset of 0 must still be applied.
 		const hasPagination = limit !== null || offset !== null;
 
+		// Ordering is only emitted at the top level, or alongside pagination (where it determines
+		// which rows the limit/offset keep); see #toJoinedQuery.  Elsewhere it never reaches the SQL.
+		const isSubquery = isNested || isLocalSubquery;
+		const hasOrdering = (orderBy.length > 0 || orderByKeys) && (!isSubquery || hasPagination);
+
 		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
 		// baseAlias) we can do less nesting.  Write query sets are excluded: their CTEs live on the
 		// writeQueryCreator (not the base query), so the base query cannot be returned directly.
-		if (
-			!joinCollections.size &&
-			!orderBy.length &&
-			!orderByKeys &&
-			!this.#props.writeQueryCreator
-		) {
+		if (!joinCollections.size && !hasOrdering && !this.#props.writeQueryCreator) {
 			// No limit and offset and no joins means we can return as is for any type of query builder.
 			// No CTE, no subqueries, no nothing.
 			if (!hasPagination) {
@@ -3151,7 +3151,6 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Re-apply ordering since the order from the subquery is not guaranteed to
 		// be preserved.  This doesn't matter if we have a prefix because it means
 		// we're in a subquery already.
-		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
 			qb = this.#applyOrderBy(qb, true);
 		}
