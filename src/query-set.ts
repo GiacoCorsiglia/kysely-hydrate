@@ -2807,48 +2807,30 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
-	 * Whether {@link #toCardinalityOneQuery} includes this collection in reduced
-	 * (cardinality-one) form: the collection has cardinality-one MODE
-	 * ("one"/"oneOrThrow") but is not recursively cardinality-one (its nested
-	 * query set contains cardinality-many joins), and it is requested via
-	 * `reducedJoins`.  This single predicate is shared by the inclusion site
-	 * ({@link #toCardinalityOneQuery}) and the re-hoist filter in
-	 * {@link #toQuery} so the two can never disagree.
+	 * Whether {@link #toCardinalityOneQuery} includes this collection in reduced form: it has
+	 * cardinality-one mode but its nested query set contains many-joins, and `isReduced` requests it.
 	 */
-	#isReducedJoin(
-		key: string,
-		collection: JoinCollection,
-		reducedJoins: ReadonlySet<string> | "all" | null,
-	): boolean {
+	#isReducedJoin(key: string, collection: JoinCollection, isReduced: (key: string) => boolean) {
 		return (
-			collection.mode !== "many" &&
-			!this.#isCollectionCardinalityOne(collection) &&
-			(reducedJoins === "all" || (reducedJoins !== null && reducedJoins.has(key)))
+			collection.mode !== "many" && !this.#isCollectionCardinalityOne(collection) && isReduced(key)
 		);
 	}
 
 	/**
 	 * Adds a single join to the query.
 	 *
-	 * @param isForSelection - If true, selections will be hoisted and prefixed.
-	 * @param prefix - The prefix to use when hoisting selections.
 	 * @param qb - The query builder to add the join to.
 	 * @param key - The key of the join.
 	 * @param collection - The collection to add the join to.
-	 * @param reduceToCardinalityOne - If true, joins the cardinality-one form
-	 * of the nested query set (excluding its cardinality-many joins) instead of
-	 * its full form.  Only valid for cardinality-one mode collections.
+	 * @param nestedQuery - The query to join; defaults to the collection's full query.
 	 */
 	#addCollectionAsJoin(
 		qb: AnySelectQueryBuilder,
 		key: string,
 		collection: JoinCollection,
-		reduceToCardinalityOne: boolean = false,
+		nestedQuery: AnySelectQueryBuilder = collection.querySet.#toQuery(true, true),
 	): AnySelectQueryBuilder {
 		// Add the join to the parent query.
-		const nestedQuery = reduceToCardinalityOne
-			? collection.querySet.#toPaginatedCardinalityOneQuery(true, true, "all")
-			: collection.querySet.#toQuery(true, true);
 		const from = nestedQuery.as(key);
 		// This cast to a single method helps TypeScript follow the overloads.
 		qb = qb[collection.method as "innerJoin"](from, ...collection.args);
@@ -2910,21 +2892,6 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
-	 * Returns the set of join keys referenced by this query set's `orderBy`
-	 * expressions (i.e. the leading segment of every `$$`-prefixed expression).
-	 */
-	#getOrderByJoinKeys(): ReadonlySet<string> {
-		const keys = new Set<string>();
-		for (const { expr } of this.#props.orderBy) {
-			const sepIndex = expr.indexOf(SEP);
-			if (sepIndex !== -1) {
-				keys.add(expr.slice(0, sepIndex));
-			}
-		}
-		return keys;
-	}
-
-	/**
 	 * Returns a query guaranteed to return one row per entity in the result set,
 	 * suitable for count and exists queries. It includes:
 	 * - ALL cardinality-one joins (inner and left) - included directly because
@@ -2932,19 +2899,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * - Cardinality-many filtering joins (innerJoinMany, crossJoinMany) - converted
 	 *   to WHERE EXISTS to avoid row explosion
 	 * - Cardinality-many non-filtering joins (leftJoinMany) - excluded entirely
-	 *
-	 * @param reducedJoins - Cardinality-one MODE collections ("one"/"oneOrThrow")
-	 * whose nested query sets contain cardinality-many joins are not themselves
-	 * cardinality-one, so they cannot be included in full form.  When such a
-	 * collection's key is in `reducedJoins` (or `reducedJoins` is `"all"`), it is
-	 * joined in its cardinality-one form instead — no row explosion, but its
-	 * columns stay referenceable (in particular by ORDER BY expressions, which
-	 * determine WHICH rows a LIMIT keeps).
+	 * - Cardinality-one mode joins whose nested query sets contain many-joins - excluded, unless
+	 *   `isReduced(key)`, in which case they are joined in their own cardinality-one form so that
+	 *   their columns stay referenceable (e.g. by ORDER BY) without row explosion
 	 */
 	#toCardinalityOneQuery(
 		isNested: boolean,
 		isLocalSubquery: boolean,
-		reducedJoins: ReadonlySet<string> | "all" | null = null,
+		isReduced: (key: string) => boolean = () => false,
 	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
 
@@ -2961,13 +2923,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			if (this.#isCollectionCardinalityOne(collection)) {
 				// All cardinality-one joins are safe to include directly (no row explosion)
 				qb = this.#addCollectionAsJoin(qb, key, collection);
-			} else if (this.#isReducedJoin(key, collection, reducedJoins)) {
-				// Cardinality-one MODE, but the nested query set contains
-				// cardinality-many joins: include the join in reduced
-				// (cardinality-one) form so its columns remain referenceable
-				// without row explosion.  (For inner joins this filters exactly
-				// like the WHERE EXISTS below would.)
-				qb = this.#addCollectionAsJoin(qb, key, collection, true);
+			} else if (this.#isReducedJoin(key, collection, isReduced)) {
+				// (For inner joins, the reduced join filters exactly like the WHERE EXISTS below would.)
+				qb = this.#addCollectionAsJoin(
+					qb,
+					key,
+					collection,
+					collection.querySet.#toPaginatedCardinalityOneQuery(true, true, () => true),
+				);
 			} else if (isFilteringJoin(collection)) {
 				// Cardinality-many filtering joins must be converted to WHERE EXISTS
 				// to avoid row explosion in count queries
@@ -2994,24 +2957,18 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
-	 * The cardinality-one query ({@link #toCardinalityOneQuery}) with this query
-	 * set's own pagination — and therefore ordering, which determines WHICH rows
-	 * the limit/offset keep — applied.  Without pagination, ordering a subquery
-	 * is meaningless, so none is applied.
+	 * {@link #toCardinalityOneQuery} with this query set's pagination applied.  Ordering is only
+	 * applied alongside pagination, since it determines which rows the limit/offset keep.
 	 */
 	#toPaginatedCardinalityOneQuery(
 		isNested: boolean,
 		isLocalSubquery: boolean,
-		reducedJoins: ReadonlySet<string> | "all" | null = null,
+		isReduced?: (key: string) => boolean,
 	): AnySelectQueryBuilder {
-		let qb = this.#toCardinalityOneQuery(isNested, isLocalSubquery, reducedJoins);
-
-		if (this.#props.limit !== null || this.#props.offset !== null) {
-			qb = this.#applyLimitAndOffset(qb);
-			qb = this.#applyOrderBy(qb, false);
-		}
-
-		return qb;
+		const qb = this.#toCardinalityOneQuery(isNested, isLocalSubquery, isReduced);
+		return this.#props.limit === null && this.#props.offset === null
+			? qb
+			: this.#applyOrderBy(this.#applyLimitAndOffset(qb), false);
 	}
 
 	#toJoinedQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
@@ -3102,38 +3059,31 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			return this.#applyLimitAndOffset(qb);
 		}
 
-		// ORDER BY may reference joins that are not (recursively) cardinality-one
-		// and thus cannot be included in the cardinality-one query in full form;
-		// they are included in reduced form instead so the ordering references
-		// resolve.  (The ordering matters here: with pagination it determines
-		// WHICH rows the limit/offset keep.)
-		const orderByJoinKeys = this.#getOrderByJoinKeys();
-
-		// Pagination (and therefore ordering — see #toPaginatedCardinalityOneQuery)
-		// always applies here: we only reach this point with pagination set.
+		// Joins referenced by ORDER BY must be present in the paginated subquery (they determine which
+		// rows the limit/offset keep), so one-mode joins that nest many-joins are included in reduced
+		// form when referenced.
+		const orderByJoinKeys = new Set(
+			orderBy.flatMap(({ expr }) => (expr.includes(SEP) ? expr.slice(0, expr.indexOf(SEP)) : [])),
+		);
+		const isReduced = (key: string) => orderByJoinKeys.has(key);
 		const cardinalityOneQuery = this.#toPaginatedCardinalityOneQuery(
 			isNested,
 			isLocalSubquery,
-			orderByJoinKeys,
+			isReduced,
 		);
 
 		const aliasedCardinalityOneQuery = cardinalityOneQuery.as(baseAlias);
 		let qb = db.selectFrom(aliasedCardinalityOneQuery);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
-		// hoisted further by parent queries.  EXCEPT: skip the selections of joins that were included
-		// in reduced form — those joins are re-added below in full form, which re-provides their
-		// selections (re-hoisting them too would produce duplicate column aliases).
-		const reducedJoinPrefixes: string[] = [];
-		for (const [key, collection] of joinCollections) {
-			if (this.#isReducedJoin(key, collection, orderByJoinKeys)) {
-				reducedJoinPrefixes.push(makePrefix("", key));
-			}
-		}
+		// hoisted further by parent queries.  Reduced joins are skipped: they are re-added in full form
+		// below, which re-provides their selections.
+		const reducedPrefixes = [...joinCollections]
+			.filter(([key, collection]) => this.#isReducedJoin(key, collection, isReduced))
+			.map(([key]) => makePrefix("", key));
 		qb = qb.select(
 			hoistAndPrefixSelections("", cardinalityOneQuery, baseAlias).filter(
-				(selection) =>
-					!reducedJoinPrefixes.some((prefix) => selection.originalName.startsWith(prefix)),
+				(s) => !reducedPrefixes.some((prefix) => s.originalName.startsWith(prefix)),
 			),
 		);
 
