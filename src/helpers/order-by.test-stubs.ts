@@ -4,19 +4,19 @@
  * Temporal is not available on the runtimes this package supports (Node 22
  * ships it only behind `--harmony-temporal`), and `sqlCompare` detects it by
  * shape rather than identity anyway, so a stub that reproduces the shape is
- * the faithful test. Shapes verified against V8's implementation: the tag
- * lives on the prototype, ordering is a *static* `compare` on the constructor
- * that throws for a different Temporal type, `PlainMonthDay` has no `compare`,
- * and `valueOf` throws to block `a < b`.
+ * the faithful test. Shapes verified against V8's implementation: the tag is
+ * a data property on the prototype, ordering is a *static* `compare` on the
+ * constructor that throws for a different Temporal type, `PlainMonthDay` has
+ * no `compare`, and `valueOf` throws to block `a < b`.
  */
 abstract class TemporalStub {
+	declare readonly [Symbol.toStringTag]: string;
+
 	readonly value: string;
 
 	constructor(value: string) {
 		this.value = value;
 	}
-
-	abstract get [Symbol.toStringTag](): string;
 
 	valueOf(): never {
 		throw new TypeError(
@@ -39,19 +39,24 @@ function compareIso<T extends TemporalStub>(kind: new (value: string) => T) {
 	};
 }
 
+/** Mirrors the spec: the tag is a non-writable data property on the prototype. */
+function defineTag(kind: abstract new (value: string) => TemporalStub, tag: string): void {
+	Object.defineProperty(kind.prototype, Symbol.toStringTag, { value: tag, configurable: true });
+}
+
 export class PlainDateStub extends TemporalStub {
 	static compare = compareIso(PlainDateStub);
 
-	override get [Symbol.toStringTag](): string {
-		return "Temporal.PlainDate";
+	static {
+		defineTag(this, "Temporal.PlainDate");
 	}
 }
 
 export class PlainTimeStub extends TemporalStub {
 	static compare = compareIso(PlainTimeStub);
 
-	override get [Symbol.toStringTag](): string {
-		return "Temporal.PlainTime";
+	static {
+		defineTag(this, "Temporal.PlainTime");
 	}
 }
 
@@ -60,8 +65,8 @@ export class PlainTimeStub extends TemporalStub {
  * at all -- a month/day pair has no inherent order.
  */
 export class PlainMonthDayStub extends TemporalStub {
-	override get [Symbol.toStringTag](): string {
-		return "Temporal.PlainMonthDay";
+	static {
+		defineTag(this, "Temporal.PlainMonthDay");
 	}
 }
 
@@ -110,7 +115,7 @@ export class DurationStub extends TemporalStub {
 		return this.years !== 0 || this.months !== 0 || this.weeks !== 0;
 	}
 
-	override get [Symbol.toStringTag](): string {
-		return "Temporal.Duration";
+	static {
+		defineTag(this, "Temporal.Duration");
 	}
 }

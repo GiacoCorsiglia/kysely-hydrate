@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DurationStub, PlainDateStub, PlainMonthDayStub, PlainTimeStub } from "./order-by.stubs.ts";
+import {
+	DurationStub,
+	PlainDateStub,
+	PlainMonthDayStub,
+	PlainTimeStub,
+} from "./order-by.test-stubs.ts";
 import { type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
 
 describe("sqlCompare", () => {

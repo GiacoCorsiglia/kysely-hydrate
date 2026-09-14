@@ -157,7 +157,7 @@ function temporalTag(value: unknown): string | undefined {
  */
 function compareTemporal(a: object, b: object): number {
 	const aTag = temporalTag(a)!;
-	// Same constructor means same type; the tag getter is only read for the
+	// Same constructor means same type; the tag is only read for the
 	// other operand when that cheap check fails.
 	if (a.constructor !== b.constructor) {
 		const bTag = temporalTag(b)!;
