@@ -29,7 +29,6 @@ import {
 import {
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
-	hasWildcardSelections,
 	hoistAndPrefixSelections,
 } from "./helpers/select-renamer.ts";
 import {
@@ -73,13 +72,13 @@ import {
 	DEFAULT_KEY_BY,
 	EnableAutoInclusion,
 } from "./hydrator.ts";
-import { InvalidJoinedQuerySetError, UnsupportedReturningAllError } from "./index.ts";
+import { InvalidJoinedQuerySetError } from "./index.ts";
 
 /**
  * A stateless Kysely plugin that strips the WITH clause from a
- * SelectQueryNode.  Used to remove CTEs that the query creator
- * attaches to queries built via `selectFn` in `.write()` / `.writeAs()`.
- * The CTEs are already captured separately in `writeQueryCreator`.
+ * SelectQueryNode.  Used to remove CTEs that a query creator attached to a
+ * query (see `#getBaseCteCreator`) that is then wrapped by an outer query
+ * built from the same creator, so the CTEs are emitted only at the top level.
  */
 const stripWithPlugin: k.KyselyPlugin = {
 	transformQuery(args) {
@@ -2743,88 +2742,44 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	#getSelectFromBase(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
-		const { db, baseQuery, baseAlias, writeQueryCreator } = this.#props;
+		const { baseQuery, baseAlias, writeQueryCreator } = this.#props;
+		const isSelect = isSelectQueryBuilder(baseQuery);
 
-		// We always inline SELECT queries.
-		if (isSelectQueryBuilder(baseQuery)) {
-			// When a writeQueryCreator is available, use it to build the outer
-			// query so CTEs live at the top level.  The base query (which has no
-			// CTEs) becomes a derived table.
-			if (writeQueryCreator) {
-				if (isNested) {
-					throw new InvalidJoinedQuerySetError(baseAlias);
-				}
-				const qc = writeQueryCreator;
-				let qb = qc.selectFrom(baseQuery.as(baseAlias));
-				qb = applyHoistedSelections(qb, baseQuery, baseAlias);
-				return qb;
-			}
-
-			const qb = db.selectFrom(baseQuery.as(baseAlias));
-			return applyHoistedSelections(qb, baseQuery, baseAlias);
-		}
-
-		// Non-select queries must be converted to a CTE.  Also, they cannot be nested.
-
-		if (isNested) {
+		// Writes cannot be nested, whether they are the base query or live in write CTEs.
+		if (isNested && (!isSelect || writeQueryCreator)) {
 			throw new InvalidJoinedQuerySetError(baseAlias);
 		}
 
-		const queryCreator = isLocalSubquery ? db : db.with("__base", () => baseQuery);
+		// SELECT bases are inlined as a derived table; other bases are wrapped in the `__base` CTE.
+		const qb = this.#getBaseCteCreator().selectFrom(
+			isSelect ? baseQuery.as(baseAlias) : `__base as ${baseAlias}`,
+		);
 
-		let qb = queryCreator.selectFrom(`__base as ${baseAlias}`);
-
-		// If it's truly at the top level, we can safely use a `.selectAll()` here because these can't
-		// be nested anyway, so no further hoisting can happen.  These seems like a nice convenience so
-		// you can just do updateFrom().returningAll() and not have to redeclare your columns.  This
-		// should be 99% of use cases for writes unless you're actually applying a LIMIT or OFFSET to
-		// the response.
-		if (!isLocalSubquery) {
-			return qb.selectAll(baseAlias);
+		// A write at the top level can use `.selectAll()`: writes can't be nested, so nothing will
+		// ever hoist from here.  That's a nice convenience so you can do `.returningAll()` without
+		// redeclaring your columns.  A local subquery (many-joins + limit/offset wrap the base in a
+		// derived table) is re-selected by name by its wrapper, so its columns must be hoisted from
+		// the RETURNING clause (which therefore cannot be `returningAll()`).
+		if (isSelect || isLocalSubquery) {
+			return applyHoistedSelections(qb, baseQuery, baseAlias);
 		}
-
-		// As a local subquery (many-joins + limit/offset wrap the base in a
-		// derived table), the wrapper re-selects the base's columns by name, so
-		// they must be statically known: hoist them from the write's RETURNING
-		// clause.  `returningAll()` doesn't say what it returns, so it cannot be
-		// hoisted — reject it with a clear error rather than the generic
-		// UnexpectedSelectAllError from the hoisting internals.
-		if (hasWildcardSelections(baseQuery)) {
-			throw new UnsupportedReturningAllError(baseAlias);
-		}
-
-		return applyHoistedSelections(qb, baseQuery, baseAlias);
+		return qb.selectAll(baseAlias);
 	}
 
 	/**
-	 * Hoists this query set's base CTEs — the data-modifying CTEs captured by
-	 * `.write()`/`writeAs()`, or the implicit `__base` CTE that wraps a
-	 * non-select base query — out of the given inner query and onto a query
-	 * creator for the outer (wrapping) query.
-	 *
-	 * Postgres requires data-modifying CTEs to be attached to the top-level
-	 * statement, so whenever the base select gets wrapped (in a derived table
-	 * for pagination, or in an EXISTS subquery), the wrapper must strip the
-	 * CTEs from the inner subquery (via {@link stripWithPlugin}) and build the
-	 * outermost query from the returned creator instead, so the CTEs are
-	 * emitted exactly once, at the top level.  When the base carries no such
-	 * CTEs, the inner query is returned untouched along with the plain `db`.
+	 * The query creator carrying this query set's base CTEs: the data-modifying CTEs captured by
+	 * `.write()`/`.writeAs()`, or the implicit `__base` CTE wrapping a non-select base query (or
+	 * plain `db` when there are none).  Postgres requires data-modifying CTEs to be attached to the
+	 * top-level statement, so whenever the base select gets wrapped (in a derived table for
+	 * pagination, or in an EXISTS subquery), the wrapper must be built from this creator and strip
+	 * the CTEs from the inner query via {@link stripWithPlugin}, so they are emitted exactly once.
 	 */
-	#hoistBaseCtes(inner: AnySelectQueryBuilder): {
-		queryCreator: k.QueryCreator<any>;
-		inner: AnySelectQueryBuilder;
-	} {
+	#getBaseCteCreator(): k.QueryCreator<any> {
 		const { db, baseQuery, writeQueryCreator } = this.#props;
-
-		const queryCreator =
+		return (
 			writeQueryCreator ??
-			(isSelectQueryBuilder(baseQuery) ? null : db.with("__base", () => baseQuery));
-
-		if (!queryCreator) {
-			return { queryCreator: db, inner };
-		}
-
-		return { queryCreator, inner: inner.withPlugin(stripWithPlugin) };
+			(isSelectQueryBuilder(baseQuery) ? db : db.with("__base", () => baseQuery))
+		);
 	}
 
 	/**
@@ -3147,18 +3102,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			orderBy.flatMap(({ expr }) => (expr.includes(SEP) ? expr.slice(0, expr.indexOf(SEP)) : [])),
 		);
 		const isReduced = (key: string) => orderByJoinKeys.has(key);
-		// This query always becomes a derived table of the wrapping query built below, so it is a
-		// local subquery even at the top level: a non-select base must hoist its RETURNING columns
-		// (which the wrapper re-selects by name) instead of using `.selectAll()`.
+		// The paginated query becomes a derived table of the wrapper built below, so it is a local
+		// subquery even at the top level (a non-select base must hoist its RETURNING columns, which
+		// the wrapper re-selects by name), and its base CTEs must move up to the wrapper (see
+		// #getBaseCteCreator).
 		const cardinalityOneQuery = this.#toPaginatedCardinalityOneQuery(isNested, true, isReduced);
-
-		// The base select becomes a derived table here, so its base CTEs (write
-		// CTEs / `__base`) must be hoisted to the outer query: Postgres rejects
-		// data-modifying CTEs that are not attached to the top-level statement.
-		// (Writes cannot be nested, so when a creator exists this wrapper IS the
-		// top-level statement.)
-		const hoisted = this.#hoistBaseCtes(cardinalityOneQuery);
-		let qb = hoisted.queryCreator.selectFrom(hoisted.inner.as(baseAlias));
+		let qb = this.#getBaseCteCreator().selectFrom(
+			cardinalityOneQuery.withPlugin(stripWithPlugin).as(baseAlias),
+		);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
 		// hoisted further by parent queries.  Reduced joins are skipped: they are re-added in full form
@@ -3201,17 +3152,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	toExistsQuery(): OpaqueExistsQueryBuilder {
-		// The base select becomes an EXISTS subquery here, so its base CTEs
-		// (write CTEs / `__base`) must be hoisted to the outer statement:
-		// Postgres rejects data-modifying CTEs that are not attached to the
-		// top-level statement.
-		const hoisted = this.#hoistBaseCtes(
-			this.#toCardinalityOneQuery(false, false)
-				.clearSelect()
-				.select((eb) => eb.lit(1).as("_")),
-		);
-
-		return hoisted.queryCreator.selectNoFrom(({ exists }) => exists(hoisted.inner).as("exists"));
+		// The base select becomes an EXISTS subquery here, so its base CTEs must be hoisted to the
+		// outer statement (see #getBaseCteCreator).
+		const inner = this.#toCardinalityOneQuery(false, false)
+			.clearSelect()
+			.select((eb) => eb.lit(1).as("_"))
+			.withPlugin(stripWithPlugin);
+		return this.#getBaseCteCreator().selectNoFrom(({ exists }) => exists(inner).as("exists"));
 	}
 
 	compile() {

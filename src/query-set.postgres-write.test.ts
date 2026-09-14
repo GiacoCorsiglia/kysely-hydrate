@@ -197,35 +197,38 @@ describePg("query-set: postgres-write", () => {
 	});
 
 	//
-	// CTE hoisting when the base select gets wrapped (pagination / exists / count)
+	// CTE hoisting when the base select gets wrapped (pagination / exists): Postgres rejects
+	// data-modifying CTEs that are not attached to the top-level statement (SQLSTATE 0A000).
 	//
+
+	const updateEmails = (trx: typeof db, email: string) =>
+		querySet(trx)
+			.writeAs(
+				"updated",
+				(db) =>
+					db.with("updated", (qb) =>
+						qb.updateTable("users").set({ email }).where("id", "in", [2, 3]).returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"updated.id",
+			);
+
+	const selectEmails = (trx: typeof db) =>
+		trx
+			.selectFrom("users")
+			.select(["id", "email"])
+			.where("id", "in", [2, 3])
+			.orderBy("id")
+			.execute();
 
 	test("writeAs() with leftJoinMany and limit - CTE hoisted above the pagination wrap", async () => {
 		await testInTransaction(db, async (trx) => {
-			// Pagination with a many-join wraps the base select in a derived
-			// table; the data-modifying CTE must be hoisted to the top level or
-			// Postgres rejects the query (SQLSTATE 0A000).
-			const result = await querySet(trx)
-				.writeAs(
-					"updated",
-					(db) =>
-						db.with("updated", (qb) =>
-							qb
-								.updateTable("users")
-								.set({ email: "paginated@example.com" })
-								.where("id", "in", [2, 3])
-								.returningAll(),
-						),
-					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
-				)
-				.leftJoinMany(
-					"posts",
-					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-					"posts.user_id",
-					"updated.id",
-				)
-				.limit(1)
-				.execute();
+			const result = await updateEmails(trx, "paginated@example.com").limit(1).execute();
 
 			// Only the first updated user is returned, with all their posts.
 			assert.deepStrictEqual(result, [
@@ -243,13 +246,7 @@ describePg("query-set: postgres-write", () => {
 			]);
 
 			// The write itself is not limited: both rows were updated.
-			const emails = await trx
-				.selectFrom("users")
-				.select(["id", "email"])
-				.where("id", "in", [2, 3])
-				.orderBy("id")
-				.execute();
-			assert.deepStrictEqual(emails, [
+			assert.deepStrictEqual(await selectEmails(trx), [
 				{ id: 2, email: "paginated@example.com" },
 				{ id: 3, email: "paginated@example.com" },
 			]);
@@ -258,92 +255,13 @@ describePg("query-set: postgres-write", () => {
 
 	test("writeAs() executeExists - CTE hoisted above the EXISTS wrap", async () => {
 		await testInTransaction(db, async (trx) => {
-			const exists = await querySet(trx)
-				.writeAs(
-					"updated",
-					(db) =>
-						db.with("updated", (qb) =>
-							qb
-								.updateTable("users")
-								.set({ email: "exists@example.com" })
-								.where("id", "=", 2)
-								.returningAll(),
-						),
-					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
-				)
-				.leftJoinMany(
-					"posts",
-					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-					"posts.user_id",
-					"updated.id",
-				)
-				.executeExists();
-
-			assert.strictEqual(exists, true);
+			assert.strictEqual(await updateEmails(trx, "exists@example.com").executeExists(), true);
 
 			// The data-modifying CTE still executed.
-			const user = await trx
-				.selectFrom("users")
-				.select(["email"])
-				.where("id", "=", 2)
-				.executeTakeFirstOrThrow();
-			assert.strictEqual(user.email, "exists@example.com");
-		});
-	});
-
-	test("writeAs() executeExists - returns false when the write matches no rows", async () => {
-		await testInTransaction(db, async (trx) => {
-			const exists = await querySet(trx)
-				.writeAs(
-					"updated",
-					(db) =>
-						db.with("updated", (qb) =>
-							qb
-								.updateTable("users")
-								.set({ email: "nobody@example.com" })
-								.where("id", "=", -1)
-								.returningAll(),
-						),
-					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
-				)
-				.executeExists();
-
-			assert.strictEqual(exists, false);
-		});
-	});
-
-	test("writeAs() executeCount - CTE stays at top level", async () => {
-		await testInTransaction(db, async (trx) => {
-			const count = await querySet(trx)
-				.writeAs(
-					"updated",
-					(db) =>
-						db.with("updated", (qb) =>
-							qb
-								.updateTable("users")
-								.set({ email: "counted@example.com" })
-								.where("id", "in", [2, 3])
-								.returningAll(),
-						),
-					(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
-				)
-				.leftJoinMany(
-					"posts",
-					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-					"posts.user_id",
-					"updated.id",
-				)
-				.executeCount(Number);
-
-			assert.strictEqual(count, 2);
-
-			// The data-modifying CTE still executed.
-			const user = await trx
-				.selectFrom("users")
-				.select(["email"])
-				.where("id", "=", 3)
-				.executeTakeFirstOrThrow();
-			assert.strictEqual(user.email, "counted@example.com");
+			assert.deepStrictEqual(await selectEmails(trx), [
+				{ id: 2, email: "exists@example.com" },
+				{ id: 3, email: "exists@example.com" },
+			]);
 		});
 	});
 

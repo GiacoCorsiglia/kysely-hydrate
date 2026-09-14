@@ -2,7 +2,7 @@ export class KyselyHydrateError extends Error {}
 
 export class UnexpectedSelectAllError extends KyselyHydrateError {
 	constructor() {
-		super("Hydrated queries do not support selectAll()");
+		super("Hydrated queries cannot hoist selectAll() / returningAll(): list explicit columns");
 	}
 }
 
@@ -106,21 +106,6 @@ export class AttachedKeysArityMismatchError extends KyselyHydrateError {
 	constructor(key: string, matchChildArity: number, toParentArity: number) {
 		super(
 			`Attached collection "${key}" cannot match: matchChild has ${matchChildArity} key part(s) but toParent has ${toParentArity}`,
-		);
-	}
-}
-
-/**
- * Error thrown when a `QuerySet` whose base is a write query (INSERT, UPDATE,
- * or DELETE) combines `returningAll()` with cardinality-many joins and
- * limit/offset.  Paginating past row explosion wraps the base in a derived
- * table whose columns must be re-selected by name, so the RETURNING clause
- * must list explicit columns for the names to be statically known.
- */
-export class UnsupportedReturningAllError extends KyselyHydrateError {
-	constructor(baseAlias: string) {
-		super(
-			`Query sets with an INSERT, UPDATE, or DELETE base query must list explicit RETURNING columns (not returningAll()) to combine cardinality-many joins with limit or offset (query set with alias ${baseAlias})`,
 		);
 	}
 }
