@@ -7,8 +7,7 @@ export interface OrderBy<T = Record<string, unknown>> {
 }
 
 function nullsDefault(direction: "asc" | "desc"): "first" | "last" {
-	// Default nulls behavior matches PostgreSQL/Oracle:
-	// NULLS LAST for ASC, NULLS FIRST for DESC
+	// Postgres/Oracle default: NULLS LAST for ASC, NULLS FIRST for DESC.
 	return direction === "asc" ? "last" : "first";
 }
 
@@ -79,7 +78,6 @@ const TypeRank = {
 	Date: 3,
 	Temporal: 4,
 	String: 5,
-	/** `Buffer` and `Uint8Array`, which is how drivers return binary columns. */
 	Bytes: 6,
 	Array: 7,
 	Other: 8,
@@ -116,11 +114,7 @@ function typeRankOf(value: unknown): TypeRank {
 	}
 }
 
-/**
- * Lexicographic ordering shared by binary data and arrays, matching how SQL
- * orders both: compare position by position, and when one is a prefix of the
- * other the shorter sorts first.
- */
+/** Position by position, then shorter first, as SQL orders bytes and arrays. */
 function compareLexicographic<T>(
 	a: ArrayLike<T>,
 	b: ArrayLike<T>,
@@ -219,11 +213,7 @@ function compareStringForms(a: unknown, b: unknown): number {
 	return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
 }
 
-/**
- * Compares "not a value" values (NaN numbers, invalid Dates) against their
- * well-ordered peers: not-a-value sorts after every real value, and two
- * not-a-values compare equal.
- */
+/** Not-a-value (NaN, invalid Date) sorts last; two of them compare equal. */
 function compareNaNs(aIsNaN: boolean, bIsNaN: boolean): number {
 	if (aIsNaN === bIsNaN) {
 		return 0;
@@ -231,11 +221,7 @@ function compareNaNs(aIsNaN: boolean, bIsNaN: boolean): number {
 	return aIsNaN ? 1 : -1;
 }
 
-/**
- * Numeric ordering with NaN pinned last. `<`, `>`, and the equality
- * fallthrough work correctly on mixed number/bigint operands, so e.g.
- * `sqlCompare(1, 1n) === 0`.
- */
+/** `<` and `>` work across number/bigint, so `1` and `1n` compare equal. */
 function compareNumbers(a: number | bigint, b: number | bigint): number {
 	if (a < b) {
 		return -1;
@@ -243,44 +229,30 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
 	if (a > b) {
 		return 1;
 	}
-	// Neither ordered: equal, or at least one is NaN (bigint is never NaN).
+	// Equal, or at least one NaN.
 	return compareNaNs(a !== a, b !== b);
 }
 
 /**
- * Total-order comparator emulating SQL ORDER BY semantics in JavaScript.
+ * Total-order comparator emulating SQL ORDER BY.
  *
- * - `null`/`undefined` compare equal to each other and less than everything
- *   else. (`sortBy` handles NULLS FIRST/LAST for top-level values itself, so
- *   this matters for array elements and direct `sqlCompare` callers.)
- * - Same-type comparisons match SQL: booleans (false < true), numbers and
- *   bigints numerically (including mixed number/bigint), Dates by timestamp,
- *   strings lexicographically by code unit, binary data (`Buffer`,
- *   `Uint8Array`) byte-wise, and arrays element-wise -- with a prefix sorting
- *   before the longer value it prefixes, as in SQL.
- * - Decimals (anything exposing `cmp` or `comparedTo`: decimal.js, big.js,
- *   bignumber.js) sort via that method, in their own rank rather than
- *   interleaved with numbers.
- * - `Temporal.*` values sort via their type's static `compare`, except
- *   `Duration`, which sorts by nominal length as a Postgres `interval` does.
- *   Different Temporal types are separated by type name.
- * - Cross-type comparisons (where SQL would error, but a JS comparator must
- *   still produce a total order) resolve by type rank:
- *   boolean < numeric (number/bigint) < decimal < Date < Temporal < string <
- *   binary < array < everything else. Values ranked "everything else" compare
- *   by their String() forms.
- * - `NaN` sorts after all other numerics (decimal NaN likewise), and invalid
- *   Dates sort after all valid Dates; NaN vs NaN and invalid Date vs invalid
- *   Date compare equal.
- *   (Returning NaN from a comparator, as `a - b` would, makes Array.sort
- *   behavior implementation-defined and can leave the array unsorted.)
+ * - `null`/`undefined` compare equal and sort first. (`sortBy` applies NULLS
+ *   FIRST/LAST itself; this governs array elements and direct callers.)
+ * - Same-type values compare as SQL does: booleans, numbers and bigints
+ *   (mixed too), Dates by timestamp, strings by code unit, bytes and arrays
+ *   lexicographically, decimals via their library's `cmp`/`comparedTo`, and
+ *   `Temporal.*` via the type's static `compare` (`Duration` by nominal
+ *   length, as a Postgres `interval`).
+ * - Cross-type values, which SQL would reject, order by `TypeRank`. Different
+ *   Temporal types order by type name; "other" values by `String()` form.
+ * - NaN, decimal NaN, and invalid Dates sort after their peers and compare
+ *   equal to each other. A comparator must never return NaN.
  */
 export function sqlCompare(a: unknown, b: unknown): number {
 	if (a === b) {
 		return 0;
 	}
 	if (isNil(a)) {
-		// null and undefined compare equal to each other (they are not ===).
 		return isNil(b) ? 0 : -1;
 	}
 	if (isNil(b)) {
@@ -295,7 +267,7 @@ export function sqlCompare(a: unknown, b: unknown): number {
 
 	switch (rank) {
 		case TypeRank.Boolean:
-			// false < true; the equal cases returned 0 above.
+			// Unequal, so false < true.
 			return a ? 1 : -1;
 
 		case TypeRank.Numeric:
@@ -305,23 +277,19 @@ export function sqlCompare(a: unknown, b: unknown): number {
 			return compareDecimals(a as object, b as object);
 
 		case TypeRank.Date:
-			// An invalid Date has a NaN timestamp, so it pins last like NaN.
+			// An invalid Date's timestamp is NaN, which pins it last.
 			return compareNumbers((a as Date).getTime(), (b as Date).getTime());
 
 		case TypeRank.Temporal:
 			return compareTemporal(a as object, b as object);
 
 		case TypeRank.String:
-			// The equal case returned 0 above.
 			return (a as string) < (b as string) ? -1 : 1;
 
 		case TypeRank.Bytes:
-			// Bytes are unsigned integers, so plain subtraction is a valid comparison.
 			return compareLexicographic(a as Uint8Array, b as Uint8Array, (x, y) => x - y);
 
 		case TypeRank.Array:
-			// Elements recurse, so arrays of any supported type work, nested
-			// arrays and nulls included.
 			return compareLexicographic(a as unknown[], b as unknown[], sqlCompare);
 
 		case TypeRank.Other:
@@ -338,10 +306,7 @@ const defaultGetter = <T>(obj: T, key: keyof T | ((input: T) => unknown)) => {
 	return (obj as any)[key];
 };
 
-/**
- * An ordering reduced to what the comparison loop needs, so direction and
- * null placement are resolved once rather than on every comparison.
- */
+/** An ordering with direction and null placement resolved up front. */
 interface ColumnPlan {
 	readonly direction: 1 | -1;
 	readonly nullsFirst: boolean;
@@ -354,11 +319,6 @@ function planColumns<T>(orderings: readonly OrderBy<T>[]): ColumnPlan[] {
 	}));
 }
 
-/**
- * Compares one column's values. Returns 0 when the two are indistinguishable
- * for this column (including both null), leaving the caller to move on to the
- * next ordering.
- */
 function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 	const aNull = isNil(a);
 	const bNull = isNil(b);
@@ -367,8 +327,7 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 		if (aNull && bNull) {
 			return 0;
 		}
-		// NULLS FIRST/LAST is independent of ASC/DESC, so the ordering
-		// direction deliberately does not apply here.
+		// NULLS FIRST/LAST is independent of ASC/DESC.
 		const nullFirst = aNull ? -1 : 1;
 		return plan.nullsFirst ? nullFirst : -nullFirst;
 	}
@@ -377,15 +336,9 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 }
 
 /**
- * Sorts rows by the given orderings, returning a new array.
- *
- * Rather than sorting with a comparator that extracts both rows' keys on
- * every call, every row's keys are extracted once up front, taking key
- * extraction from O(n log n) calls to O(n).
- *
- * That matters because `getValue` is not always cheap: for function keys the
- * hydrator builds a Proxy per extraction, which at 10k rows is the difference
- * between ~10k and ~218k Proxy allocations.
+ * Sorts rows by the given orderings into a new array. Keys are extracted once
+ * per row rather than on every comparison; for function keys the hydrator
+ * builds a Proxy per extraction, so this is O(n) Proxies instead of O(n log n).
  */
 export function sortBy<T>(
 	rows: readonly T[],
@@ -399,12 +352,9 @@ export function sortBy<T>(
 	const plans = planColumns(orderings);
 	const n = rows.length;
 
-	// Plain loops throughout rather than map/Array.from: the hydrator calls
-	// this once per parent group, typically on 10-100 rows, where the closure
-	// allocations measured ~1.5x the whole sort.
-	//
-	// One flat array per ordering, holding that column's key for every row.
-	// Per-row key arrays measured 1.5-2x slower on 1e5 rows.
+	// One key array per ordering. Plain loops: the hydrator calls this per
+	// parent group of 10-100 rows, where map/Array.from closures measured
+	// ~1.5x the whole sort. Per-row key arrays measured 1.5-2x slower.
 	const columns: unknown[][] = new Array(orderings.length);
 	for (let c = 0; c < orderings.length; c++) {
 		const key = orderings[c]!.key;
@@ -426,9 +376,7 @@ export function sortBy<T>(
 				return cmp;
 			}
 		}
-		// Array.sort is stable, but sorting indices rather than the rows
-		// themselves would leave equal rows in whatever order the sort put
-		// their indices. Falling back to the original index restores it.
+		// Keep equal rows in input order.
 		return x - y;
 	});
 
