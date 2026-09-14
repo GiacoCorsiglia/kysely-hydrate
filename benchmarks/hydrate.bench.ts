@@ -125,6 +125,37 @@ await benchAsync("hydrate nested 10k rows, sort none", () =>
 );
 
 //
+// Small results: one entity with nested joins and attaches, a typical
+// "load one record" workload, where fixed per-call costs dominate.
+//
+
+const rows1 = makeRows(1, 3, 2); // 6 rows -> 1 user
+const rows10 = makeRows(10, 3, 2); // 60 rows -> 10 users
+
+const attachedPosts = [
+	{ id: 1, user_id: 1, title: "a" },
+	{ id: 2, user_id: 1, title: "b" },
+];
+const attachedProfile = [{ id: 1, user_id: 1, bio: "hi" }];
+
+const withAttaches = createHydrator<FlatRow>("id")
+	.hasMany("posts", "posts$$", (h) => h("id").hasMany("comments", "comments$$", (h) => h("id")))
+	.attachMany("otherPosts", () => attachedPosts, { matchChild: "user_id" })
+	.attachOne("profile", async () => attachedProfile, { matchChild: "user_id" })
+	.orderByKeys();
+
+const nestedKeyed = nested.orderByKeys();
+
+await benchAsync("hydrate 1 entity, nested (6 rows)", () => nestedKeyed.hydrate(rows1, autoOpts));
+await benchAsync("hydrate 1 entity, nested + 2 attaches", () =>
+	withAttaches.hydrate(rows1, autoOpts),
+);
+await benchAsync("hydrate 10 entities, nested (60 rows)", () =>
+	nestedKeyed.hydrate(rows10, autoOpts),
+);
+await benchAsync("hydrate 1 entity, flat, single input", () => flat.hydrate(rows1[0]!, autoOpts));
+
+//
 // Query building and end-to-end via SQLite.
 //
 
