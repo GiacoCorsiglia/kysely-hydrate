@@ -825,7 +825,6 @@ type PlannedAutoField = readonly [key: string, inputKey: string];
 interface PlannedCollection {
 	readonly key: string;
 	readonly mode: CollectionMode;
-	readonly hydrator: HydratorImpl;
 	/** The child hydrator's plan at the child prefix. */
 	readonly plan: LevelPlan;
 }
@@ -851,6 +850,7 @@ interface PlannedAttachedCollection {
  */
 interface LevelPlan {
 	readonly prefix: string;
+	/** The hydrator this plan was built from; only its `#props` are needed, by `#getAutoFields`. */
 	readonly hydrator: HydratorImpl;
 	/** The prefixed parts of `keyBy`. */
 	readonly keyParts: readonly string[];
@@ -1165,7 +1165,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				plannedCollections.push({
 					key,
 					mode: collection.mode,
-					hydrator: collection.hydrator,
 					// Plan the whole tree up front, so hydration never looks up a plan.
 					plan: collection.hydrator.#planFor(childPrefix),
 				});
