@@ -2,7 +2,7 @@ export class KyselyHydrateError extends Error {}
 
 export class UnexpectedSelectAllError extends KyselyHydrateError {
 	constructor() {
-		super("Hydrated queries do not support selectAll()");
+		super("Hydrated queries cannot hoist selectAll() / returningAll(): list explicit columns");
 	}
 }
 

@@ -197,6 +197,75 @@ describePg("query-set: postgres-write", () => {
 	});
 
 	//
+	// CTE hoisting when the base select gets wrapped (pagination / exists): Postgres rejects
+	// data-modifying CTEs that are not attached to the top-level statement (SQLSTATE 0A000).
+	//
+
+	const updateEmails = (trx: typeof db, email: string) =>
+		querySet(trx)
+			.writeAs(
+				"updated",
+				(db) =>
+					db.with("updated", (qb) =>
+						qb.updateTable("users").set({ email }).where("id", "in", [2, 3]).returningAll(),
+					),
+				(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				"updated.id",
+			);
+
+	const selectEmails = (trx: typeof db) =>
+		trx
+			.selectFrom("users")
+			.select(["id", "email"])
+			.where("id", "in", [2, 3])
+			.orderBy("id")
+			.execute();
+
+	test("writeAs() with leftJoinMany and limit - CTE hoisted above the pagination wrap", async () => {
+		await testInTransaction(db, async (trx) => {
+			const result = await updateEmails(trx, "paginated@example.com").limit(1).execute();
+
+			// Only the first updated user is returned, with all their posts.
+			assert.deepStrictEqual(result, [
+				{
+					id: 2,
+					username: "bob",
+					email: "paginated@example.com",
+					posts: [
+						{ id: 1, title: "Post 1", user_id: 2 },
+						{ id: 2, title: "Post 2", user_id: 2 },
+						{ id: 5, title: "Post 5", user_id: 2 },
+						{ id: 12, title: "Post 12", user_id: 2 },
+					],
+				},
+			]);
+
+			// The write itself is not limited: both rows were updated.
+			assert.deepStrictEqual(await selectEmails(trx), [
+				{ id: 2, email: "paginated@example.com" },
+				{ id: 3, email: "paginated@example.com" },
+			]);
+		});
+	});
+
+	test("writeAs() executeExists - CTE hoisted above the EXISTS wrap", async () => {
+		await testInTransaction(db, async (trx) => {
+			assert.strictEqual(await updateEmails(trx, "exists@example.com").executeExists(), true);
+
+			// The data-modifying CTE still executed.
+			assert.deepStrictEqual(await selectEmails(trx), [
+				{ id: 2, email: "exists@example.com" },
+				{ id: 3, email: "exists@example.com" },
+			]);
+		});
+	});
+
+	//
 	// writeAs() with extras
 	//
 

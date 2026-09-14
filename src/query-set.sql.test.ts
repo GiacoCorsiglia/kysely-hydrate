@@ -1315,6 +1315,185 @@ describe("query-set: sql", () => {
 		);
 	});
 
+	// Postgres requires data-modifying CTEs at the top level of the statement, so whenever the base
+	// select gets wrapped (in a derived table for pagination, or in an EXISTS subquery) the WITH must
+	// be hoisted above the wrapper — exactly once.
+	describe("write CTE hoisting", () => {
+		const updatedUsers = querySet(db).writeAs(
+			"updated",
+			(db) =>
+				db.with("updated", (qb) =>
+					qb
+						.updateTable("users")
+						.set({ email: "new@example.com" })
+						.where("id", "=", 1)
+						.returningAll(),
+				),
+			(qc) => qc.selectFrom("updated").select(["id", "username", "email"]),
+		);
+		const insertUser = db
+			.insertInto("users")
+			.values({ username: "user1", email: "user1@example.com" })
+			.returning(["id", "username", "email"]);
+		const newUser = querySet(db).insertAs("newUser", insertUser);
+		// Cast to a single member: the union's overloads aren't callable together.
+		const joinPosts = (qs: typeof updatedUsers | typeof newUser, baseAlias: string) =>
+			(qs as typeof updatedUsers).leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+				"posts.user_id",
+				`${baseAlias}.id` as "updated.id",
+			);
+
+		test("SQL: writeAs() with many-join and pagination", () => {
+			const sql = joinPosts(updatedUsers, "updated").limit(1).toQuery().compile().sql;
+
+			assert.strictEqual(
+				sql,
+				snapshot`
+				with "updated" as (
+					update "users"
+					set "email" = ?
+					where "id" = ?
+					returning *
+				)
+				select
+					"updated"."id" as "id",
+					"updated"."username" as "username",
+					"updated"."email" as "email",
+					"posts"."id" as "posts$$id",
+					"posts"."title" as "posts$$title",
+					"posts"."user_id" as "posts$$user_id"
+				from (
+					select
+						"updated"."id" as "id",
+						"updated"."username" as "username",
+						"updated"."email" as "email"
+					from (
+						select "id", "username", "email" from "updated"
+					) as "updated"
+					order by "updated"."id" asc
+					limit ?
+				) as "updated"
+				left join (
+					select
+						"posts"."id" as "id",
+						"posts"."title" as "title",
+						"posts"."user_id" as "user_id"
+					from (
+						select "id", "title", "user_id" from "posts"
+					) as "posts"
+				) as "posts" on "posts"."user_id" = "updated"."id"
+				order by "updated"."id" asc
+			`,
+			);
+		});
+
+		test("SQL: writeAs() toExistsQuery", () => {
+			// The leftJoinMany is excluded from exists queries entirely.
+			const sql = joinPosts(updatedUsers, "updated").toExistsQuery().compile().sql;
+
+			assert.strictEqual(
+				sql,
+				snapshot`
+				with "updated" as (
+					update "users"
+					set "email" = ?
+					where "id" = ?
+					returning *
+				)
+				select exists (
+					select 1 as "_"
+					from (
+						select "id", "username", "email" from "updated"
+					) as "updated"
+				) as "exists"
+			`,
+			);
+		});
+
+		test("SQL: insertAs() toExistsQuery hoists the implicit __base CTE", () => {
+			const sql = newUser.toExistsQuery().compile().sql;
+
+			assert.strictEqual(
+				sql,
+				snapshot`
+				with "__base" as (
+					insert into "users" ("username", "email")
+					values (?, ?)
+					returning "id", "username", "email"
+				)
+				select exists (
+					select 1 as "_" from "__base" as "newUser"
+				) as "exists"
+			`,
+			);
+		});
+
+		test("SQL: insertAs() with many-join and pagination hoists RETURNING columns and the __base CTE", () => {
+			const sql = joinPosts(newUser, "newUser").limit(1).toQuery().compile().sql;
+
+			assert.strictEqual(
+				sql,
+				snapshot`
+				with "__base" as (
+					insert into "users" ("username", "email")
+					values (?, ?)
+					returning "id", "username", "email"
+				)
+				select
+					"newUser"."id" as "id",
+					"newUser"."username" as "username",
+					"newUser"."email" as "email",
+					"posts"."id" as "posts$$id",
+					"posts"."title" as "posts$$title",
+					"posts"."user_id" as "posts$$user_id"
+				from (
+					select
+						"newUser"."id" as "id",
+						"newUser"."username" as "username",
+						"newUser"."email" as "email"
+					from "__base" as "newUser"
+					order by "newUser"."id" asc
+					limit ?
+				) as "newUser"
+				left join (
+					select
+						"posts"."id" as "id",
+						"posts"."title" as "title",
+						"posts"."user_id" as "user_id"
+					from (
+						select "id", "title", "user_id" from "posts"
+					) as "posts"
+				) as "posts" on "posts"."user_id" = "newUser"."id"
+				order by "newUser"."id" asc
+			`,
+			);
+		});
+
+		test("SQL: error: insertAs() with returningAll(), many-join, and pagination throws UnexpectedSelectAllError", () => {
+			// The wrapping query re-selects the base's columns by name, which returningAll() does not
+			// make statically known.
+			const qs = joinPosts(
+				querySet(db).insertAs("newUser", (db) =>
+					db
+						.insertInto("users")
+						.values({ username: "user1", email: "u@example.com" })
+						.returningAll(),
+				),
+				"newUser",
+			).limit(1);
+			assert.throws(() => qs.toQuery(), UnexpectedSelectAllError);
+		});
+
+		test("SQL: insert() after writeAs() discards the stale write CTEs", () => {
+			assert.strictEqual(
+				updatedUsers.insert(insertUser).toQuery().compile().sql,
+				querySet(db).insertAs("updated", insertUser).toQuery().compile().sql,
+			);
+		});
+	});
+
 	test("SQL: writeAs() with withSchema - CTE names are not schema-qualified", async () => {
 		const sdb = db.withSchema("myapp");
 		const qs = querySet(sdb).writeAs(
