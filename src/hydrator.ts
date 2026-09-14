@@ -8,7 +8,6 @@ import { type OrderBy, sortBy } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
-	getPrefixedValue,
 	hasPrefix,
 	removePrefix,
 	type SelectAndStripPrefix,
@@ -803,10 +802,118 @@ interface HydrationContext {
 	readonly attachedDataMap: Map<string, KeyedGroups<any>>;
 
 	/**
-	 * Cache for auto-include field names keyed by prefix.
-	 * Maps: prefix -> fieldNames[]
+	 * Cache for auto-include fields keyed by prefix.
 	 */
-	readonly autoFieldsCache: Map<string, string[]>;
+	readonly autoFieldsCache: Map<string, readonly PlannedAutoField[]>;
+}
+
+/**
+ * A field to copy from the input: the output key, the (prefixed) input key,
+ * and the mapping to apply, if any.
+ */
+type PlannedField = readonly [
+	key: string,
+	inputKey: string,
+	field: true | ((value: any) => unknown),
+];
+
+/**
+ * An auto-included field: the output key and the (prefixed) input key.
+ */
+type PlannedAutoField = readonly [key: string, inputKey: string];
+
+interface PlannedCollection {
+	readonly key: string;
+	readonly mode: CollectionMode;
+	readonly hydrator: HydratorImpl;
+	/** The child hydrator's plan at the child prefix. */
+	readonly plan: LevelPlan;
+}
+
+interface PlannedAttachedCollection {
+	readonly key: string;
+	/** The key in {@link HydrationContext.attachedDataMap}: `key` prefixed. */
+	readonly mapKey: string;
+	readonly mode: CollectionMode;
+	readonly fetchFn: FetchFn<any, any>;
+	/** Unprefixed: fetched rows are never prefixed. */
+	readonly matchChild: readonly string[];
+	/** Prefixed, as it is read from the parent's input rows. */
+	readonly toParent: readonly string[];
+}
+
+/**
+ * Everything hydration needs to know about one hydrator at one prefix,
+ * resolved ahead of time.  Hydration reads several fields of every row, so
+ * resolving each field's prefixed input key here (rather than concatenating
+ * it per read) is the difference between a property lookup on an interned
+ * string and a string allocation plus hash per read.
+ */
+interface LevelPlan {
+	readonly prefix: string;
+	readonly hydrator: HydratorImpl;
+	/** The prefixed parts of `keyBy`. */
+	readonly keyParts: readonly string[];
+	/** Explicit fields, omitted ones already dropped. */
+	readonly fields: readonly PlannedField[];
+	readonly extras: readonly (readonly [key: string, extra: (input: any) => unknown])[] | undefined;
+	readonly extenders: ExtendersArray | undefined;
+	readonly collections: readonly PlannedCollection[] | undefined;
+	readonly attachedCollections: readonly PlannedAttachedCollection[] | undefined;
+	readonly mapFns: ReadonlyArray<(value: any) => any> | undefined;
+	/**
+	 * The final orderings (see `#getFinalOrderings`), with string keys
+	 * prefixed; undefined when there is nothing to sort by.
+	 */
+	readonly orderings: readonly OrderBy<any>[] | undefined;
+	/**
+	 * The value getter for {@link sortBy}, which only function keys need help
+	 * with once string keys are prefixed.  Undefined at the top level, where
+	 * the default getter serves.
+	 */
+	readonly getValue: ((obj: any, key: any) => unknown) | undefined;
+}
+
+/**
+ * The parts of `keyBy`, each prefixed.
+ */
+function prefixKeyParts(prefix: string, keyBy: string | readonly string[]): readonly string[] {
+	if (typeof keyBy === "string") {
+		return [applyPrefix(prefix, keyBy)];
+	}
+	const parts: string[] = [];
+	for (const key of keyBy) {
+		parts.push(applyPrefix(prefix, key));
+	}
+	return parts;
+}
+
+/**
+ * Creates a sort-key accessor for a nested level.  String keys arrive already
+ * prefixed (see {@link LevelPlan.orderings}); function keys get a prefixed
+ * accessor so that they can read fields without the prefix.
+ */
+function makePrefixedGetValue(prefix: string) {
+	return (obj: any, key: string | ((input: any) => unknown)): unknown => {
+		if (typeof key === "function") {
+			return key(createdPrefixedAccessor(prefix, obj as object));
+		}
+		return obj[key];
+	};
+}
+
+/**
+ * Determines if sorting should be applied at the given depth.
+ */
+function shouldSort(sortMode: "nested" | "all" | "none", prefix: string): boolean {
+	switch (sortMode) {
+		case "nested":
+			return prefix !== "";
+		case "all":
+			return true;
+		case "none":
+			return false;
+	}
 }
 
 /**
@@ -1018,21 +1125,107 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	//
 
 	/**
+	 * Plans for each prefix this hydrator has hydrated at (see
+	 * {@link LevelPlan}).  Props are immutable, so a plan stays valid for the
+	 * life of the hydrator; the cache lives here rather than on the hydration
+	 * context so that repeated hydrations pay for planning only once.
+	 */
+	readonly #plans = new Map<string, LevelPlan>();
+
+	/**
+	 * The plan for hydrating this hydrator's entities at `prefix`.
+	 */
+	#planFor(prefix: string): LevelPlan {
+		let plan = this.#plans.get(prefix);
+		if (plan === undefined) {
+			plan = this.#buildPlan(prefix);
+			this.#plans.set(prefix, plan);
+		}
+		return plan;
+	}
+
+	#buildPlan(prefix: string): LevelPlan {
+		const { keyBy, fields, extras, extenders, collections, attachedCollections, mapFns } =
+			this.#props;
+
+		const plannedFields: PlannedField[] = [];
+		if (fields) {
+			for (const [key, field] of fields) {
+				// Fields explicitly set to false are omitted.
+				if (field !== false) {
+					plannedFields.push([key, applyPrefix(prefix, key), field]);
+				}
+			}
+		}
+
+		const plannedCollections: PlannedCollection[] = [];
+		if (collections) {
+			for (const [key, collection] of collections) {
+				const childPrefix = applyPrefix(prefix, collection.prefix);
+				plannedCollections.push({
+					key,
+					mode: collection.mode,
+					hydrator: collection.hydrator,
+					// Plan the whole tree up front, so hydration never looks up a plan.
+					plan: collection.hydrator.#planFor(childPrefix),
+				});
+			}
+		}
+
+		const plannedAttached: PlannedAttachedCollection[] = [];
+		if (attachedCollections) {
+			for (const [key, collection] of attachedCollections) {
+				plannedAttached.push({
+					key,
+					mapKey: applyPrefix(prefix, key),
+					mode: collection.mode,
+					fetchFn: collection.fetchFn,
+					matchChild: prefixKeyParts("", collection.matchChild),
+					toParent: prefixKeyParts(prefix, collection.toParent),
+				});
+			}
+		}
+
+		const orderings = this.#getFinalOrderings();
+
+		return {
+			prefix,
+			hydrator: this,
+			keyParts: prefixKeyParts(prefix, keyBy),
+			fields: plannedFields,
+			extras: extras && extras.size > 0 ? [...extras] : undefined,
+			extenders: extenders && extenders.length > 0 ? extenders : undefined,
+			collections: plannedCollections.length > 0 ? plannedCollections : undefined,
+			attachedCollections: plannedAttached.length > 0 ? plannedAttached : undefined,
+			mapFns: mapFns && mapFns.length > 0 ? mapFns : undefined,
+			orderings:
+				orderings.length > 0
+					? orderings.map((ordering) =>
+							typeof ordering.key === "function"
+								? ordering
+								: { ...ordering, key: applyPrefix(prefix, ordering.key as string) },
+						)
+					: undefined,
+			getValue: prefix === "" ? undefined : makePrefixedGetValue(prefix),
+		};
+	}
+
+	/**
 	 * Fetches all attach collections (including nested ones) and groups them by match key.
 	 * This is the only async operation needed - everything else can work with the resulting map.
 	 * Uses prefixed keys for nested collections (e.g., "posts$$comments" for nested comments).
 	 *
 	 * Writes directly to the provided attachedDataMap and fetchPromises array.
 	 */
-	#fetchAllAttachedCollections(
+	static #fetchAllAttachedCollections(
 		ctx: HydrationContext,
-		prefix: string,
+		plan: LevelPlan,
 		// Must be an array (not a lazily-consumed iterable): this method runs once
 		// per nesting level, and hydration iterates the same inputs afterward.
-		inputs: Input[],
+		inputs: unknown[],
 		fetchPromises: Promise<void>[],
 	): void {
-		const { attachedCollections, collections } = this.#props;
+		const { prefix, attachedCollections, collections } = plan;
 
 		// Fetch attach collections at this level
 		if (attachedCollections) {
@@ -1043,11 +1236,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// keyBy and drop rows with nil keys.  We also need to convert the input
 			// to prefixed accessors if we are nested, because the fetchFn expects
 			// unprefixed inputs.
-			const { keyBy } = this.#props;
-			const seen = new KeyedGroups<Input>(keyBy);
+			const { keyParts } = plan;
+			const seen = new KeyedGroups<unknown>(keyParts.length);
 			const inputArray: any[] = [];
 			for (const input of inputs) {
-				if (!seen.addFirst(prefix, input, keyBy)) {
+				if (!seen.addFirst(input, keyParts)) {
 					continue;
 				}
 				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
@@ -1060,13 +1253,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// an entry behaves identically to storing an empty group — lookups go
 			// through `groupedData?.find(...)`, which yields undefined either way.
 			if (inputArray.length > 0) {
-				for (const [key, attachedCollection] of attachedCollections) {
-					// Use prefixed key for the map
-					const mapKey = prefix ? applyPrefix(prefix, key) : key;
-
+				for (const { mapKey, fetchFn, matchChild } of attachedCollections) {
 					// Create fetch promise
 					fetchPromises.push(
-						Promise.resolve(attachedCollection.fetchFn(inputArray))
+						Promise.resolve(fetchFn(inputArray))
 							.then((result) => {
 								if (isExecutable(result)) {
 									return result.execute();
@@ -1074,14 +1264,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 								return result as Iterable<any>;
 							})
 							.then((attachedOutputs) => {
-								// Group fetched rows by their match key
-								const grouped = groupByKey(
-									"", // Always unprefixed.
-									attachedOutputs,
-									attachedCollection.matchChild,
-								);
-
-								ctx.attachedDataMap.set(mapKey, grouped);
+								// Group fetched rows by their match key (always unprefixed).
+								ctx.attachedDataMap.set(mapKey, groupByKey(attachedOutputs, matchChild));
 							}),
 					);
 				}
@@ -1090,11 +1274,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 		// Recursively fetch attach collections from nested collections
 		if (collections) {
-			for (const collection of collections.values()) {
-				const childPrefix = applyPrefix(prefix, collection.prefix);
-
+			for (const collection of collections) {
 				// Recursively fetch nested attach collections (write directly to the same map).
-				collection.hydrator.#fetchAllAttachedCollections(ctx, childPrefix, inputs, fetchPromises);
+				HydratorImpl.#fetchAllAttachedCollections(ctx, collection.plan, inputs, fetchPromises);
 			}
 		}
 	}
@@ -1104,7 +1286,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * parent, and not to any nested collection.  Does this once per hydration
 	 * (assumes all inputs have the same keys).
 	 */
-	#getAutoFields(ctx: HydrationContext, prefix: string, input: unknown): string[] {
+	static #getAutoFields(
+		ctx: HydrationContext,
+		plan: LevelPlan,
+		input: unknown,
+	): readonly PlannedAutoField[] {
+		const { prefix } = plan;
+
 		// Have we done this already?
 		const cached = ctx.autoFieldsCache.get(prefix);
 		if (cached) {
@@ -1117,7 +1305,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			return [];
 		}
 
-		const { fields, extras, collections } = this.#props;
+		const { fields, extras, collections } = plan.hydrator.#props;
 
 		// Get the nested collection prefixes
 		const nestedPrefixes: string[] = [];
@@ -1127,7 +1315,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			}
 		}
 
-		const autoFields: string[] = [];
+		const autoFields: PlannedAutoField[] = [];
 		for (const inputKey of Object.keys(input)) {
 			// Exclude if its from a parent (not this prefix).
 			if (!hasPrefix(prefix, inputKey)) {
@@ -1145,8 +1333,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				continue;
 			}
 
-			// The autoFields gets the unprefixed key.
-			autoFields.push(unprefixedKey);
+			// The output gets the unprefixed key; the input is read by the full key.
+			autoFields.push([unprefixedKey, inputKey]);
 		}
 
 		// Cache and return the auto-include fields
@@ -1157,48 +1345,46 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates a single entity. All attach collections are already fetched and provided in attachedDataMap.
 	 */
-	#hydrateOne(
+	static #hydrateOne(
 		ctx: HydrationContext,
-		prefix: string,
-		input: Input,
+		plan: LevelPlan,
+		input: any,
 		// Null means the group consists of just `input`; the array is only
 		// materialized when nested collections actually need it.
-		inputRows: Input[] | null,
-	): Output {
-		const { fields, extras, extenders, collections, attachedCollections } = this.#props;
+		inputRows: unknown[] | null,
+	): unknown {
+		const { prefix, fields, extras, extenders, collections, attachedCollections, mapFns } = plan;
 
 		const entity: any = {};
 
 		// Auto-include all fields at this prefix level when enabled
 		if (ctx.autoIncludeFields) {
-			for (const key of this.#getAutoFields(ctx, prefix, input)) {
-				entity[key] = getPrefixedValue(prefix, input, key);
+			const autoFields = HydratorImpl.#getAutoFields(ctx, plan, input);
+			for (let i = 0; i < autoFields.length; i++) {
+				const [key, inputKey] = autoFields[i]!;
+				entity[key] = input[inputKey];
 			}
 		}
 
-		if (fields) {
-			for (const [key, field] of fields) {
-				// Skip fields explicitly set to false (omitted)
-				if (field === false) {
-					continue;
-				}
-				const value = getPrefixedValue(prefix, input, key);
-				entity[key] = field === true ? value : field(value as any);
-			}
+		for (let i = 0; i < fields.length; i++) {
+			const [key, inputKey, field] = fields[i]!;
+			const value = input[inputKey];
+			entity[key] = field === true ? value : field(value);
 		}
 
 		if (extras || extenders) {
 			const accessor = createdPrefixedAccessor(prefix, input as object);
 
 			if (extras) {
-				for (const [key, extra] of extras) {
-					entity[key] = extra(accessor as Input);
+				for (let i = 0; i < extras.length; i++) {
+					const [key, extra] = extras[i]!;
+					entity[key] = extra(accessor);
 				}
 			}
 
 			if (extenders) {
-				for (const extender of extenders) {
-					Object.assign(entity, extender(accessor as Input));
+				for (let i = 0; i < extenders.length; i++) {
+					Object.assign(entity, extenders[i]!(accessor));
 				}
 			}
 		}
@@ -1206,37 +1392,35 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		if (collections) {
 			const rows = inputRows ?? [input];
 
-			for (const [key, collection] of collections) {
-				const childPrefix = applyPrefix(prefix, collection.prefix);
+			for (let i = 0; i < collections.length; i++) {
+				const { key, mode, plan: childPlan } = collections[i]!;
 
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPrefix, rows);
+				const collectionOutputs = HydratorImpl.#hydrateMany(ctx, childPlan, rows);
 
-				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
+				entity[key] = applyCollectionMode(collectionOutputs, mode, key);
 			}
 		}
 
 		// Attach collections from the provided map
 		if (attachedCollections) {
-			for (const [key, collection] of attachedCollections) {
-				// Use prefixed key to look up in the map
-				const mapKey = prefix ? applyPrefix(prefix, key) : key;
+			for (let i = 0; i < attachedCollections.length; i++) {
+				const { key, mapKey, mode, toParent } = attachedCollections[i]!;
 
 				// Look up attached rows whose matchChild key matches this input's
 				// toParent key (already hydrated)
 				const groupedData = ctx.attachedDataMap.get(mapKey);
-				const attached = groupedData?.find(prefix, input, collection.toParent);
+				const attached = groupedData?.find(input, toParent);
 
-				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
+				entity[key] = applyGroupedCollectionMode(attached, mode, key);
 			}
 		}
 
 		// Apply map functions if present
-		const { mapFns } = this.#props;
 		if (mapFns) {
 			let result: any = entity;
-			for (const mapFn of mapFns) {
-				result = mapFn(result);
+			for (let i = 0; i < mapFns.length; i++) {
+				result = mapFns[i]!(result);
 			}
 			return result;
 		}
@@ -1247,58 +1431,45 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates many entities. All attach collections are already fetched and provided in attachedDataMap.
 	 */
-	#hydrateMany(ctx: HydrationContext, prefix: string, inputs: Iterable<Input>): Output[] {
-		const { keyBy } = this.#props;
+	static #hydrateMany(ctx: HydrationContext, plan: LevelPlan, inputs: unknown[]): unknown[] {
+		const { keyParts, orderings } = plan;
 
 		// Sort inputs before hydration if needed
-		const finalOrderings = this.#getFinalOrderings();
-		const shouldSort = finalOrderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix);
+		const sortedInputs =
+			orderings && shouldSort(ctx.sortMode, plan.prefix)
+				? sortBy(inputs, orderings, plan.getValue)
+				: inputs;
 
-		let sortedInputs: Iterable<Input> = inputs;
-		if (shouldSort) {
-			// Convert to array for sorting
-			const inputsArray = Array.isArray(inputs) ? inputs : Array.from(inputs);
-
-			sortedInputs = sortBy(inputsArray, finalOrderings, this.#makePrefixedGetValue(prefix));
-		}
-
-		const result: Output[] = [];
+		const result: unknown[] = [];
 
 		// Always group by keyBy: rows with the same key are the same entity.
 		// This holds even without nested collections, because the input rows may
 		// contain duplicates (e.g. a base query with repeated keys, or cartesian
 		// products inherited from an ancestor's sibling many-collections).
 		// groupByKey also skips rows with null keys (non-existent entities).
-		const grouped = groupByKey(prefix, sortedInputs, keyBy);
-		for (const group of grouped.values()) {
+		const groups = groupByKey(sortedInputs, keyParts).values();
+		for (let i = 0; i < groups.length; i++) {
+			const group = groups[i]!;
 			// We assume the first row is representative of the group, at least for
 			// the top-level entity (not nested collections).
 			const entity =
 				group instanceof RowGroup
-					? this.#hydrateOne(ctx, prefix, group.rows[0]!, group.rows)
-					: this.#hydrateOne(ctx, prefix, group, null);
+					? HydratorImpl.#hydrateOne(ctx, plan, group.rows[0]!, group.rows)
+					: HydratorImpl.#hydrateOne(ctx, plan, group, null);
 			result.push(entity);
 		}
 
 		return result;
 	}
 
-	#cachedOrderings: readonly OrderBy<Input>[] | undefined;
-
 	/**
 	 * Builds the final orderings array, appending keyBy columns if orderByKeys is true.
-	 * Result is cached to avoid recreating the array on repeated calls.
 	 */
 	#getFinalOrderings(): readonly OrderBy<Input>[] {
-		if (this.#cachedOrderings) {
-			return this.#cachedOrderings;
-		}
-
 		const { orderings, orderByKeys, keyBy } = this.#props;
 
 		if (!orderByKeys) {
-			this.#cachedOrderings = orderings ?? [];
-			return this.#cachedOrderings;
+			return orderings ?? [];
 		}
 
 		const keys = typeof keyBy === "string" ? [keyBy] : keyBy;
@@ -1308,37 +1479,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			nulls: "last" as const, // Follows PostgreSQL/Oracle: NULLS LAST for ASC
 		}));
 
-		this.#cachedOrderings = [...(orderings ?? []), ...keyOrderings];
-		return this.#cachedOrderings;
-	}
-
-	/**
-	 * Creates a sort-key accessor that handles prefixed field names.
-	 * For function keys, creates a prefixed accessor so the function can access unprefixed fields.
-	 */
-	#makePrefixedGetValue(prefix: string) {
-		return (obj: Input, key: keyof Input | ((input: Input) => unknown)): unknown => {
-			if (typeof key === "function") {
-				// Create a prefixed accessor so the function can access fields without the prefix
-				const accessor = createdPrefixedAccessor(prefix, obj as object);
-				return key(accessor as Input);
-			}
-			return getPrefixedValue(prefix, obj, key as string);
-		};
-	}
-
-	/**
-	 * Determines if sorting should be applied at the given depth.
-	 */
-	#shouldSort(sortMode: "nested" | "all" | "none", prefix: string): boolean {
-		switch (sortMode) {
-			case "nested":
-				return prefix !== "";
-			case "all":
-				return true;
-			case "none":
-				return false;
-		}
+		return [...(orderings ?? []), ...keyOrderings];
 	}
 
 	hydrate(
@@ -1360,10 +1501,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// Most of the work below runs synchronously; catch synchronous errors and
 		// turn them into rejections so this method never throws.
 		try {
+			const plan = this.#planFor("");
+
 			// Materialize the input once: attach-fetching and hydration each iterate
 			// it, which would silently exhaust a one-shot iterable (e.g. a
 			// generator) and hydrate zero rows.
-			const inputs: Input[] | null = isIterable(input)
+			const inputs: unknown[] | null = isIterable(input)
 				? Array.isArray(input)
 					? input
 					: Array.from(input)
@@ -1371,16 +1514,16 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			const hydrateWithData = () => {
 				if (inputs) {
-					return this.#hydrateMany(ctx, "", inputs);
+					return HydratorImpl.#hydrateMany(ctx, plan, inputs);
 				}
 
-				return this.#hydrateOne(ctx, "", input as Input, null);
+				return HydratorImpl.#hydrateOne(ctx, plan, input, null);
 			};
 
 			// Fetch all attach collections upfront (this is the only async operation).
 			// Start with empty prefix for top-level collections.
 			const fetchPromises: Promise<void>[] = [];
-			this.#fetchAllAttachedCollections(ctx, "", inputs ?? [input as Input], fetchPromises);
+			HydratorImpl.#fetchAllAttachedCollections(ctx, plan, inputs ?? [input], fetchPromises);
 
 			return fetchPromises.length > 0
 				? Promise.all(fetchPromises).then(hydrateWithData)
@@ -1543,8 +1686,8 @@ function keyArity(keyBy: string | readonly string[]): number {
  * Deliberate equivalences: `-0` and `0` are the same part (SameValueZero), as
  * SQL does not distinguish negative zero, while `NaN` groups only with `NaN`.
  */
-function keyPart(prefix: string, input: unknown, partKey: string): unknown {
-	const value = getPrefixedValue(prefix, input, partKey);
+function keyPart(input: unknown, partKey: string): unknown {
+	const value = (input as Record<string, unknown>)[partKey];
 	if (typeof value !== "object") {
 		// Symbols and functions have no content to compare, so they keep
 		// identity; undefined passes through as the nil sentinel.
@@ -1624,21 +1767,21 @@ class KeyedGroups<T> {
 	readonly #arity: number;
 
 	/**
-	 * @param keyBy - The key these groups are keyed by; only its arity is
-	 *   retained.  Lookups with a different arity match nothing, so an attach
-	 *   collection whose `toParent` and `matchChild` disagree never matches
-	 *   (rather than matching the wrong rows).
+	 * @param arity - The number of parts in the key these groups are keyed by.
+	 *   Lookups with a different arity match nothing, so an attach collection
+	 *   whose `toParent` and `matchChild` disagree never matches (rather than
+	 *   matching the wrong rows).
 	 */
-	constructor(keyBy: string | readonly string[]) {
-		this.#arity = keyArity(keyBy);
+	constructor(arity: number) {
+		this.#arity = arity;
 	}
 
 	/**
 	 * Adds a row to its key's group, or ignores it if the key has a nil part
 	 * (the entity does not exist).
 	 */
-	add(prefix: string, input: T, keyBy: string | readonly string[]): void {
-		const slot = this.#walk(prefix, input, keyBy, true);
+	add(input: T, keyParts: readonly string[]): void {
+		const slot = this.#walk(input, keyParts, true);
 		if (slot === NO_SLOT) {
 			return;
 		}
@@ -1662,9 +1805,9 @@ class KeyedGroups<T> {
 	 * callers that want one row per key: rows with a duplicate key are dropped
 	 * rather than grouped, so no RowGroup is ever allocated.
 	 */
-	addFirst(prefix: string, input: T, keyBy: string | readonly string[]): boolean {
+	addFirst(input: T, keyParts: readonly string[]): boolean {
 		// Any slot but the next one is an already-seen key, or NO_SLOT.
-		if (this.#walk(prefix, input, keyBy, true) !== this.#groups.length) {
+		if (this.#walk(input, keyParts, true) !== this.#groups.length) {
 			return false;
 		}
 		this.#groups.push(input);
@@ -1673,15 +1816,11 @@ class KeyedGroups<T> {
 
 	/**
 	 * Returns the group matching this input's key, or undefined if there is
-	 * none.  `keyBy` names the parts on `input` to match with, which need not be
-	 * the parts the groups were keyed by — only their arity must agree.
+	 * none.  `keyParts` names the parts on `input` to match with, which need not
+	 * be the parts the groups were keyed by — only their arity must agree.
 	 */
-	find(
-		prefix: string,
-		input: unknown,
-		keyBy: string | readonly string[],
-	): T | RowGroup<T> | undefined {
-		const slot = this.#walk(prefix, input, keyBy, false);
+	find(input: unknown, keyParts: readonly string[]): T | RowGroup<T> | undefined {
+		const slot = this.#walk(input, keyParts, false);
 		return slot === NO_SLOT ? undefined : this.#groups[slot];
 	}
 
@@ -1702,13 +1841,8 @@ class KeyedGroups<T> {
 	 * empty map behind, which is harmless: no slot is allocated for it, so
 	 * nothing can reach it.
 	 */
-	#walk(
-		prefix: string,
-		input: unknown,
-		keyBy: string | readonly string[],
-		create: boolean,
-	): number {
-		if (keyArity(keyBy) !== this.#arity) {
+	#walk(input: unknown, keyParts: readonly string[], create: boolean): number {
+		if (keyParts.length !== this.#arity) {
 			return NO_SLOT;
 		}
 
@@ -1718,7 +1852,7 @@ class KeyedGroups<T> {
 		const last = this.#arity - 1;
 		let node = this.#root;
 		for (let i = 0; i < last; i++) {
-			const part = keyPart(prefix, input, (keyBy as readonly string[])[i]!);
+			const part = keyPart(input, keyParts[i]!);
 			if (part === undefined) {
 				return NO_SLOT; // A nil part invalidates the whole key.
 			}
@@ -1733,7 +1867,7 @@ class KeyedGroups<T> {
 			node = next;
 		}
 
-		const part = keyPart(prefix, input, typeof keyBy === "object" ? keyBy[last]! : keyBy);
+		const part = keyPart(input, keyParts[last]!);
 		if (part === undefined) {
 			return NO_SLOT;
 		}
@@ -1751,16 +1885,12 @@ class KeyedGroups<T> {
 }
 
 /**
- * Groups rows by the entity's key.
+ * Groups rows by the entity's key, read from the given (prefixed) key parts.
  */
-function groupByKey<T>(
-	prefix: string,
-	inputs: Iterable<T>,
-	keyBy: string | readonly string[],
-): KeyedGroups<T> {
-	const groups = new KeyedGroups<T>(keyBy);
+function groupByKey<T>(inputs: Iterable<T>, keyParts: readonly string[]): KeyedGroups<T> {
+	const groups = new KeyedGroups<T>(keyParts.length);
 	for (const input of inputs) {
-		groups.add(prefix, input, keyBy);
+		groups.add(input, keyParts);
 	}
 	return groups;
 }
