@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, test } from "node:test";
 
 import { getDbForTest } from "./__tests__/db.ts";
+import { describePg } from "./__tests__/helpers.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest({ fixture: "order-by-fixture" });
@@ -1258,5 +1259,248 @@ describe("query-set: order-by", () => {
 				],
 			},
 		]);
+	});
+
+	//
+	// Pagination + ordering by a one-mode join whose nested query set contains a many-join.  Such a
+	// join is not recursively cardinality-one, so it is included in the paginated subquery in
+	// reduced form (without its many-joins) when referenced by ORDER BY.
+	//
+
+	const authorWithComments = () =>
+		querySet(db)
+			.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
+			.leftJoinOne(
+				"author",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("users").select(["id", "username"])).leftJoinMany(
+						"comments",
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "user_id"])),
+						"comments.user_id",
+						"author.id",
+					),
+				"author.id",
+				"post.user_id",
+			);
+
+	test("orderBy: orders by non-recursively-cardinality-one join's column with limit", async () => {
+		// Regression test: previously failed with "no such column: author.username".
+		const posts = await authorWithComments().orderBy("author$$username", "asc").limit(3).execute();
+
+		// Posts by author username asc (bob first), post id asc within ties:
+		// bob's posts are 3, 6, 8 (and 10, beyond the limit)
+		const bob = {
+			id: 6,
+			username: "bob",
+			comments: [
+				{ id: 4, content: "Comment on beta by bob", user_id: 6 },
+				{ id: 8, content: "Comment on epsilon by bob", user_id: 6 },
+			],
+		};
+		assert.deepStrictEqual(posts, [
+			{ id: 3, title: "Post Gamma", user_id: 6, author: bob },
+			{ id: 6, title: "Post Zeta", user_id: 6, author: bob },
+			{ id: 8, title: "Post Theta", user_id: 6, author: bob },
+		]);
+	});
+
+	test("orderBy: orders by non-recursively-cardinality-one join's column with limit and offset", async () => {
+		const posts = await authorWithComments()
+			.orderBy("author$$username", "desc")
+			.limit(2)
+			.offset(1)
+			.execute();
+
+		// Posts by author username desc, post id asc within ties:
+		// eve (7, 9), dave (2, 5), ... — skip 1, take 2: posts 9 and 2
+		assert.deepStrictEqual(
+			posts.map((p) => ({ id: p.id, author: p.author?.username })),
+			[
+				{ id: 9, author: "eve" },
+				{ id: 2, author: "dave" },
+			],
+		);
+	});
+
+	test("orderBy: control: same ordering without pagination works", async () => {
+		const posts = await authorWithComments().orderBy("author$$username", "asc").execute();
+
+		assert.deepStrictEqual(
+			posts.map((p) => ({ id: p.id, author: p.author?.username })),
+			[
+				{ id: 3, author: "bob" },
+				{ id: 6, author: "bob" },
+				{ id: 8, author: "bob" },
+				{ id: 10, author: "bob" },
+				{ id: 1, author: "carol" },
+				{ id: 4, author: "carol" },
+				{ id: 2, author: "dave" },
+				{ id: 5, author: "dave" },
+				{ id: 7, author: "eve" },
+				{ id: 9, author: "eve" },
+			],
+		);
+	});
+
+	test("orderBy: control: base column ordering with limit and a non-recursively-cardinality-one join works", async () => {
+		const posts = await authorWithComments().orderBy("title", "desc").limit(2).execute();
+
+		assert.deepStrictEqual(
+			posts.map((p) => ({ id: p.id, title: p.title, author: p.author?.username })),
+			[
+				{ id: 6, title: "Post Zeta", author: "bob" },
+				{ id: 8, title: "Post Theta", author: "bob" },
+			],
+		);
+	});
+
+	test("orderBy: orders by innerJoinOne non-recursively-cardinality-one join's column with limit", async () => {
+		// The reduced inner join filters like the WHERE EXISTS it replaces: only users with posts.
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinOne(
+				"profile",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).innerJoinMany(
+						"posts",
+						({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+						"posts.user_id",
+						"profile.user_id",
+					),
+				"profile.user_id",
+				"user.id",
+			)
+			.orderBy("profile$$bio", "desc")
+			.limit(2)
+			.execute();
+
+		// Users with posts, by bio desc: eve, dave, carol, bob — take 2
+		assert.deepStrictEqual(
+			users.map((u) => ({
+				id: u.id,
+				username: u.username,
+				bio: u.profile.bio,
+				postIds: u.profile.posts.map((p) => p.id),
+			})),
+			[
+				{ id: 4, username: "eve", bio: "Bio for eve", postIds: [7, 9] },
+				{ id: 9, username: "dave", bio: "Bio for dave", postIds: [2, 5] },
+			],
+		);
+	});
+
+	test("orderBy: orders by deeply nested non-recursively-cardinality-one join's column with limit", async () => {
+		// post -> author (one) -> profile (one) -> comments (many): both "author" and "profile" must
+		// be included in reduced form for the ORDER BY to resolve.
+		const posts = await querySet(db)
+			.selectAs("post", db.selectFrom("posts").select(["id", "title", "user_id"]))
+			.leftJoinOne(
+				"author",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("users").select(["id", "username"])).leftJoinOne(
+						"profile",
+						({ eb, qs }) =>
+							qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
+								"comments",
+								({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "user_id"])),
+								"comments.user_id",
+								"profile.user_id",
+							),
+						"profile.user_id",
+						"author.id",
+					),
+				"author.id",
+				"post.user_id",
+			)
+			.orderBy("author$$profile$$bio", "desc")
+			.limit(3)
+			.execute();
+
+		// Posts by author's bio desc (eve, dave, ...), post id asc within ties
+		assert.deepStrictEqual(
+			posts.map((p) => ({
+				id: p.id,
+				bio: p.author?.profile?.bio,
+				commentIds: p.author?.profile?.comments.map((c) => c.id),
+			})),
+			[
+				{ id: 7, bio: "Bio for eve", commentIds: [3, 7] },
+				{ id: 9, bio: "Bio for eve", commentIds: [3, 7] },
+				{ id: 2, bio: "Bio for dave", commentIds: [2, 6] },
+			],
+		);
+	});
+
+	test("orderBy: count and exists are unaffected by ordering on a non-recursively-cardinality-one join", async () => {
+		const qs = authorWithComments().orderBy("author$$username", "asc").limit(3);
+		assert.strictEqual(Number(await qs.executeCount()), 10);
+		assert.strictEqual(await qs.executeExists(), true);
+	});
+});
+
+// A paginated lateral query set takes the same paginated subquery path.  PostgreSQL only.
+describePg("query-set: order-by (lateral)", () => {
+	test("orderBy: lateral top-N per group ordered by a non-recursively-cardinality-one join's column", async () => {
+		// Each user's top-2 posts by comment content desc.  Every post has at most one comment in
+		// this fixture, so "comment" is a valid one-mode join; its nested "replies" many-join makes it
+		// non-recursively-cardinality-one.
+		const users = await querySet(db)
+			.selectAs(
+				"user",
+				db.selectFrom("users").select(["id", "username"]).where("users.id", "in", [5, 6]),
+			)
+			.leftJoinLateralMany(
+				"topPosts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id"),
+					)
+						.leftJoinOne(
+							"comment",
+							({ eb, qs }) =>
+								qs(eb.selectFrom("comments").select(["id", "content", "post_id"])).leftJoinMany(
+									"replies",
+									({ eb, qs }) => qs(eb.selectFrom("replies").select(["id", "comment_id"])),
+									"replies.comment_id",
+									"comment.id",
+								),
+							"comment.post_id",
+							"topPosts.id",
+						)
+						.orderBy("comment$$content", "desc")
+						.limit(2),
+				(join) => join.onTrue(),
+			)
+			.execute();
+
+		assert.deepStrictEqual(
+			users.map((u) => ({
+				id: u.id,
+				topPosts: u.topPosts.map((p) => ({
+					id: p.id,
+					comment: p.comment?.content,
+					replyIds: p.comment?.replies.map((r) => r.id),
+				})),
+			})),
+			[
+				{
+					id: 5,
+					topPosts: [
+						{ id: 4, comment: "Comment on delta by dave", replyIds: [6] },
+						{ id: 1, comment: "Comment on alpha by dave", replyIds: [] },
+					],
+				},
+				{
+					id: 6,
+					topPosts: [
+						{ id: 6, comment: "Comment on zeta by eve", replyIds: [1, 5] },
+						{ id: 8, comment: "Comment on theta by carol", replyIds: [3] },
+					],
+				},
+			],
+		);
 	});
 });
