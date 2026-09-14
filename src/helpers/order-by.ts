@@ -76,7 +76,6 @@ const TypeRank = {
 	Boolean: 0,
 	Numeric: 1,
 	Date: 2,
-	/** Any `Temporal.*` value. */
 	Temporal: 3,
 	String: 4,
 	/** `Buffer` and `Uint8Array`, which is how drivers return binary columns. */
@@ -134,11 +133,8 @@ function compareLexicographic<T>(
 }
 
 /**
- * Every `Temporal.*` prototype carries its type name as `Symbol.toStringTag`
- * ("Temporal.PlainDate", "Temporal.Instant", ...). Detecting by tag rather
- * than `instanceof` needs no reference to a `Temporal` global, which matters
- * because Temporal is not available on every supported runtime -- and a
- * polyfill's values are recognized the same way.
+ * Every `Temporal.*` prototype carries its type name as `Symbol.toStringTag`.
+ * Detecting by tag needs no `Temporal` global and recognizes polyfills too.
  */
 function temporalTag(value: unknown): string | undefined {
 	const tag = (value as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag];
@@ -146,19 +142,13 @@ function temporalTag(value: unknown): string | undefined {
 }
 
 /**
- * Compares two `Temporal.*` values.
- *
- * Temporal types expose ordering as a *static* `compare` on the constructor,
- * which throws when handed a value of a different Temporal type, so unlike
- * types are ordered by tag instead of reaching it. `Temporal.PlainMonthDay`
- * has no `compare` at all (a month/day pair has no inherent order) and falls
- * back to string forms. `Temporal.Duration` is special-cased; see
- * `durationNanos`.
+ * Temporal types order via a static `compare` that throws across types, so
+ * unlike types are separated by tag first. `PlainMonthDay` has no `compare`
+ * and falls back to string forms.
  */
 function compareTemporal(a: object, b: object): number {
 	const aTag = temporalTag(a)!;
-	// Same constructor means same type; the tag is only read for the
-	// other operand when that cheap check fails.
+	// Same constructor implies same tag.
 	if (a.constructor !== b.constructor) {
 		const bTag = temporalTag(b)!;
 		if (aTag !== bTag) {
@@ -173,16 +163,10 @@ function compareTemporal(a: object, b: object): number {
 }
 
 /**
- * Projects a `Temporal.Duration` onto a nominal length using Postgres's
- * interval convention: a month is 30 days and a year is 12 of those. Calendar
- * units have no exact length, so any total order over them has to pick nominal
- * ones, and this is the one Postgres's own `ORDER BY` on an `interval` column
- * uses.
- *
- * `Temporal.Duration.compare` is deliberately not used: it throws once years,
- * months, or weeks are involved (relating those to days needs a starting
- * point), and a partial order cannot be completed pairwise without becoming
- * intransitive.
+ * Nominal length under Postgres's interval convention (30-day months, 12-month
+ * years), which is how `ORDER BY` an `interval` column sorts.
+ * `Temporal.Duration.compare` throws for calendar units, so it cannot give a
+ * total order.
  */
 function durationNanos(duration: object): number {
 	const d = duration as Record<string, number | undefined>;
@@ -194,10 +178,8 @@ function durationNanos(duration: object): number {
 }
 
 /**
- * Last-resort ordering: compare `String()` forms. Distinct values may share a
- * string form (two plain objects are both "[object Object]"), and those must
- * compare equal -- returning a nonzero constant would do so for both argument
- * orders, breaking antisymmetry.
+ * Last resort: compare `String()` forms. Distinct values sharing a form must
+ * compare equal, or antisymmetry breaks.
  */
 function compareStringForms(a: unknown, b: unknown): number {
 	const aStr = String(a);
@@ -244,11 +226,9 @@ function compareNumbers(a: number | bigint, b: number | bigint): number {
  *   strings lexicographically by code unit, binary data (`Buffer`,
  *   `Uint8Array`) byte-wise, and arrays element-wise -- with a prefix sorting
  *   before the longer value it prefixes, as in SQL.
- * - `Temporal.*` values (detected by their `Symbol.toStringTag`, so no
- *   `Temporal` global is required) sort via their type's static `compare`.
- *   `Temporal.Duration` sorts by nominal length using Postgres's interval
- *   convention (30-day months, 360-day years), matching `ORDER BY` on an
- *   `interval` column. Different Temporal types are separated by type name.
+ * - `Temporal.*` values sort via their type's static `compare`, except
+ *   `Duration`, which sorts by nominal length as a Postgres `interval` does.
+ *   Different Temporal types are separated by type name.
  * - Cross-type comparisons (where SQL would error, but a JS comparator must
  *   still produce a total order) resolve by type rank:
  *   boolean < numeric (number/bigint) < Date < Temporal < string < binary <

@@ -1,13 +1,9 @@
 /**
- * Structural stand-ins for `Temporal.*` values, for testing `sqlCompare`.
- *
- * Temporal is not available on the runtimes this package supports (Node 22
- * ships it only behind `--harmony-temporal`), and `sqlCompare` detects it by
- * shape rather than identity anyway, so a stub that reproduces the shape is
- * the faithful test. Shapes verified against V8's implementation: the tag is
- * a data property on the prototype, ordering is a *static* `compare` on the
- * constructor that throws for a different Temporal type, `PlainMonthDay` has
- * no `compare`, and `valueOf` throws to block `a < b`.
+ * Structural stand-ins for `Temporal.*` values, which Node 22 only ships
+ * behind a flag. `sqlCompare` detects them by shape, so these reproduce the
+ * shape V8 implements: tag as a prototype data property, a static `compare`
+ * that throws across types, no `compare` on `PlainMonthDay`, and a throwing
+ * `valueOf`.
  */
 abstract class TemporalStub {
 	declare readonly [Symbol.toStringTag]: string;
@@ -29,7 +25,7 @@ abstract class TemporalStub {
 	}
 }
 
-/** ISO 8601 strings order chronologically under a plain string compare. */
+/** ISO 8601 strings order chronologically as strings. */
 function compareIso<T extends TemporalStub>(kind: new (value: string) => T) {
 	return (a: T, b: T): number => {
 		if (!(a instanceof kind) || !(b instanceof kind)) {
@@ -39,7 +35,6 @@ function compareIso<T extends TemporalStub>(kind: new (value: string) => T) {
 	};
 }
 
-/** Mirrors the spec: the tag is a non-writable data property on the prototype. */
 function defineTag(kind: abstract new (value: string) => TemporalStub, tag: string): void {
 	Object.defineProperty(kind.prototype, Symbol.toStringTag, { value: tag, configurable: true });
 }
@@ -60,21 +55,13 @@ export class PlainTimeStub extends TemporalStub {
 	}
 }
 
-/**
- * `Temporal.PlainMonthDay` is the one Temporal type with no static `compare`
- * at all -- a month/day pair has no inherent order.
- */
 export class PlainMonthDayStub extends TemporalStub {
 	static {
 		defineTag(this, "Temporal.PlainMonthDay");
 	}
 }
 
-/**
- * `Temporal.Duration.compare` works for durations made of exact time units but
- * throws a RangeError once years, months, or weeks are involved. Fields are
- * exposed like the real thing, which is all `sqlCompare` reads.
- */
+/** `compare` throws once calendar units are involved, as the real one does. */
 export class DurationStub extends TemporalStub {
 	static compare(a: DurationStub, b: DurationStub): number {
 		if (a.value === b.value) {
