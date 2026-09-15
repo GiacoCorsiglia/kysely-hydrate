@@ -335,6 +335,50 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 	return sqlCompare(a, b) * plan.direction;
 }
 
+/** Compares the rows at two indices of the column arrays. */
+type IndexCompare = (x: number, y: number) => number;
+
+/**
+ * A comparator over one extracted column.  Columns holding only strings, or
+ * only non-NaN numbers, get a direct comparison; the same order `sqlCompare`
+ * produces for them, without ranking types on every call.  Everything else
+ * goes through {@link compareColumn}.
+ */
+function columnComparator(column: readonly unknown[], plan: ColumnPlan): IndexCompare {
+	const { direction } = plan;
+
+	let allStrings = true;
+	let allNumbers = true;
+	for (let i = 0; i < column.length && (allStrings || allNumbers); i++) {
+		const value = column[i];
+		const type = typeof value;
+		if (type !== "string") {
+			allStrings = false;
+		}
+		if (type !== "number" || value !== value) {
+			allNumbers = false;
+		}
+	}
+
+	if (allStrings) {
+		const strings = column as readonly string[];
+		return (x, y) => {
+			const a = strings[x]!;
+			const b = strings[y]!;
+			return a < b ? -direction : a > b ? direction : 0;
+		};
+	}
+	if (allNumbers) {
+		const numbers = column as readonly number[];
+		return (x, y) => {
+			const a = numbers[x]!;
+			const b = numbers[y]!;
+			return a < b ? -direction : a > b ? direction : 0;
+		};
+	}
+	return (x, y) => compareColumn(column[x], column[y], plan);
+}
+
 /**
  * Sorts rows by the given orderings into a new array. Keys are extracted once
  * per row rather than on every comparison; for function keys the hydrator
@@ -352,33 +396,56 @@ export function sortBy<T>(
 	const plans = planColumns(orderings);
 	const n = rows.length;
 
-	// One key array per ordering. Plain loops: the hydrator calls this per
-	// parent group of 10-100 rows, where map/Array.from closures measured
-	// ~1.5x the whole sort. Per-row key arrays measured 1.5-2x slower.
-	const columns: unknown[][] = new Array(orderings.length);
+	// One comparator per ordering, over that ordering's extracted keys. Plain
+	// loops: the hydrator calls this per parent group of 10-100 rows, where
+	// map/Array.from closures measured ~1.5x the whole sort. Per-row key arrays
+	// measured 1.5-2x slower.
+	const compares: IndexCompare[] = new Array(orderings.length);
 	for (let c = 0; c < orderings.length; c++) {
 		const key = orderings[c]!.key;
 		const column = new Array<unknown>(n);
 		for (let i = 0; i < n; i++) {
 			column[i] = getValue(rows[i]!, key);
 		}
-		columns[c] = column;
+		compares[c] = columnComparator(column, plans[c]!);
+	}
+
+	let compare: IndexCompare;
+	if (compares.length === 1) {
+		const first = compares[0]!;
+		// Keep equal rows in input order.
+		compare = (x, y) => first(x, y) || x - y;
+	} else {
+		compare = (x, y) => {
+			for (let i = 0; i < compares.length; i++) {
+				const cmp = compares[i]!(x, y);
+				if (cmp !== 0) {
+					return cmp;
+				}
+			}
+			return x - y;
+		};
+	}
+
+	// Rows usually arrive in order already (the SQL ORDER BY matches), and a
+	// stable sort leaves an ordered input unchanged, so check in O(n) before
+	// paying for the sort and the permutation.
+	let ordered = true;
+	for (let i = 1; i < n; i++) {
+		if (compare(i - 1, i) > 0) {
+			ordered = false;
+			break;
+		}
+	}
+	if (ordered) {
+		return rows.slice();
 	}
 
 	const indices = new Array<number>(n);
 	for (let i = 0; i < n; i++) {
 		indices[i] = i;
 	}
-	indices.sort((x, y) => {
-		for (let i = 0; i < columns.length; i++) {
-			const cmp = compareColumn(columns[i]![x], columns[i]![y], plans[i]!);
-			if (cmp !== 0) {
-				return cmp;
-			}
-		}
-		// Keep equal rows in input order.
-		return x - y;
-	});
+	indices.sort(compare);
 
 	const sorted = new Array<T>(n);
 	for (let i = 0; i < n; i++) {
