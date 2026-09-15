@@ -4,7 +4,7 @@ import { test } from "node:test";
 import * as k from "kysely";
 
 import { type SeedDB } from "../__tests__/fixture.ts";
-import { hoistAndPrefixSelections } from "./select-renamer.ts";
+import { aliasQueryNode, hoistAndPrefixSelections } from "./select-renamer.ts";
 
 // These tests only build and inspect query ASTs — they never execute SQL — so
 // use a no-op driver instead of spinning up a real database (which, under
@@ -21,7 +21,7 @@ const db = new k.Kysely<SeedDB>({
 test("hoistAndPrefixSelections: basic subquery with simple selections", () => {
 	const subquery = db.selectFrom("users").select(["id", "username", "email"]);
 
-	const hoisted = hoistAndPrefixSelections("user$$", subquery, "u");
+	const hoisted = hoistAndPrefixSelections("user$$", aliasQueryNode(subquery, "u"));
 
 	assert.strictEqual(hoisted.length, 3);
 	assert.strictEqual(hoisted[0]!.alias, "user$$id");
@@ -44,7 +44,7 @@ test("hoistAndPrefixSelections: basic subquery with simple selections", () => {
 test("hoistAndPrefixSelections: subquery with aliased selections", () => {
 	const subquery = db.selectFrom("users").select(["id", "username as name"]);
 
-	const hoisted = hoistAndPrefixSelections("user$$", subquery, "u");
+	const hoisted = hoistAndPrefixSelections("user$$", aliasQueryNode(subquery, "u"));
 
 	assert.strictEqual(hoisted.length, 2);
 	assert.strictEqual(hoisted[0]!.alias, "user$$id");
@@ -58,7 +58,7 @@ test("hoistAndPrefixSelections: subquery with expression builder", () => {
 		.selectFrom("users")
 		.select((eb) => [eb.ref("id").as("user_id"), eb.ref("username").as("username")]);
 
-	const hoisted = hoistAndPrefixSelections("u$$", subquery, "u");
+	const hoisted = hoistAndPrefixSelections("u$$", aliasQueryNode(subquery, "u"));
 
 	assert.strictEqual(hoisted.length, 2);
 	assert.strictEqual(hoisted[0]!.alias, "u$$user_id");
@@ -70,7 +70,7 @@ test("hoistAndPrefixSelections: subquery with expression builder", () => {
 test("hoistAndPrefixSelections: empty prefix", () => {
 	const subquery = db.selectFrom("users").select(["id", "username"]);
 
-	const hoisted = hoistAndPrefixSelections("", subquery, "u");
+	const hoisted = hoistAndPrefixSelections("", aliasQueryNode(subquery, "u"));
 
 	assert.strictEqual(hoisted.length, 2);
 	assert.strictEqual(hoisted[0]!.alias, "id");
@@ -83,7 +83,7 @@ test("hoistAndPrefixSelections: returns empty array for subquery with no selecti
 	// Create a subquery node with no selections
 	const subquery = db.selectFrom("users");
 
-	const hoisted = hoistAndPrefixSelections("u$$", subquery, "u");
+	const hoisted = hoistAndPrefixSelections("u$$", aliasQueryNode(subquery, "u"));
 
 	assert.strictEqual(hoisted.length, 0);
 });
@@ -98,7 +98,7 @@ test("hoistAndPrefixSelections: subquery with schema-qualified selections", () =
 		// for the test.
 	] as any);
 
-	const hoisted = hoistAndPrefixSelections("user$$", subquery, "u");
+	const hoisted = hoistAndPrefixSelections("user$$", aliasQueryNode(subquery, "u"));
 
 	assert.strictEqual(hoisted.length, 3);
 	assert.strictEqual(hoisted[0]!.alias, "user$$id");
