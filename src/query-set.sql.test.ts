@@ -102,16 +102,10 @@ describe("query-set: sql", () => {
 			) as "user"
 			inner join (
 				select
-					"profile"."id" as "id",
-					"profile"."bio" as "bio",
-					"profile"."user_id" as "user_id"
-				from (
-					select
-						"id",
-						"bio",
-						"user_id"
-					from "profiles"
-				) as "profile"
+					"id",
+					"bio",
+					"user_id"
+				from "profiles"
 			) as "profile" on "profile"."user_id" = "user"."id"
 		`,
 		);
@@ -144,16 +138,10 @@ describe("query-set: sql", () => {
 			-- leftJoinOne should be included because WHERE clauses might reference it
 			left join (
 				select
-					"profile"."id" as "id",
-					"profile"."bio" as "bio",
-					"profile"."user_id" as "user_id"
-				from (
-					select
-						"id",
-						"bio",
-						"user_id"
-					from "profiles"
-				) as "profile"
+					"id",
+					"bio",
+					"user_id"
+				from "profiles"
 			) as "profile" on "profile"."user_id" = "user"."id"
 		`,
 		);
@@ -196,16 +184,10 @@ describe("query-set: sql", () => {
 					-- The key is that the main query doesn't have a direct join causing row explosion
 					inner join (
 						select
-							"posts"."id" as "id",
-							"posts"."title"   as "title",
-							"posts"."user_id" as "user_id"
-						from (
-							select
-								"id",
-								"title",
-								"user_id"
-							from "posts"
-						) as "posts"
+							"id",
+							"title",
+							"user_id"
+						from "posts"
 					) as "posts" on "posts"."user_id" = "user"."id"
 			)
 		`,
@@ -283,19 +265,13 @@ describe("query-set: sql", () => {
 			) as "user"
 			-- innerJoinOne: included as inner join (safe, no row explosion)
 			inner join (
-				select "profile"."id" as "id", "profile"."bio" as "bio", "profile"."user_id" as "user_id"
-				from (
-					select "id", "bio", "user_id"
-					from "profiles"
-				) as "profile"
+				select "id", "bio", "user_id"
+				from "profiles"
 			) as "profile" on "profile"."user_id" = "user"."id"
 			-- leftJoinOne: included as left join (WHERE clauses might reference it)
 			left join (
-				select "setting"."id" as "id", "setting"."user_id" as "user_id"
-				from (
-					select "id", "user_id"
-					from "profiles"
-				) as "setting"
+				select "id", "user_id"
+				from "profiles"
 			) as "setting" on "setting"."user_id" = "user"."id"
 			-- innerJoinMany: converted to WHERE EXISTS (avoids row explosion)
 			where exists (
@@ -303,11 +279,8 @@ describe("query-set: sql", () => {
 				from
 					(SELECT 1) as "__"
 					inner join (
-						select "posts"."id" as "id", "posts"."title" as "title", "posts"."user_id" as "user_id"
-						from (
-							select "id", "title", "user_id"
-							from "posts"
-						) as "posts"
+						select "id", "title", "user_id"
+						from "posts"
 					) as "posts" on "posts"."user_id" = "user"."id"
 			)
 			-- leftJoinMany: omitted entirely (doesn't filter, doesn't affect count)
@@ -356,10 +329,7 @@ describe("query-set: sql", () => {
 						select "id", "title", "user_id" from "posts"
 					) as "posts"
 					inner join (
-						select "comments"."id" as "id", "comments"."content" as "content", "comments"."post_id" as "post_id"
-						from (
-							select "id", "content", "post_id" from "comments"
-						) as "comments"
+						select "id", "content", "post_id" from "comments"
 					) as "comments" on "comments"."post_id" = "posts"."id"
 				) as "posts" on "posts"."user_id" = "user"."id"
 			)
@@ -402,11 +372,7 @@ describe("query-set: sql", () => {
 				where "users"."id" <= ?
 			) as "user"
 			inner join (
-				select
-					"profile"."id" as "id", "profile"."bio" as "bio", "profile"."user_id" as "user_id"
-				from (
-					select "id", "bio", "user_id" from "profiles"
-				) as "profile"
+				select "id", "bio", "user_id" from "profiles"
 			) as "profile" on "profile"."user_id" = "user"."id"
 			order by "user"."id" asc
 			-- With only cardinality-one joins, limit/offset can be applied directly
@@ -452,12 +418,9 @@ describe("query-set: sql", () => {
 					SELECT 1
 				) as "__"
 				inner join (
-					select
-						"posts"."id" as "id", "posts"."title" as "title", "posts"."user_id" as "user_id"
-				from (
-					select
-						"id", "title", "user_id"
-					from "posts") as "posts") as "posts" on "posts"."user_id" = "user"."id"
+					select "id", "title", "user_id"
+					from "posts"
+				) as "posts" on "posts"."user_id" = "user"."id"
 				)
 				order by "user"."id" asc
 				limit ?
@@ -465,12 +428,8 @@ describe("query-set: sql", () => {
 			) as "user"
 			inner join (
 				select
-					"posts"."id" as "id", "posts"."title" as "title", "posts"."user_id" as "user_id"
-				from (
-					select
-						"id", "title", "user_id"
-					from "posts"
-				) as "posts"
+					"id", "title", "user_id"
+				from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
@@ -543,27 +502,16 @@ describe("query-set: sql", () => {
 				) as "user"
 				inner join (
 					select
-						"profile"."id" as "id",
-						"profile"."bio" as "bio",
-						"profile"."user_id" as "user_id"
-					from (
-						select
-							"id",
-							"bio",
-							"user_id"
-						from "profiles"
-					) as "profile"
+						"id",
+						"bio",
+						"user_id"
+					from "profiles"
 				) as "profile" on "profile"."user_id" = "user"."id"
 				left join (
 					select
-						"setting"."id" as "id",
-						"setting"."user_id" as "user_id"
-					from (
-						select
-							"id",
-							"user_id"
-						from "profiles"
-					) as "setting"
+						"id",
+						"user_id"
+					from "profiles"
 				) as "setting" on "setting"."user_id" = "user"."id"
 				where exists (
 					select
@@ -576,16 +524,10 @@ describe("query-set: sql", () => {
 					) as "__"
 					inner join (
 						select
-						"posts"."id" as "id",
-						"posts"."title" as "title",
-						"posts"."user_id" as "user_id"
-						from (
-							select
-								"id",
-								"title",
-								"user_id"
-							from "posts"
-						) as "posts"
+							"id",
+							"title",
+							"user_id"
+						from "posts"
 					) as "posts" on "posts"."user_id" = "user"."id"
 				)
 				order by "user"."id" asc
@@ -593,16 +535,10 @@ describe("query-set: sql", () => {
 			) as "user"
 			inner join (
 				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select
-						"id",
-						"title",
-						"user_id"
-					from "posts"
-				) as "posts"
+					"id",
+					"title",
+					"user_id"
+				from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
@@ -650,15 +586,9 @@ describe("query-set: sql", () => {
 			) as "user"
 			inner join (
 				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select
-						"id",
-						"title",
-						"user_id" from "posts"
-				) as "posts"
+					"id",
+					"title",
+					"user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
@@ -930,12 +860,7 @@ describe("query-set: sql", () => {
 				"user"."username" as "user$$username"
 			from "__base" as "posts"
 			inner join (
-				select
-					"user"."id" as "id",
-					"user"."username" as "username"
-				from (
-					select "id", "username" from "users"
-				) as "user"
+				select "id", "username" from "users"
 			) as "user" on "user"."id" = "posts"."user_id"
 			order by "posts"."id" asc
 		`,
@@ -977,13 +902,7 @@ describe("query-set: sql", () => {
 				"posts"."user_id" as "posts$$user_id"
 			from "__base" as "users"
 			left join (
-				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select "id", "title", "user_id" from "posts"
-				) as "posts"
+				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "users"."id"
 			order by "users"."id" asc
 		`,
@@ -1036,13 +955,7 @@ describe("query-set: sql", () => {
 					select "id", "username" from "users"
 				) as "user"
 				left join (
-					select
-						"profile"."id" as "id",
-						"profile"."bio" as "bio",
-						"profile"."user_id" as "user_id"
-					from (
-						select "id", "bio", "user_id" from "profiles"
-					) as "profile"
+					select "id", "bio", "user_id" from "profiles"
 				) as "profile" on "profile"."user_id" = "user"."id"
 			) as "user" on "user"."id" = "posts"."user_id"
 			order by "posts"."id" asc
@@ -1246,13 +1159,7 @@ describe("query-set: sql", () => {
 				select "id", "username", "email" from "updated"
 			) as "updated"
 			left join (
-				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select "id", "title", "user_id" from "posts"
-				) as "posts"
+				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "updated"."id"
 			order by "updated"."id" asc
 		`,
@@ -1302,13 +1209,7 @@ describe("query-set: sql", () => {
 				select "id", "username", "email" from "updated"
 			) as "user"
 			left join (
-				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select "id", "title", "user_id" from "posts"
-				) as "posts"
+				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
@@ -1376,13 +1277,7 @@ describe("query-set: sql", () => {
 					limit ?
 				) as "updated"
 				left join (
-					select
-						"posts"."id" as "id",
-						"posts"."title" as "title",
-						"posts"."user_id" as "user_id"
-					from (
-						select "id", "title", "user_id" from "posts"
-					) as "posts"
+					select "id", "title", "user_id" from "posts"
 				) as "posts" on "posts"."user_id" = "updated"."id"
 				order by "updated"."id" asc
 			`,
@@ -1458,13 +1353,7 @@ describe("query-set: sql", () => {
 					limit ?
 				) as "newUser"
 				left join (
-					select
-						"posts"."id" as "id",
-						"posts"."title" as "title",
-						"posts"."user_id" as "user_id"
-					from (
-						select "id", "title", "user_id" from "posts"
-					) as "posts"
+					select "id", "title", "user_id" from "posts"
 				) as "posts" on "posts"."user_id" = "newUser"."id"
 				order by "newUser"."id" asc
 			`,
@@ -1579,13 +1468,7 @@ describe("query-set: sql", () => {
 				select "id", "username", "email" from "updated"
 			) as "user"
 			left join (
-				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select "id", "title", "user_id" from "myapp"."posts"
-				) as "posts"
+				select "id", "title", "user_id" from "myapp"."posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."id" asc
 		`,
@@ -1638,26 +1521,14 @@ describe("query-set: sql", () => {
 					select "id", "username" from "users"
 				) as "user"
 				inner join (
-					select
-						"profile"."id" as "id",
-						"profile"."bio" as "bio",
-						"profile"."user_id" as "user_id"
-					from (
-						select "id", "bio", "user_id" from "profiles"
-					) as "profile"
+					select "id", "bio", "user_id" from "profiles"
 				) as "profile" on "profile"."user_id" = "user"."id"
 				order by "profile"."bio" asc, "user"."id" asc
 				limit ?
 				offset ?
 			) as "user"
 			left join (
-				select
-					"posts"."id" as "id",
-					"posts"."title" as "title",
-					"posts"."user_id" as "user_id"
-				from (
-					select "id", "title", "user_id" from "posts"
-				) as "posts"
+				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
 			order by "user"."profile$$bio" asc, "user"."id" asc
 		`,
