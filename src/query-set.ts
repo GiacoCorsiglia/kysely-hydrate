@@ -3027,11 +3027,29 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#toJoinedQuery(false, false);
 	}
 
+	/**
+	 * Queries already built by {@link #toQuery}, indexed by its two flags.  Props and Kysely
+	 * builders are both immutable, so a built query stays valid for the life of the instance.
+	 * Nested query sets are shared by every clone of their parent (say, one `.where()` per
+	 * request), so their subqueries are built once rather than on every parent build.
+	 */
+	readonly #builtQueries: (AnyQueryBuilder | undefined)[] = [];
+
 	// This funny syntax because Node type-stripping doesn't support overloaded private methods?
 	#toQuery<IsNested extends boolean>(
 		isNested: IsNested,
 		isLocalSubquery: boolean,
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
+		const slot = (isNested ? 2 : 0) + (isLocalSubquery ? 1 : 0);
+		let query = this.#builtQueries[slot];
+		if (query === undefined) {
+			query = this.#buildQuery(isNested, isLocalSubquery);
+			this.#builtQueries[slot] = query;
+		}
+		return query as IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder;
+	}
+
+	#buildQuery(isNested: boolean, isLocalSubquery: boolean): AnyQueryBuilder {
 		const { baseQuery, baseAlias, limit, offset, orderBy, orderByKeys, joinCollections } =
 			this.#props;
 
@@ -3057,9 +3075,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				// modifiers are present a write must fall through to the CTE wrapping
 				// below, which applies the modifiers to the outer SELECT instead.
 				if (isSelectQueryBuilder(baseQuery) || !this.#props.frontModifiers.length) {
-					return this.#applyModifiers(baseQuery) as IsNested extends true
-						? AnySelectQueryBuilder
-						: AnyQueryBuilder;
+					return this.#applyModifiers(baseQuery);
 				}
 			}
 
