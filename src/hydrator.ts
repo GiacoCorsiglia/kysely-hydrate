@@ -903,24 +903,16 @@ interface LevelPlan {
 	readonly getValue: ((obj: any, key: any) => unknown) | undefined;
 }
 
-/**
- * Whether this runtime lets us generate code.  Content Security Policies and
- * some edge runtimes (e.g. Cloudflare Workers) forbid it, in which case entity
- * builders fall back to a loop over the fields.
- */
-const canGenerateCode: boolean = (() => {
-	try {
-		return new Function("return true")() === true;
-	} catch {
-		return false;
-	}
-})();
+function setEntityFieldPlain(entity: any, key: string, value: unknown): void {
+	entity[key] = value;
+}
 
 /**
  * Assigns `entity[key] = value`, except for the key `__proto__`, which on a
  * plain object would otherwise invoke the inherited `Object.prototype`
  * setter and replace the entity's prototype instead of becoming an own
- * property.
+ * property.  Only used when a key actually is `__proto__`, keeping the check
+ * out of the common loop.
  */
 function setEntityField(entity: any, key: string, value: unknown): void {
 	if (key === "__proto__") {
@@ -938,52 +930,30 @@ function setEntityField(entity: any, key: string, value: unknown): void {
 /**
  * Builds an {@link EntityBuilder} that copies the given fields, in order.
  *
- * Where possible the builder is generated source: an object literal with the
- * keys spelled out.  V8 then allocates the entity in one step with its final
- * shape and reads each input property through a monomorphic site, where the
- * equivalent loop stores through a megamorphic keyed site and grows the
- * object one transition at a time -- some 8x slower on a three-field entity.
- * Keys are embedded as JSON string literals, so any key is safe to embed.
- * `__proto__` is embedded as a computed key (`["__proto__"]: value`) rather
- * than a literal one, so -- like {@link setEntityField} in the loop below --
- * it becomes an own property instead of replacing the entity's prototype (a
- * literal `__proto__: value` key in an object initializer is special-cased by
- * the grammar to do exactly that).
+ * Fields are resolved to a flat list here, once per row shape, so that the
+ * builder itself is a plain loop over prefixed input keys.  (Generating an
+ * object literal with `new Function` measured ~40% faster on large results,
+ * but not enough to justify code generation in a library.)
  */
 function compileEntityBuilder(
 	autoFields: readonly PlannedAutoField[],
 	fields: readonly PlannedField[],
 ): EntityBuilder {
-	if (canGenerateCode) {
-		const mappers: Array<(value: any) => unknown> = [];
-		const entries: string[] = [];
-		const propertyName = (key: string): string =>
-			key === "__proto__" ? `[${JSON.stringify(key)}]` : JSON.stringify(key);
-		for (const [key, inputKey] of autoFields) {
-			entries.push(`${propertyName(key)}: input[${JSON.stringify(inputKey)}]`);
-		}
-		for (const [key, inputKey, field] of fields) {
-			const value = `input[${JSON.stringify(inputKey)}]`;
-			entries.push(
-				field === true
-					? `${propertyName(key)}: ${value}`
-					: `${propertyName(key)}: mappers[${mappers.push(field) - 1}](${value})`,
-			);
-		}
-		const source = `return function buildEntity(input) { return { ${entries.join(", ")} }; };`;
-		return new Function("mappers", source)(mappers) as EntityBuilder;
-	}
+	const set =
+		autoFields.some(([key]) => key === "__proto__") || fields.some(([key]) => key === "__proto__")
+			? setEntityField
+			: setEntityFieldPlain;
 
 	return (input) => {
 		const entity: any = {};
 		for (let i = 0; i < autoFields.length; i++) {
 			const [key, inputKey] = autoFields[i]!;
-			setEntityField(entity, key, input[inputKey]);
+			set(entity, key, input[inputKey]);
 		}
 		for (let i = 0; i < fields.length; i++) {
 			const [key, inputKey, field] = fields[i]!;
 			const value = input[inputKey];
-			setEntityField(entity, key, field === true ? value : field(value));
+			set(entity, key, field === true ? value : field(value));
 		}
 		return entity;
 	};
