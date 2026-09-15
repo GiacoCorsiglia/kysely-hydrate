@@ -802,10 +802,25 @@ interface HydrationContext {
 	readonly attachedDataMap: Map<string, KeyedGroups<any>>;
 
 	/**
-	 * Cache for auto-include fields keyed by prefix.
+	 * The shape of the input rows -- their keys, and the keys JSON-encoded as
+	 * a cache signature -- read from the first row seen, since every level of
+	 * hydration sees the same rows.  Only needed when auto-including fields,
+	 * and unset until then.
 	 */
-	readonly autoFieldsCache: Map<string, readonly PlannedAutoField[]>;
+	rowShape: RowShape | undefined;
 }
+
+interface RowShape {
+	readonly keys: readonly string[];
+	readonly signature: string;
+}
+
+/**
+ * Copies a row's fields at one level into a fresh entity: the auto-included
+ * fields, then the explicit ones.  Everything else (extras, collections, map
+ * functions) is added to the entity afterward.
+ */
+type EntityBuilder = (input: any) => any;
 
 /**
  * A field to copy from the input: the output key, the (prefixed) input key,
@@ -850,12 +865,26 @@ interface PlannedAttachedCollection {
  */
 interface LevelPlan {
 	readonly prefix: string;
-	/** The hydrator this plan was built from; only its `#props` are needed, by `#getAutoFields`. */
+	/** The hydrator this plan was built from, for `#builderFor`. */
 	readonly hydrator: HydratorImpl;
 	/** The prefixed parts of `keyBy`. */
 	readonly keyParts: readonly string[];
 	/** Explicit fields, omitted ones already dropped. */
 	readonly fields: readonly PlannedField[];
+	/**
+	 * Entity builders by the shape of the rows they were built from (the
+	 * JSON-encoded key list of a row), so that a builder is compiled once per
+	 * distinct row shape rather than once per hydration, and a warm hydration
+	 * never rescans a row's keys.  Lives for as long as the plan (i.e. the
+	 * hydrator) does, on the assumption that a given hydrator sees only a
+	 * handful of distinct row shapes across its lifetime -- typically one.
+	 */
+	readonly builders: Map<string, EntityBuilder>;
+	/**
+	 * The builder when fields are not auto-included, which then depends on
+	 * nothing but the plan.  Compiled on first use.
+	 */
+	staticBuilder: EntityBuilder | undefined;
 	readonly extras: readonly (readonly [key: string, extra: (input: any) => unknown])[] | undefined;
 	readonly extenders: ExtendersArray | undefined;
 	readonly collections: readonly PlannedCollection[] | undefined;
@@ -873,6 +902,65 @@ interface LevelPlan {
 	 */
 	readonly getValue: ((obj: any, key: any) => unknown) | undefined;
 }
+
+function setEntityFieldPlain(entity: any, key: string, value: unknown): void {
+	entity[key] = value;
+}
+
+/**
+ * Assigns `entity[key] = value`, except for the key `__proto__`, which on a
+ * plain object would otherwise invoke the inherited `Object.prototype`
+ * setter and replace the entity's prototype instead of becoming an own
+ * property.  Only used when a key actually is `__proto__`, keeping the check
+ * out of the common loop.
+ */
+function setEntityField(entity: any, key: string, value: unknown): void {
+	if (key === "__proto__") {
+		Object.defineProperty(entity, key, {
+			value,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+	} else {
+		entity[key] = value;
+	}
+}
+
+/**
+ * Builds an {@link EntityBuilder} that copies the given fields, in order.
+ *
+ * Fields are resolved to a flat list here, once per row shape, so that the
+ * builder itself is a plain loop over prefixed input keys.  (Generating an
+ * object literal with `new Function` measured ~40% faster on large results,
+ * but not enough to justify code generation in a library.)
+ */
+function compileEntityBuilder(
+	autoFields: readonly PlannedAutoField[],
+	fields: readonly PlannedField[],
+): EntityBuilder {
+	const set =
+		autoFields.some(([key]) => key === "__proto__") || fields.some(([key]) => key === "__proto__")
+			? setEntityField
+			: setEntityFieldPlain;
+
+	return (input) => {
+		const entity: any = {};
+		for (let i = 0; i < autoFields.length; i++) {
+			const [key, inputKey] = autoFields[i]!;
+			set(entity, key, input[inputKey]);
+		}
+		for (let i = 0; i < fields.length; i++) {
+			const [key, inputKey, field] = fields[i]!;
+			const value = input[inputKey];
+			set(entity, key, field === true ? value : field(value));
+		}
+		return entity;
+	};
+}
+
+/** The shape of a row with no keys (or of a non-object input). */
+const EMPTY_ROW_SHAPE: RowShape = { keys: [], signature: "[]" };
 
 /**
  * The parts of `keyBy`, each prefixed.
@@ -1192,6 +1280,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			hydrator: this,
 			keyParts: prefixKeyParts(prefix, keyBy),
 			fields: plannedFields,
+			builders: new Map(),
+			staticBuilder: undefined,
 			extras: extras && extras.size > 0 ? [...extras] : undefined,
 			extenders: extenders && extenders.length > 0 ? extenders : undefined,
 			collections: plannedCollections.length > 0 ? plannedCollections : undefined,
@@ -1281,30 +1371,50 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	}
 
 	/**
-	 * Gets all the fields belonging to the current prefix level; not to the
-	 * parent, and not to any nested collection.  Does this once per hydration
-	 * (assumes all inputs have the same keys).
+	 * The entity builder for this level, covering the auto-included fields (when
+	 * enabled) and the explicit ones.  Auto-included fields are the input's keys
+	 * at this prefix that belong neither to a nested collection nor to an
+	 * explicit field or extra.  They are read from the first row seen
+	 * (assuming all inputs have the same keys), once per hydration, and the
+	 * builder for a given row shape is compiled once per hydrator.
 	 */
-	static #getAutoFields(
-		ctx: HydrationContext,
-		plan: LevelPlan,
-		input: unknown,
-	): readonly PlannedAutoField[] {
-		const { prefix } = plan;
-
-		// Have we done this already?
-		const cached = ctx.autoFieldsCache.get(prefix);
-		if (cached) {
-			return cached;
+	static #builderFor(ctx: HydrationContext, plan: LevelPlan, input: unknown): EntityBuilder {
+		if (!ctx.autoIncludeFields) {
+			return (plan.staticBuilder ??= compileEntityBuilder([], plan.fields));
 		}
 
-		// If we get a null for some bizarre reason, I guess we should try again
-		// on the next row.
-		if (typeof input !== "object" || input === null) {
-			return [];
+		let shape = ctx.rowShape;
+		if (shape === undefined) {
+			// If we get a null for some bizarre reason, I guess we should try again
+			// on the next row.
+			if (typeof input !== "object" || input === null) {
+				return plan.hydrator.#builderForShape(plan, EMPTY_ROW_SHAPE);
+			}
+			const keys = Object.keys(input);
+			shape = ctx.rowShape = { keys, signature: JSON.stringify(keys) };
 		}
 
-		const { fields, extras, collections } = plan.hydrator.#props;
+		return plan.hydrator.#builderForShape(plan, shape);
+	}
+
+	/**
+	 * The builder for rows of this shape, compiled on the shape's first sighting.
+	 */
+	#builderForShape(plan: LevelPlan, shape: RowShape): EntityBuilder {
+		let builder = plan.builders.get(shape.signature);
+		if (builder === undefined) {
+			builder = compileEntityBuilder(this.#autoFields(plan.prefix, shape.keys), plan.fields);
+			plan.builders.set(shape.signature, builder);
+		}
+		return builder;
+	}
+
+	/**
+	 * The fields to auto-include, from a row's keys: those at this prefix that
+	 * belong neither to a nested collection nor to an explicit field or extra.
+	 */
+	#autoFields(prefix: string, inputKeys: readonly string[]): PlannedAutoField[] {
+		const { fields, extras, collections } = this.#props;
 
 		// Get the nested collection prefixes
 		const nestedPrefixes: string[] = [];
@@ -1315,7 +1425,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		const autoFields: PlannedAutoField[] = [];
-		for (const inputKey of Object.keys(input)) {
+		for (const inputKey of inputKeys) {
 			// Exclude if its from a parent (not this prefix).
 			if (!hasPrefix(prefix, inputKey)) {
 				continue;
@@ -1335,9 +1445,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// The output gets the unprefixed key; the input is read by the full key.
 			autoFields.push([unprefixedKey, inputKey]);
 		}
-
-		// Cache and return the auto-include fields
-		ctx.autoFieldsCache.set(prefix, autoFields);
 		return autoFields;
 	}
 
@@ -1351,25 +1458,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// Null means the group consists of just `input`; the array is only
 		// materialized when nested collections actually need it.
 		inputRows: unknown[] | null,
+		// Resolved by the caller (see #builderFor), once per batch of entities.
+		builder: EntityBuilder,
 	): unknown {
-		const { prefix, fields, extras, extenders, collections, attachedCollections, mapFns } = plan;
+		const { prefix, extras, extenders, collections, attachedCollections, mapFns } = plan;
 
-		const entity: any = {};
-
-		// Auto-include all fields at this prefix level when enabled
-		if (ctx.autoIncludeFields) {
-			const autoFields = HydratorImpl.#getAutoFields(ctx, plan, input);
-			for (let i = 0; i < autoFields.length; i++) {
-				const [key, inputKey] = autoFields[i]!;
-				entity[key] = input[inputKey];
-			}
-		}
-
-		for (let i = 0; i < fields.length; i++) {
-			const [key, inputKey, field] = fields[i]!;
-			const value = input[inputKey];
-			entity[key] = field === true ? value : field(value);
-		}
+		// Copy the auto-included (when enabled) and explicit fields.
+		const entity: any = builder(input);
 
 		if (extras || extenders) {
 			const accessor = createdPrefixedAccessor(prefix, input as object);
@@ -1447,14 +1542,27 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// products inherited from an ancestor's sibling many-collections).
 		// groupByKey also skips rows with null keys (non-existent entities).
 		const groups = groupByKey(sortedInputs, keyParts).values();
+		if (groups.length === 0) {
+			return result;
+		}
+
+		// Resolve the builder once per batch, from the first row (whose keys are
+		// assumed representative of every row at this prefix).
+		const first = groups[0]!;
+		const builder = HydratorImpl.#builderFor(
+			ctx,
+			plan,
+			first instanceof RowGroup ? first.rows[0] : first,
+		);
+
 		for (let i = 0; i < groups.length; i++) {
 			const group = groups[i]!;
 			// We assume the first row is representative of the group, at least for
 			// the top-level entity (not nested collections).
 			const entity =
 				group instanceof RowGroup
-					? HydratorImpl.#hydrateOne(ctx, plan, group.rows[0]!, group.rows)
-					: HydratorImpl.#hydrateOne(ctx, plan, group, null);
+					? HydratorImpl.#hydrateOne(ctx, plan, group.rows[0]!, group.rows, builder)
+					: HydratorImpl.#hydrateOne(ctx, plan, group, null, builder);
 			result.push(entity);
 		}
 
@@ -1494,7 +1602,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			autoIncludeFields: opts[EnableAutoInclusion] ?? false,
 			sortMode: opts.sort ?? "all",
 			attachedDataMap: new Map(),
-			autoFieldsCache: new Map(),
+			rowShape: undefined,
 		};
 
 		// Most of the work below runs synchronously; catch synchronous errors and
@@ -1516,7 +1624,13 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					return HydratorImpl.#hydrateMany(ctx, plan, inputs);
 				}
 
-				return HydratorImpl.#hydrateOne(ctx, plan, input, null);
+				return HydratorImpl.#hydrateOne(
+					ctx,
+					plan,
+					input,
+					null,
+					HydratorImpl.#builderFor(ctx, plan, input),
+				);
 			};
 
 			// Fetch all attach collections upfront (this is the only async operation).
