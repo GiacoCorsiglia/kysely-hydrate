@@ -3,16 +3,15 @@
  * building and compiling queries, and running one end to end against SQLite.
  *
  *   npm run bench                 # print a report
- *   npm run bench -- --filter X   # only benchmarks whose name matches /X/
+ *   npm run bench -- --filter X   # only benchmarks matching the regex /X/
  *   npm run bench:save            # record benchmarks/baseline.json
  *   npm run bench:compare         # diff this run against that baseline
  *
  * Read the numbers as relative comparisons.  The `summary()` groupings below
  * compare benchmarks against each other within a single process, which is the
  * trustworthy comparison: every variant sees the same heap, the same JIT state
- * and the same machine.  Across runs, wall-clock timings on shared hardware
- * drift by more than 10% on their own; `--compare` accounts for that with a wide
- * threshold, and allocation per iteration is the steadier signal.
+ * and the same machine.  Across runs both time and allocation drift by about
+ * 17% on shared hardware, so `--compare` only flags a change beyond that.
  *
  * Run under `--expose-gc` (the npm scripts do) so mitata can collect between
  * samples and report heap usage.  Hydration is object-graph construction, so how
@@ -23,9 +22,10 @@ import assert from "node:assert/strict";
 import { bench, do_not_optimize, run, summary } from "mitata";
 
 import { type HydrateOptions } from "../src/hydrator.ts";
-import { compareBaseline, saveBaseline } from "./baseline.ts";
+import { compareBaseline, readBaseline, saveBaseline } from "./baseline.ts";
 import {
 	autoIncluded,
+	buildUsersWithPosts,
 	distinctRows10k,
 	flat,
 	type FlatRow,
@@ -50,20 +50,41 @@ import {
 // Arguments.
 ////////////////////////////////////////////////////////////
 
+/** Reads `--flag value` or `--flag=value`, and rejects anything ambiguous. */
 function flagValue(flag: string): string | undefined {
-	const index = process.argv.indexOf(flag);
-	if (index === -1) return undefined;
+	const args = process.argv.slice(2);
+	const matches = args.filter((a) => a === flag || a.startsWith(`${flag}=`));
 
-	const value = process.argv[index + 1];
-	if (value === undefined || value.startsWith("--")) {
-		throw new Error(`${flag} requires a value`);
+	if (matches.length === 0) return undefined;
+	if (matches.length > 1) throw new Error(`${flag} was given more than once`);
+
+	const [match] = matches;
+	if (match!.startsWith(`${flag}=`)) {
+		const value = match!.slice(flag.length + 1);
+		if (value === "") throw new Error(`${flag} requires a value`);
+		return value;
 	}
+
+	// A separate value may legitimately start with "-" (a regex like "-foo"), so
+	// only a second flag is rejected.
+	const value = args[args.indexOf(match!) + 1];
+	if (value === undefined || value.startsWith("--")) throw new Error(`${flag} requires a value`);
 	return value;
 }
 
 const savePath = flagValue("--save");
 const comparePath = flagValue("--compare");
 const filter = flagValue("--filter");
+
+if (savePath !== undefined && filter !== undefined) {
+	// A filtered save would drop every unmatched benchmark from the baseline, and
+	// nothing would later report them as missing.
+	throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
+}
+
+// Read the baseline up front so a bad path fails now rather than after several
+// minutes of benchmarking.
+const baseline = comparePath === undefined ? undefined : readBaseline(comparePath);
 
 ////////////////////////////////////////////////////////////
 // Correctness.
@@ -162,34 +183,54 @@ function benchSync(name: string, fn: () => unknown) {
 }
 
 ////////////////////////////////////////////////////////////
-// Hydration: 10,000 rows into 500 entities.
+// Hydration: 10,000 rows into 500 entities, feature by feature.
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchAsync("nested 10k rows", () => nested.hydrate(rows10k, querySetOptions)).baseline(true);
-	benchAsync("nested 10k rows + extras", () => nestedWithExtras.hydrate(rows10k, querySetOptions));
-	benchAsync("nested 10k rows + orderByKeys", () => nestedKeyed.hydrate(rows10k, querySetOptions));
+	benchAsync("10k rows -> 500 entities", () => nested.hydrate(rows10k, querySetOptions)).baseline(
+		true,
+	);
+	benchAsync("10k rows -> 500 entities, extras", () =>
+		nestedWithExtras.hydrate(rows10k, querySetOptions),
+	);
+	benchAsync("10k rows -> 500 entities, orderByKeys", () =>
+		nestedKeyed.hydrate(rows10k, querySetOptions),
+	);
+	// Attach fetching is the library's only async phase.  The fetch functions
+	// return a pre-built array, so this measures grouping the fetched rows by
+	// match key and stitching them onto 500 parents, not I/O.  `withAttaches500`
+	// orders by keys, so the row above is its like-for-like partner.
+	benchAsync("10k rows -> 500 entities, 2 attaches", () =>
+		withAttaches500.hydrate(rows10k, querySetOptions),
+	);
 });
 
 ////////////////////////////////////////////////////////////
 // Hydration: what sorting costs.
 //
 // All three use the same hydrator, which orders by a string at every level, so
-// the sort mode is the only variable.
+// the sort mode is the only variable.  The options are hoisted because building
+// them inside the measured call would time an object literal too.
 ////////////////////////////////////////////////////////////
 
+const sortNone = withSort("none");
+const sortNested = withSort("nested");
+const sortAll = withSort("all");
+
 summary(() => {
-	benchAsync("sorted 10k rows, sort:none", () =>
-		nestedSorted.hydrate(rows10k, withSort("none")),
-	).baseline(true);
-	benchAsync("sorted 10k rows, sort:nested", () =>
-		nestedSorted.hydrate(rows10k, withSort("nested")),
+	benchAsync("sorted 10k rows, sort:none", () => nestedSorted.hydrate(rows10k, sortNone)).baseline(
+		true,
 	);
-	benchAsync("sorted 10k rows, sort:all", () => nestedSorted.hydrate(rows10k, withSort("all")));
+	benchAsync("sorted 10k rows, sort:nested", () => nestedSorted.hydrate(rows10k, sortNested));
+	benchAsync("sorted 10k rows, sort:all", () => nestedSorted.hydrate(rows10k, sortAll));
 });
 
 ////////////////////////////////////////////////////////////
-// Hydration: grouping cost, with and without duplicate rows.
+// Hydration: per-entity cost against per-row cost.
+//
+// Both hydrate 10,000 rows, but one produces 10,000 entities and the other 500,
+// so the gap is per-entity overhead and the allocation that comes with it, not
+// grouping alone.
 ////////////////////////////////////////////////////////////
 
 summary(() => {
@@ -201,6 +242,9 @@ summary(() => {
 
 ////////////////////////////////////////////////////////////
 // Hydration: small results, where fixed per-call costs dominate.
+//
+// Every entry but the first uses one hydrator, so the series is a scaling curve
+// rather than a comparison of different configurations.
 ////////////////////////////////////////////////////////////
 
 summary(() => {
@@ -208,33 +252,11 @@ summary(() => {
 		flat.hydrate(rows1[0]!, querySetOptions),
 	).baseline(true);
 	benchAsync("20 rows -> 1 entity", () => nestedKeyed.hydrate(rows1, querySetOptions));
-	benchAsync("200 rows -> 10 entities", () => nestedKeyed.hydrate(rows10, querySetOptions));
-	benchAsync("1k rows -> 50 entities", () => nested.hydrate(rows1k, querySetOptions));
-});
-
-////////////////////////////////////////////////////////////
-// Hydration: attached collections.
-//
-// Attach fetching is the library's only async phase; these measure grouping the
-// fetched rows by match key and stitching them onto parents, not I/O.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchAsync("20 rows -> 1 entity, no attaches", () =>
-		nestedKeyed.hydrate(rows1, querySetOptions),
-	).baseline(true);
 	benchAsync("20 rows -> 1 entity, 2 attaches", () =>
 		withAttaches1.hydrate(rows1, querySetOptions),
 	);
-});
-
-summary(() => {
-	benchAsync("10k rows -> 500 entities, no attaches", () =>
-		nestedKeyed.hydrate(rows10k, querySetOptions),
-	).baseline(true);
-	benchAsync("10k rows -> 500 entities, 2 attaches", () =>
-		withAttaches500.hydrate(rows10k, querySetOptions),
-	);
+	benchAsync("200 rows -> 10 entities", () => nestedKeyed.hydrate(rows10, querySetOptions));
+	benchAsync("1k rows -> 50 entities", () => nestedKeyed.hydrate(rows1k, querySetOptions));
 });
 
 ////////////////////////////////////////////////////////////
@@ -242,9 +264,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchSync("querySet toQuery()", () => usersWithPosts.toQuery()).baseline(true);
-	benchSync("querySet compile()", () => usersWithPosts.compile());
-	benchSync("querySet toCountQuery().compile()", () => usersWithPosts.toCountQuery().compile());
+	benchSync("querySet build", buildUsersWithPosts).baseline(true);
+	benchSync("querySet toQuery", () => usersWithPosts.toQuery());
+	benchSync("querySet compile", () => usersWithPosts.compile());
+	benchSync("querySet toCountQuery then compile", () => usersWithPosts.toCountQuery().compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -264,13 +287,18 @@ summary(() => {
 // Run.
 ////////////////////////////////////////////////////////////
 
-const trials = await run(filter === undefined ? {} : { filter: new RegExp(filter) });
+// `throw: true` makes mitata propagate a failing benchmark instead of recording
+// the error on the run and carrying on, which would drop it from the report.
+const trials = await run({
+	throw: true,
+	...(filter !== undefined && { filter: new RegExp(filter) }),
+});
 
 if (savePath !== undefined) saveBaseline(savePath, trials);
 
 if (
-	comparePath !== undefined &&
-	!compareBaseline(comparePath, trials, { reportMissing: filter === undefined })
+	baseline !== undefined &&
+	!compareBaseline(baseline, trials, { reportMissing: filter === undefined })
 ) {
 	process.exitCode = 1;
 }

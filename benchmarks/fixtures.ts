@@ -83,11 +83,36 @@ export interface FlatRow {
 	posts$$comments$$post_id: number | null;
 }
 
+/** Builds `[1, 2, ... n]` worth of `T`, since every fixture here is 1-based. */
+function times<T>(n: number, build: (i: number) => T): T[] {
+	return Array.from({ length: n }, (_, i) => build(i + 1));
+}
+
+/**
+ * The user columns, shared by both row builders so a change to `FlatRow` can't
+ * leave them describing different users.
+ */
+const userColumns = (u: number) => ({
+	id: u,
+	username: `user${u}`,
+	email: `user${u}@example.com`,
+});
+
+/** The join columns as a left join leaves them when nothing matched. */
+const noJoinColumns = {
+	posts$$id: null,
+	posts$$title: null,
+	posts$$user_id: null,
+	posts$$comments$$id: null,
+	posts$$comments$$content: null,
+	posts$$comments$$post_id: null,
+} as const satisfies Omit<FlatRow, "id" | "username" | "email">;
+
 /**
  * Builds `users * postsPerUser * commentsPerPost` rows: the cartesian product a
  * two-level join returns.
  */
-export function makeRows(users: number, postsPerUser: number, commentsPerPost: number): FlatRow[] {
+function makeRows(users: number, postsPerUser: number, commentsPerPost: number): FlatRow[] {
 	const rows: FlatRow[] = [];
 	let postId = 1;
 	let commentId = 1;
@@ -95,9 +120,7 @@ export function makeRows(users: number, postsPerUser: number, commentsPerPost: n
 		for (let p = 0; p < postsPerUser; p++, postId++) {
 			for (let c = 0; c < commentsPerPost; c++, commentId++) {
 				rows.push({
-					id: u,
-					username: `user${u}`,
-					email: `user${u}@example.com`,
+					...userColumns(u),
 					posts$$id: postId,
 					posts$$title: `Post ${postId}`,
 					posts$$user_id: u,
@@ -117,22 +140,8 @@ export function makeRows(users: number, postsPerUser: number, commentsPerPost: n
  * makes this the complement to {@link makeRows}, where 20 rows collapse into one
  * entity.
  */
-export function makeDistinctRows(count: number): FlatRow[] {
-	const rows: FlatRow[] = [];
-	for (let u = 1; u <= count; u++) {
-		rows.push({
-			id: u,
-			username: `user${u}`,
-			email: `user${u}@example.com`,
-			posts$$id: null,
-			posts$$title: null,
-			posts$$user_id: null,
-			posts$$comments$$id: null,
-			posts$$comments$$content: null,
-			posts$$comments$$post_id: null,
-		});
-	}
-	return rows;
+function makeDistinctRows(count: number): FlatRow[] {
+	return times(count, (u) => ({ ...userColumns(u), ...noJoinColumns }));
 }
 
 export const rows1 = makeRows(1, 5, 4); // 20 rows -> 1 entity
@@ -193,22 +202,16 @@ interface AttachedProfile {
 }
 
 function makeAttachedPosts(users: number, perUser: number): AttachedPost[] {
-	const posts: AttachedPost[] = [];
-	let id = 1;
-	for (let u = 1; u <= users; u++) {
-		for (let p = 0; p < perUser; p++, id++) {
-			posts.push({ id, user_id: u, title: `Attached post ${id}` });
-		}
-	}
-	return posts;
+	return times(users, (u) =>
+		times(perUser, (p) => {
+			const id = (u - 1) * perUser + p;
+			return { id, user_id: u, title: `Attached post ${id}` };
+		}),
+	).flat();
 }
 
 function makeAttachedProfiles(users: number): AttachedProfile[] {
-	const profiles: AttachedProfile[] = [];
-	for (let u = 1; u <= users; u++) {
-		profiles.push({ id: u, user_id: u, bio: `Bio ${u}` });
-	}
-	return profiles;
+	return times(users, (u) => ({ id: u, user_id: u, bio: `Bio ${u}` }));
 }
 
 const attachedPosts1 = makeAttachedPosts(1, 5);
@@ -249,29 +252,32 @@ function seedSqlite(): SQLite.Database {
 		CREATE TABLE comments (id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL, user_id INTEGER NOT NULL, content TEXT NOT NULL);
 	`);
 
-	const insUser = sqlite.prepare("INSERT INTO users VALUES (?, ?, ?)");
-	const insPost = sqlite.prepare("INSERT INTO posts VALUES (?, ?, ?, ?)");
-	const insComment = sqlite.prepare("INSERT INTO comments VALUES (?, ?, ?, ?)");
-	let postId = 1;
-	let commentId = 1;
+	const insUser = sqlite.prepare("INSERT OR IGNORE INTO users VALUES (?, ?, ?)");
+	const insPost = sqlite.prepare("INSERT OR IGNORE INTO posts VALUES (?, ?, ?, ?)");
+	const insComment = sqlite.prepare("INSERT OR IGNORE INTO comments VALUES (?, ?, ?, ?)");
+
+	// Seeded from `rows10k` itself rather than by replaying its loop, so the join
+	// returns exactly those 10,000 rows by construction.  Re-deriving the values
+	// here would let the two drift apart silently, and the end-to-end benchmarks
+	// would stop describing the same work as the in-memory ones.  The rows repeat
+	// each ancestor once per leaf, hence OR IGNORE.
 	sqlite.transaction(() => {
-		// Matches makeRows(500, 5, 4), so the join returns the same 10,000 rows as
-		// `rows10k`.
-		for (let u = 1; u <= 500; u++) {
-			insUser.run(u, `user${u}`, `user${u}@example.com`);
-			for (let p = 0; p < 5; p++, postId++) {
-				insPost.run(postId, u, `Post ${postId}`, "content");
-				for (let c = 0; c < 4; c++, commentId++) {
-					insComment.run(commentId, postId, u, `Comment ${commentId}`);
-				}
-			}
+		for (const row of rows10k) {
+			insUser.run(row.id, row.username, row.email);
+			insPost.run(row.posts$$id, row.posts$$user_id, row.posts$$title, "content");
+			insComment.run(
+				row.posts$$comments$$id,
+				row.posts$$comments$$post_id,
+				row.id,
+				row.posts$$comments$$content,
+			);
 		}
 	})();
 
 	return sqlite;
 }
 
-export const sqlite = seedSqlite();
+const sqlite = seedSqlite();
 
 export const db = new k.Kysely<DB>({ dialect: new k.SqliteDialect({ database: sqlite }) });
 

@@ -5,20 +5,26 @@
  * `summary()` prints), but has no built-in notion of comparing one run against
  * an earlier one.  This adds it, over the stats mitata already returns.
  *
- * Two caveats worth reading before trusting a diff.
+ * Both signals are noisy enough to need a threshold.  Measured over three
+ * consecutive runs of unchanged code on one machine, wall-clock medians drifted
+ * by up to 17% and allocation per iteration by up to 16%, so
+ * {@link noiseThreshold} treats anything smaller as the machine rather than the
+ * code.  Only a diff taken on quiet, dedicated hardware should be read finer
+ * than that.
  *
- * Wall-clock timings drift by well over 10% between runs on shared hardware,
- * purely from the machine.  Time deltas below {@link timeThreshold} are
- * therefore reported as noise rather than as changes, and only a diff taken on
- * quiet, dedicated hardware should be read more finely than that.
+ * Allocation is compared as mitata's mean, which measurement says is the right
+ * statistic and the only robust one available.  Two things that look like better
+ * ideas are not: the within-run spread (`heapMax / heapMin`) is no guide to
+ * quality, since benchmarks with a 20,000x internal spread still reproduce their
+ * mean to within 1% across runs; and `heapMin` is dramatically less stable than
+ * the mean, drifting up to 566x across runs where the mean drifts 1.19x.
  *
- * Allocation per iteration is the steadier signal, but only for benchmarks that
- * allocate enough to measure.  mitata samples heap usage around each iteration
- * and discards samples whose delta is negative (a collection landed inside the
- * sample), so for a benchmark allocating a few hundred bytes the surviving mean
- * is dominated by probe granularity: the same unchanged benchmark has been seen
- * to report 744 b on one run and 17 kb on the next.  {@link comparableHeap}
- * rejects those measurements instead of reporting a 2000% regression.
+ * The mean does have one failure mode, which {@link heapFloor} handles.  A
+ * benchmark that allocates very little occasionally reports roughly 20 kb more
+ * than it should, when a collection lands inside a sample window and survives
+ * into the mean.  For a benchmark allocating megabytes that contamination is
+ * lost in the noise; for one allocating a few hundred bytes it is a 2000%
+ * "regression".
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -31,9 +37,6 @@ export interface BaselineEntry {
 	min: number;
 	max: number;
 	heap?: number;
-	/** Recorded so {@link comparableHeap} can judge whether `heap` is trustworthy. */
-	heapMin?: number;
-	heapMax?: number;
 	gc?: number;
 }
 
@@ -51,6 +54,7 @@ interface Trials {
 	benchmarks: readonly {
 		alias: string;
 		runs: readonly {
+			error?: unknown;
 			stats?:
 				| {
 						avg: number;
@@ -59,7 +63,7 @@ interface Trials {
 						p99: number;
 						min: number;
 						max: number;
-						heap?: { avg: number; min: number; max: number } | undefined;
+						heap?: { avg: number } | undefined;
 						gc?: { avg: number } | undefined;
 				  }
 				| undefined;
@@ -67,32 +71,33 @@ interface Trials {
 	}[];
 }
 
-/** Relative change below which a time delta is treated as machine noise. */
-export const timeThreshold = 0.2;
-
-/** Relative change below which an allocation delta is treated as noise. */
-export const heapThreshold = 0.1;
-
-/** Allocation per iteration below which the heap probe can't resolve a change. */
-const heapFloor = 1024 ** 2;
-
-/** Spread above which a heap measurement is too unsteady to diff. */
-const heapSpread = 4;
+/**
+ * Relative change below which a delta is treated as machine noise rather than a
+ * change in the code.  Applied to both time and allocation; see the note above.
+ */
+export const noiseThreshold = 0.2;
 
 /**
- * Whether a heap measurement is solid enough to compare: it has to be well clear
- * of the probe's resolution, and its samples have to agree with each other.  A
- * benchmark whose heap ranges from 412 kb to 15.80 mb has told us nothing about
- * its typical allocation, so diffing its mean would manufacture regressions.
+ * Allocation per iteration below which a heap measurement isn't compared; see
+ * the note above.  Set well clear of the ~20 kb contamination quantum, which
+ * keeps the heap signal for every benchmark where it survived repeated runs and
+ * drops it only for the handful too small to measure this way.
  */
-function comparableHeap(
-	entry: BaselineEntry | undefined,
-): entry is BaselineEntry & { heap: number } {
-	if (entry?.heap === undefined) return false;
-	if (entry.heap < heapFloor) return false;
-	if (entry.heapMin === undefined || entry.heapMax === undefined) return false;
-	if (entry.heapMin <= 0) return false;
-	return entry.heapMax / entry.heapMin <= heapSpread;
+const heapFloor = 64 * 1024;
+
+/** Whether a heap measurement is large enough to diff meaningfully. */
+function comparableHeap(heap: number | undefined): heap is number {
+	return heap !== undefined && heap >= heapFloor;
+}
+
+/**
+ * Benchmarks that failed rather than producing stats.  mitata records the error
+ * on the run instead of throwing, so without this a benchmark that starts
+ * throwing would quietly vanish from the baseline and from every later
+ * comparison.
+ */
+function failedBenchmarks(trials: Trials): string[] {
+	return trials.benchmarks.filter((t) => !t.runs[0]?.stats).map((t) => t.alias);
 }
 
 function toBaseline(trials: Trials): Baseline {
@@ -100,8 +105,7 @@ function toBaseline(trials: Trials): Baseline {
 
 	for (const trial of trials.benchmarks) {
 		// Static benchmarks produce exactly one run; parameterized ones would
-		// produce several, which this format doesn't distinguish, so take the
-		// first.  Runs that threw have no stats to record.
+		// produce several, which this format doesn't distinguish, so take the first.
 		const stats = trial.runs[0]?.stats;
 		if (!stats) continue;
 
@@ -112,11 +116,7 @@ function toBaseline(trials: Trials): Baseline {
 			p99: stats.p99,
 			min: stats.min,
 			max: stats.max,
-			...(stats.heap && {
-				heap: stats.heap.avg,
-				heapMin: stats.heap.min,
-				heapMax: stats.heap.max,
-			}),
+			...(stats.heap && { heap: stats.heap.avg }),
 			...(stats.gc && { gc: stats.gc.avg }),
 		};
 	}
@@ -130,27 +130,41 @@ function toBaseline(trials: Trials): Baseline {
 	};
 }
 
-export function saveBaseline(path: string, trials: Trials): void {
-	// Two-space JSON with a trailing newline, so a committed baseline diffs
-	// readably.  mitata's raw result is ~15MB because it carries every sample and
-	// the generated source of its measurement loop; only the summary is kept.
-	writeFileSync(path, `${JSON.stringify(toBaseline(trials), null, 2)}\n`);
-	console.log(`\nSaved baseline to ${path}`);
-}
-
-function readBaseline(path: string): Baseline {
-	const baseline: unknown = JSON.parse(readFileSync(path, "utf8"));
+/**
+ * Reads and validates a baseline.  Call this before running the suite, so a bad
+ * path fails in a second rather than after several minutes of benchmarking.
+ */
+export function readBaseline(path: string): Baseline {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(path, "utf8"));
+	} catch (cause) {
+		throw new Error(`Could not read a benchmark baseline from ${path}`, { cause });
+	}
 
 	if (
-		typeof baseline !== "object" ||
-		baseline === null ||
-		(baseline as Baseline).version !== 1 ||
-		typeof (baseline as Baseline).benchmarks !== "object"
+		typeof parsed !== "object" ||
+		parsed === null ||
+		(parsed as Baseline).version !== 1 ||
+		typeof (parsed as Baseline).benchmarks !== "object"
 	) {
 		throw new Error(`${path} is not a version 1 benchmark baseline`);
 	}
 
-	return baseline as Baseline;
+	return parsed as Baseline;
+}
+
+export function saveBaseline(path: string, trials: Trials): void {
+	const failed = failedBenchmarks(trials);
+	if (failed.length > 0) {
+		throw new Error(`Refusing to save a baseline; these benchmarks failed: ${failed.join(", ")}`);
+	}
+
+	// Two-space JSON with a trailing newline, so a saved baseline diffs readably.
+	// mitata's raw result is ~15MB because it carries every sample and the
+	// generated source of its measurement loop; only the summary is kept.
+	writeFileSync(path, `${JSON.stringify(toBaseline(trials), null, 2)}\n`);
+	console.log(`\nSaved baseline to ${path}`);
 }
 
 function formatTime(ns: number): string {
@@ -165,12 +179,54 @@ function formatBytes(bytes: number): string {
 	return `${bytes.toFixed(0)} b`;
 }
 
-function formatDelta(before: number, after: number, threshold: number): string {
+interface Delta {
+	label: string;
+	/** Whether this counts as a regression, rather than something to read off the label. */
+	regressed: boolean;
+}
+
+const noDelta = (label: string): Delta => ({ label, regressed: false });
+
+function toHeapDelta(before: BaselineEntry, after: BaselineEntry): Delta {
+	if (!comparableHeap(before.heap) || !comparableHeap(after.heap)) return noDelta("too small");
+	return toDelta(before.heap, after.heap);
+}
+
+function toDelta(before: number | undefined, after: number | undefined): Delta {
+	if (before === undefined || after === undefined) return noDelta("-");
+
 	const ratio = after / before - 1;
-	const sign = ratio >= 0 ? "+" : "";
-	const pct = `${sign}${(ratio * 100).toFixed(1)}%`;
-	if (Math.abs(ratio) < threshold) return `${pct} (noise)`;
-	return ratio > 0 ? `${pct} SLOWER` : `${pct} faster`;
+	// A zero baseline (or a zero reading) makes the ratio meaningless rather than
+	// infinitely bad.
+	if (!Number.isFinite(ratio)) return noDelta("n/a");
+
+	const pct = `${ratio >= 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%`;
+
+	// The band is deliberately ratio-asymmetric: +20% flags but its exact inverse,
+	// -16.7%, does not.  That's the right bias for a regression gate.
+	if (Math.abs(ratio) < noiseThreshold) return noDelta(`${pct} (noise)`);
+	if (ratio < 0) return noDelta(`${pct} faster`);
+	return { label: `${pct} WORSE`, regressed: true };
+}
+
+interface Column {
+	header: string;
+	align: "left" | "right";
+	values: string[];
+}
+
+function printTable(columns: Column[]): void {
+	const widths = columns.map((c) => Math.max(c.header.length, ...c.values.map((v) => v.length)));
+	const pad = (value: string, i: number) =>
+		columns[i]!.align === "left" ? value.padEnd(widths[i]!) : value.padStart(widths[i]!);
+	const gap = "  ";
+
+	console.log(`\n${columns.map((c, i) => pad(c.header, i)).join(gap)}`);
+	console.log("-".repeat(widths.reduce((a, b) => a + b, 0) + gap.length * (columns.length - 1)));
+
+	for (let row = 0; row < (columns[0]?.values.length ?? 0); row++) {
+		console.log(columns.map((c, i) => pad(c.values[row]!, i)).join(gap));
+	}
 }
 
 export interface CompareOptions {
@@ -183,19 +239,18 @@ export interface CompareOptions {
 
 /**
  * Prints each benchmark's median time and mean allocation against a saved
- * baseline.  Returns true when every comparable benchmark is within its
- * threshold, so a caller can use it as an exit status.
+ * baseline.  Returns true when nothing regressed, so a caller can use it as an
+ * exit status.
  */
 export function compareBaseline(
-	path: string,
+	baseline: Baseline,
 	trials: Trials,
 	{ reportMissing = true }: CompareOptions = {},
 ): boolean {
-	const baseline = readBaseline(path);
 	const current = toBaseline(trials);
+	const failed = failedBenchmarks(trials);
 
-	console.log(`\nComparing against ${path}`);
-	console.log(`  baseline: ${baseline.createdAt}, ${baseline.runtime}, ${baseline.cpu}`);
+	console.log(`\n  baseline: ${baseline.createdAt}, ${baseline.runtime}, ${baseline.cpu}`);
 	console.log(`  current:  ${current.createdAt}, ${current.runtime}, ${current.cpu}`);
 
 	if (baseline.cpu !== current.cpu || baseline.runtime !== current.runtime) {
@@ -203,74 +258,64 @@ export function compareBaseline(
 		console.log("    not meaningful.  Re-record with `npm run bench:save`.");
 	}
 
-	const rows: {
-		name: string;
-		p50: string;
-		p50Delta: string;
-		heap: string;
-		heapDelta: string;
-	}[] = [];
-	let withinThresholds = true;
+	const names: string[] = [];
+	const times: string[] = [];
+	const timeDeltas: string[] = [];
+	const heaps: string[] = [];
+	const heapDeltas: string[] = [];
+	let regressed = false;
+
+	const push = (name: string, time: Delta, heap: Delta, entry?: BaselineEntry) => {
+		names.push(name);
+		times.push(entry === undefined ? "-" : formatTime(entry.p50));
+		timeDeltas.push(time.label);
+		heaps.push(entry?.heap === undefined ? "-" : formatBytes(entry.heap));
+		heapDeltas.push(heap.label);
+		if (time.regressed || heap.regressed) regressed = true;
+	};
 
 	for (const [name, after] of Object.entries(current.benchmarks)) {
 		const before = baseline.benchmarks[name];
-
-		const heap = after.heap === undefined ? "-" : formatBytes(after.heap);
-
-		if (!before) {
-			rows.push({ name, p50: formatTime(after.p50), p50Delta: "new", heap, heapDelta: "new" });
-			continue;
+		if (before) {
+			push(name, toDelta(before.p50, after.p50), toHeapDelta(before, after), after);
+		} else {
+			push(name, noDelta("new"), noDelta("new"), after);
 		}
-
-		const p50Delta = formatDelta(before.p50, after.p50, timeThreshold);
-		// Heap is only reported when the runtime exposes usage metrics, and only
-		// worth diffing when both measurements are steady enough to mean something.
-		const heapDelta =
-			comparableHeap(before) && comparableHeap(after)
-				? formatDelta(before.heap, after.heap, heapThreshold)
-				: "unstable";
-
-		if (p50Delta.includes("SLOWER") || heapDelta.includes("SLOWER")) withinThresholds = false;
-
-		rows.push({ name, p50: formatTime(after.p50), p50Delta, heap, heapDelta });
 	}
 
 	if (reportMissing) {
 		for (const name of Object.keys(baseline.benchmarks)) {
 			if (name in current.benchmarks) continue;
-			rows.push({ name, p50: "-", p50Delta: "missing", heap: "-", heapDelta: "missing" });
+			push(name, noDelta("missing"), noDelta("missing"));
 		}
 	}
 
-	const width = (key: keyof (typeof rows)[number], header: string) =>
-		Math.max(header.length, ...rows.map((r) => r[key].length));
-	const widths = {
-		name: width("name", "benchmark"),
-		p50: width("p50", "p50"),
-		p50Delta: width("p50Delta", "vs base"),
-		heap: width("heap", "heap"),
-		heapDelta: width("heapDelta", "vs base"),
-	};
+	printTable([
+		{ header: "benchmark", align: "left", values: names },
+		{ header: "p50", align: "right", values: times },
+		{ header: "vs base", align: "right", values: timeDeltas },
+		{ header: "heap", align: "right", values: heaps },
+		{ header: "vs base", align: "right", values: heapDeltas },
+	]);
 
 	console.log(
-		`\n${"benchmark".padEnd(widths.name)}  ${"p50".padStart(widths.p50)}  ${"vs base".padStart(widths.p50Delta)}  ${"heap".padStart(widths.heap)}  ${"vs base".padStart(widths.heapDelta)}`,
+		`\nFlagged beyond ${(noiseThreshold * 100).toFixed(0)}% on time or allocation. "too small" marks a benchmark`,
 	);
 	console.log(
-		"-".repeat(widths.name + widths.p50 + widths.p50Delta + widths.heap + widths.heapDelta + 8),
+		`allocating under ${(heapFloor / 1024).toFixed(0)} kb per iteration, where the heap probe isn't reliable.`,
 	);
 
-	for (const row of rows) {
-		console.log(
-			`${row.name.padEnd(widths.name)}  ${row.p50.padStart(widths.p50)}  ${row.p50Delta.padStart(widths.p50Delta)}  ${row.heap.padStart(widths.heap)}  ${row.heapDelta.padStart(widths.heapDelta)}`,
-		);
+	if (failed.length > 0) {
+		console.log(`\n  ! These benchmarks failed to run: ${failed.join(", ")}`);
+		return false;
 	}
 
-	console.log(
-		`\nThresholds: ${(timeThreshold * 100).toFixed(0)}% on time, ${(heapThreshold * 100).toFixed(0)}% on allocation.`,
-	);
-	console.log(
-		`"unstable" means the heap probe couldn't resolve this benchmark's allocation (under ${formatBytes(heapFloor)} per iteration, or samples spread over ${heapSpread}x).`,
-	);
+	// An empty table means the filter matched nothing.  Reporting that as a clean
+	// comparison would turn a typo into a passing check.
+	if (names.length === 0) {
+		console.log("\n  ! No benchmarks ran, so nothing was compared.");
+		return false;
+	}
 
-	return withinThresholds;
+	return !regressed;
 }
