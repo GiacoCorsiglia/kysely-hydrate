@@ -41,7 +41,10 @@ const distinctRows10k = makeDistinctRows(10_000); // 10,000 rows -> 10,000 entit
 /**
  * Rows whose joins all missed, as a left join leaves them.  `groupByKey` skips
  * null keys, so nested collections stay empty and the per-entity work is only
- * the base level.
+ * the base level.  Each of the 500 rows is repeated by reference rather than
+ * copied, so this allocates less up front than a driver's result would; it
+ * changes nothing the hydrator does, but the heap figure is the hydrator's
+ * alone.
  */
 const nullJoinRows10k = makeDistinctRows(500).flatMap((row) => times(20, () => row));
 
@@ -135,6 +138,9 @@ const wideRows = times(2000, (i) => {
 });
 
 const wide = createHydrator<WideRow>("id");
+
+/** The same row count at the usual width, hoisted so the slice isn't timed. */
+const narrowRows2k = distinctRows10k.slice(0, 2000);
 
 ////////////////////////////////////////////////////////////
 // Composite keys.
@@ -281,8 +287,9 @@ async function verifyWorkloads(): Promise<void> {
 		WIDE_COLUMNS + 1,
 	);
 
-	// The composite key splits each id across tenants, so it must produce more
-	// entities than the single key does over the same rows.
+	// `tenant_id` is derived from `id`, so the two-column key groups exactly as
+	// the single-column one does.  That is deliberate: identical grouping leaves
+	// key arity as the only difference between the two benchmarks.
 	const single = await singleKey.hydrate(compositeRows, querySetOptions);
 	const composite = await compositeKey.hydrate(compositeRows, querySetOptions);
 	assert.equal(single.length, 500);
@@ -430,16 +437,15 @@ summary(() => {
 
 summary(() => {
 	benchAsync("2k rows of 60 columns", () => wide.hydrate(wideRows, querySetOptions)).baseline(true);
-	benchAsync("2k rows of 9 columns", () =>
-		flat.hydrate(distinctRows10k.slice(0, 2000), querySetOptions),
-	);
+	benchAsync("2k rows of 9 columns", () => flat.hydrate(narrowRows2k, querySetOptions));
 });
 
 ////////////////////////////////////////////////////////////
 // Small results, where fixed per-call costs dominate.
 //
-// Every entry but the first uses one hydrator, so the series is a scaling curve
-// rather than a comparison of different configurations.
+// The scaling entries all use one hydrator, so they read as a curve; the
+// attaches entry sits here because its result is the same size, not because it
+// belongs to that curve.
 ////////////////////////////////////////////////////////////
 
 summary(() => {

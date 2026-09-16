@@ -42,15 +42,6 @@ import { makeRows, times } from "./lib/rows.ts";
 // Helpers.
 ////////////////////////////////////////////////////////////
 
-/**
- * Benchmark names double as `--filter` patterns, which are regexes, so a name
- * holding a metacharacter would not select itself.  Checked rather than eyeballed.
- */
-function regexSafe(name: string): string {
-	assert.ok(new RegExp(name).test(name), `benchmark name does not match itself: ${name}`);
-	return name;
-}
-
 const bytes = (identifier: string) => Buffer.byteLength(identifier);
 
 /** Every identifier in a node tree, in the order the transformer would meet them. */
@@ -359,16 +350,16 @@ await verifyWorkloads();
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchAsync(regexSafe("transformResult 100 rows"), () =>
+	benchAsync("transformResult 100 rows", () =>
 		plugin.transformResult({ queryId: restoreQueryId, result: result100 }),
 	).baseline(true);
-	benchAsync(regexSafe("transformResult 1k rows"), () =>
+	benchAsync("transformResult 1k rows", () =>
 		plugin.transformResult({ queryId: restoreQueryId, result: result1k }),
 	);
-	benchAsync(regexSafe("transformResult 10k rows"), () =>
+	benchAsync("transformResult 10k rows", () =>
 		plugin.transformResult({ queryId: restoreQueryId, result: result10k }),
 	);
-	benchAsync(regexSafe("transformResult 10k rows, nothing to restore"), () =>
+	benchAsync("transformResult 10k rows, nothing to restore", () =>
 		plugin.transformResult({ queryId: untouchedQueryId, result: result10k }),
 	);
 });
@@ -382,10 +373,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchSync(regexSafe("transformQuery, no long identifiers"), () =>
+	benchSync("transformQuery, no long identifiers", () =>
 		plugin.transformQuery({ queryId: queryQueryId, node: shortNode }),
 	).baseline(true);
-	benchSync(regexSafe("transformQuery, long identifiers"), () =>
+	benchSync("transformQuery, long identifiers", () =>
 		plugin.transformQuery({ queryId: queryQueryId, node: longNode }),
 	);
 });
@@ -403,13 +394,13 @@ const warmPlugin = fixLongAliases();
 warmPlugin.transformQuery({ queryId: queryQueryId, node: hashedNode });
 
 summary(() => {
-	benchSync(regexSafe("transformQuery 100 long aliases, names cached"), () =>
+	benchSync("transformQuery 100 long aliases, names cached", () =>
 		warmPlugin.transformQuery({ queryId: queryQueryId, node: hashedNode }),
 	).baseline(true);
-	benchSync(regexSafe("transformQuery 100 long aliases, names hashed"), () =>
+	benchSync("transformQuery 100 long aliases, names hashed", () =>
 		fixLongAliases().transformQuery({ queryId: queryQueryId, node: hashedNode }),
 	);
-	benchSync(regexSafe("fixLongAliases construction"), () => fixLongAliases());
+	benchSync("fixLongAliases construction", () => fixLongAliases());
 });
 
 ////////////////////////////////////////////////////////////
@@ -420,10 +411,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchSync(regexSafe("transformQuery long query, bare"), () =>
+	benchSync("transformQuery long query, bare", () =>
 		plugin.transformQuery({ queryId: queryQueryId, node: longNode }),
 	).baseline(true);
-	benchSync(regexSafe("transformQuery long query, wrapping CamelCasePlugin"), () =>
+	benchSync("transformQuery long query, wrapping CamelCasePlugin", () =>
 		camelPlugin.transformQuery({ queryId: queryQueryId, node: longNode }),
 	);
 });
@@ -446,7 +437,7 @@ summary(() => {
 /** Declares one point on the curve, registering its aliases on its first call. */
 function benchNovelKey(name: string, aliases: number, result = novelKeyResult) {
 	let checked = false;
-	return benchAsync(regexSafe(name), async () => {
+	return benchAsync(name, async () => {
 		ensureRegistered(aliases);
 		const restored = await plugin.transformResult({ queryId: poolQueryId, result: result() });
 		if (!checked) {
@@ -460,7 +451,7 @@ function benchNovelKey(name: string, aliases: number, result = novelKeyResult) {
 }
 
 summary(() => {
-	benchAsync(regexSafe("restore a cached key"), () =>
+	benchAsync("restore a cached key", () =>
 		plugin.transformResult({ queryId: poolQueryId, result: cachedKeyResult }),
 	).baseline(true);
 	benchNovelKey("restore a novel key, 100 aliases registered", 100);

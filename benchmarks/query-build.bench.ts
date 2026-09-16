@@ -183,13 +183,6 @@ const leftOne = users().leftJoinOne(
 	"user.id",
 );
 
-const leftOneOrThrow = users().leftJoinOneOrThrow(
-	"post",
-	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-	"post.user_id",
-	"user.id",
-);
-
 const innerOne = users().innerJoinOne(
 	"post",
 	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
@@ -410,7 +403,6 @@ function verifyWorkloads(): void {
 	// Join flavours: each produces the join it names.
 	assert.match(depth1.compile().sql, /left join \(/);
 	assert.match(leftOne.compile().sql, /left join \(/);
-	assert.match(leftOneOrThrow.compile().sql, /left join \(/);
 	assert.match(innerOne.compile().sql, /inner join \(/);
 	assert.match(innerMany.compile().sql, /inner join \(/);
 	assert.match(lateralMany.compile().sql, /left join lateral \(/);
@@ -474,26 +466,14 @@ verifyWorkloads();
 // Declaring benchmarks.
 ////////////////////////////////////////////////////////////
 
-/**
- * Benchmark names double as `--filter` patterns, which are regexes, so a name
- * containing a metacharacter would either fail to compile or match something
- * else.  Restricting them to words, digits, spaces and commas keeps every name a
- * regex that matches itself, and the assertion keeps it that way.
- */
-function benchQuery(name: string, fn: () => unknown) {
-	assert.match(name, /^[A-Za-z0-9 ,]+$/, `benchmark name must be a self-matching regex: ${name}`);
-	assert.equal(new RegExp(name).test(name), true);
-	return benchSync(name, fn);
-}
-
 ////////////////////////////////////////////////////////////
 // How join count scales.
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile 1 sibling join", () => siblings1.compile()).baseline(true);
-	benchQuery("compile 3 sibling joins", () => siblings3.compile());
-	benchQuery("compile 5 sibling joins", () => siblings5.compile());
+	benchSync("compile 1 sibling join", () => siblings1.compile()).baseline(true);
+	benchSync("compile 3 sibling joins", () => siblings3.compile());
+	benchSync("compile 5 sibling joins", () => siblings5.compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -505,10 +485,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile depth 1", () => depth1.compile()).baseline(true);
-	benchQuery("compile depth 2", () => depth2.compile());
-	benchQuery("compile depth 3", () => depth3.compile());
-	benchQuery("compile depth 4", () => depth4.compile());
+	benchSync("compile depth 1", () => depth1.compile()).baseline(true);
+	benchSync("compile depth 2", () => depth2.compile());
+	benchSync("compile depth 3", () => depth3.compile());
+	benchSync("compile depth 4", () => depth4.compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -516,11 +496,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile leftJoinMany", () => depth1.compile()).baseline(true);
-	benchQuery("compile leftJoinOne", () => leftOne.compile());
-	benchQuery("compile leftJoinOneOrThrow", () => leftOneOrThrow.compile());
-	benchQuery("compile innerJoinOne", () => innerOne.compile());
-	benchQuery("compile innerJoinMany", () => innerMany.compile());
+	benchSync("compile leftJoinMany", () => depth1.compile()).baseline(true);
+	benchSync("compile leftJoinOne", () => leftOne.compile());
+	benchSync("compile innerJoinOne", () => innerOne.compile());
+	benchSync("compile innerJoinMany", () => innerMany.compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -528,9 +507,9 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile leftJoinLateralMany", () => lateralMany.compile()).baseline(true);
-	benchQuery("compile innerJoinLateralMany", () => lateralInnerMany.compile());
-	benchQuery("compile leftJoinLateralOne", () => lateralOne.compile());
+	benchSync("compile leftJoinLateralMany", () => lateralMany.compile()).baseline(true);
+	benchSync("compile innerJoinLateralMany", () => lateralInnerMany.compile());
+	benchSync("compile leftJoinLateralOne", () => lateralOne.compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -542,12 +521,12 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile many join, no pagination", () => depth1.compile()).baseline(true);
-	benchQuery("compile many join, limit", () => manyLimit.compile());
-	benchQuery("compile many join, offset", () => manyOffset.compile());
-	benchQuery("compile one join, no pagination", () => leftOne.compile());
-	benchQuery("compile one join, limit", () => oneLimit.compile());
-	benchQuery("compile one join, offset", () => oneOffset.compile());
+	benchSync("compile many join, no pagination", () => depth1.compile()).baseline(true);
+	benchSync("compile many join, limit", () => manyLimit.compile());
+	benchSync("compile many join, offset", () => manyOffset.compile());
+	benchSync("compile one join, no pagination", () => leftOne.compile());
+	benchSync("compile one join, limit", () => oneLimit.compile());
+	benchSync("compile one join, offset", () => oneOffset.compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -561,20 +540,20 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("querySet build", () => buildUsersPostsComments().orderBy("id").limit(500)).baseline(
+	benchSync("querySet build", () => buildUsersPostsComments().orderBy("id").limit(500)).baseline(
 		true,
 	);
-	benchQuery("querySet toQuery", () => representative.toQuery());
-	benchQuery("querySet compile", () => representative.compile());
-	benchQuery("querySet toOperationNode", () => representative.toOperationNode());
+	benchSync("querySet toQuery", () => representative.toQuery());
+	benchSync("querySet compile", () => representative.compile());
+	benchSync("querySet toOperationNode", () => representative.toOperationNode());
 	// `toBaseQuery` hands back the stored base query builder untouched, so it reads
 	// as roughly zero and the summary's ratio against it is meaningless.  It stays
 	// in the group as the floor: it is what a terminal costs when it does no work,
 	// which is the other end of the range `compile` sits at.
-	benchQuery("querySet toBaseQuery", () => representative.toBaseQuery());
-	benchQuery("querySet toJoinedQuery", () => representative.toJoinedQuery());
-	benchQuery("querySet toCountQuery then compile", () => representative.toCountQuery().compile());
-	benchQuery("querySet toExistsQuery then compile", () => representative.toExistsQuery().compile());
+	benchSync("querySet toBaseQuery", () => representative.toBaseQuery());
+	benchSync("querySet toJoinedQuery", () => representative.toJoinedQuery());
+	benchSync("querySet toCountQuery then compile", () => representative.toCountQuery().compile());
+	benchSync("querySet toExistsQuery then compile", () => representative.toExistsQuery().compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -582,15 +561,15 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile insertAs, returningAll", () => insertAll.compile()).baseline(true);
-	benchQuery("compile insertAs, returning 3 columns", () => insertColumns.compile());
-	benchQuery("compile insertAs with many join", () => insertJoined.compile());
-	benchQuery("compile insertAs with many join, limit", () => insertJoinedLimit.compile());
-	benchQuery("compile insert on a select base", () => insertOnSelect.compile());
-	benchQuery("compile updateAs", () => updateAll.compile());
-	benchQuery("compile updateAs with many join", () => updateJoined.compile());
-	benchQuery("compile deleteAs", () => deleteAll.compile());
-	benchQuery("compile deleteAs with many join", () => deleteJoined.compile());
+	benchSync("compile insertAs, returningAll", () => insertAll.compile()).baseline(true);
+	benchSync("compile insertAs, returning 3 columns", () => insertColumns.compile());
+	benchSync("compile insertAs with many join", () => insertJoined.compile());
+	benchSync("compile insertAs with many join, limit", () => insertJoinedLimit.compile());
+	benchSync("compile insert on a select base", () => insertOnSelect.compile());
+	benchSync("compile updateAs", () => updateAll.compile());
+	benchSync("compile updateAs with many join", () => updateJoined.compile());
+	benchSync("compile deleteAs", () => deleteAll.compile());
+	benchSync("compile deleteAs with many join", () => deleteJoined.compile());
 });
 
 ////////////////////////////////////////////////////////////
@@ -598,9 +577,9 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchQuery("compile no joins", () => plain.compile()).baseline(true);
-	benchQuery("compile no joins, where", () => plainWhere.compile());
-	benchQuery("compile no joins, CTE base", () => plainCte.compile());
+	benchSync("compile no joins", () => plain.compile()).baseline(true);
+	benchSync("compile no joins, where", () => plainWhere.compile());
+	benchSync("compile no joins, CTE base", () => plainCte.compile());
 });
 
 ////////////////////////////////////////////////////////////

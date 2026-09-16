@@ -18,6 +18,8 @@ import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { VALUE_FLAGS } from "./lib/harness.ts";
+
 const benchmarksDir = dirname(fileURLToPath(import.meta.url));
 
 /** Suite files, in the order they should run: cheap and focused ones first. */
@@ -36,16 +38,36 @@ function suiteNames(): string[] {
 	];
 }
 
-const args = process.argv.slice(2);
-// A bare word selects suites; everything else is a flag for the suites themselves.
-const selectors = args.filter((a) => !a.startsWith("--") && !isFlagValue(a));
-const flags = args.filter((a) => !selectors.includes(a));
+/**
+ * Splits `npm run bench -- hydrate --filter sortBy` into the suites to run and
+ * the flags to hand each one.
+ *
+ * This walks left to right and consults {@link VALUE_FLAGS}, rather than asking
+ * whether a word follows a flag.  The naive version got both npm scripts wrong:
+ * `bench:save -- hydrate` became `--save hydrate`, `hydrate` looked like
+ * `--save`'s value, and all five suites ran.  A word appearing twice
+ * (`hydrate --filter hydrate`) broke it the other way.
+ */
+function parseArgs(args: readonly string[]): { selectors: string[]; flags: string[] } {
+	const selectors: string[] = [];
+	const flags: string[] = [];
 
-/** Whether this argument is the value of a preceding `--flag value` pair. */
-function isFlagValue(arg: string): boolean {
-	const index = args.indexOf(arg);
-	return index > 0 && args[index - 1]!.startsWith("--") && !args[index - 1]!.includes("=");
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i]!;
+		if (!arg.startsWith("--")) {
+			selectors.push(arg);
+			continue;
+		}
+
+		flags.push(arg);
+		// `--flag=value` carries its own value; `--flag value` takes the next word.
+		if (VALUE_FLAGS.has(arg) && i + 1 < args.length) flags.push(args[++i]!);
+	}
+
+	return { selectors, flags };
 }
+
+const { selectors, flags } = parseArgs(process.argv.slice(2));
 
 const suites = suiteNames().filter(
 	(s) => selectors.length === 0 || selectors.some((sel) => s.includes(sel)),

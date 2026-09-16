@@ -485,16 +485,6 @@ await verifyWorkloads();
 // Declaring benchmarks.
 ////////////////////////////////////////////////////////////
 
-/**
- * Benchmark names double as `--filter` regexes, so each one has to match itself
- * when compiled as one.  Checked rather than trusted: a stray `?` or `+` would
- * quietly make a benchmark unreachable by the flag that exists to reach it.
- */
-function benchmark(name: string, fn: () => Promise<unknown>) {
-	assert.ok(new RegExp(name).test(name), `benchmark name is not a self-matching regex: ${name}`);
-	return benchAsync(name, fn);
-}
-
 ////////////////////////////////////////////////////////////
 // SQLite: what hydration adds to a round trip.
 //
@@ -504,10 +494,10 @@ function benchmark(name: string, fn: () => Promise<unknown>) {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchmark("sqlite kysely execute, 10k rows, no hydration", () =>
+	benchAsync("sqlite kysely execute, 10k rows, no hydration", () =>
 		sqliteAll.toQuery().execute(),
 	).baseline(true);
-	benchmark("sqlite querySet execute, 10k rows -> 500 entities", () => sqliteAll.execute());
+	benchAsync("sqlite querySet execute, 10k rows -> 500 entities", () => sqliteAll.execute());
 });
 
 ////////////////////////////////////////////////////////////
@@ -519,10 +509,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchmark("sqlite execute, limit 1", () => sqlite1.execute()).baseline(true);
-	benchmark("sqlite execute, limit 10", () => sqlite10.execute());
-	benchmark("sqlite execute, limit 100", () => sqlite100.execute());
-	benchmark("sqlite execute, limit 500", () => sqliteAll.execute());
+	benchAsync("sqlite execute, limit 1", () => sqlite1.execute()).baseline(true);
+	benchAsync("sqlite execute, limit 10", () => sqlite10.execute());
+	benchAsync("sqlite execute, limit 100", () => sqlite100.execute());
+	benchAsync("sqlite execute, limit 500", () => sqliteAll.execute());
 });
 
 ////////////////////////////////////////////////////////////
@@ -535,11 +525,10 @@ summary(() => {
 ////////////////////////////////////////////////////////////
 
 summary(() => {
-	benchmark("sqlite execute, all 500 entities", () => sqliteAll.execute()).baseline(true);
-	benchmark("sqlite executeTakeFirst", () => sqliteAll.executeTakeFirst());
-	benchmark("sqlite executeTakeFirstOrThrow", () => sqliteAll.executeTakeFirstOrThrow());
-	benchmark("sqlite executeCount", () => sqliteAll.executeCount(Number));
-	benchmark("sqlite executeExists", () => sqliteAll.executeExists());
+	benchAsync("sqlite execute, all 500 entities", () => sqliteAll.execute()).baseline(true);
+	benchAsync("sqlite executeTakeFirst", () => sqliteAll.executeTakeFirst());
+	benchAsync("sqlite executeCount", () => sqliteAll.executeCount(Number));
+	benchAsync("sqlite executeExists", () => sqliteAll.executeExists());
 });
 
 ////////////////////////////////////////////////////////////
@@ -554,10 +543,10 @@ if (pgWork !== undefined) {
 	// driver's share of the work is far larger, so hydration should look cheaper
 	// here in relative terms while costing exactly the same in absolute ones.
 	summary(() => {
-		benchmark("postgres kysely execute, 10k rows, no hydration", () =>
+		benchAsync("postgres kysely execute, 10k rows, no hydration", () =>
 			pgWork.plain.toQuery().execute(),
 		).baseline(true);
-		benchmark("postgres querySet execute, 10k rows -> 500 entities", () => pgWork.plain.execute());
+		benchAsync("postgres querySet execute, 10k rows -> 500 entities", () => pgWork.plain.execute());
 	});
 
 	// What the recommended plugin stack costs on a query whose aliases all fit.
@@ -565,9 +554,9 @@ if (pgWork !== undefined) {
 	// not, and still inspects 10,000 result rows, so "nothing to do" is not the
 	// same as "free".
 	summary(() => {
-		benchmark("postgres execute, no plugins", () => pgWork.plain.execute()).baseline(true);
-		benchmark("postgres execute, fixLongAliases", () => pgWork.fixed.execute());
-		benchmark("postgres execute, fixLongAliases with CamelCasePlugin", () =>
+		benchAsync("postgres execute, no plugins", () => pgWork.plain.execute()).baseline(true);
+		benchAsync("postgres execute, fixLongAliases", () => pgWork.fixed.execute());
+		benchAsync("postgres execute, fixLongAliases with CamelCasePlugin", () =>
 			pgWork.camel.execute(),
 		);
 	});
@@ -575,10 +564,10 @@ if (pgWork !== undefined) {
 	// And what it costs when it does have something to do: the same 300 rows
 	// under keys that overflow the 63-byte limit, against keys that do not.
 	summary(() => {
-		benchmark("postgres deep join, short aliases, shortening idle", () =>
+		benchAsync("postgres deep join, short aliases, shortening idle", () =>
 			pgWork.orgs.short.execute(),
 		).baseline(true);
-		benchmark("postgres deep join, long aliases, shortening engaged", () =>
+		benchAsync("postgres deep join, long aliases, shortening engaged", () =>
 			pgWork.orgs.long.execute(),
 		);
 	});

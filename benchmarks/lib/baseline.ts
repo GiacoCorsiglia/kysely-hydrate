@@ -149,7 +149,7 @@ function toBaseline(suite: string, trials: Trials): Baseline {
  * Reads and validates a baseline.  Call this before running the suite, so a bad
  * path fails in a second rather than after several minutes of benchmarking.
  */
-export function readBaseline(path: string): Baseline {
+export function readBaseline(path: string, suite: string): Baseline {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -167,7 +167,12 @@ export function readBaseline(path: string): Baseline {
 		throw new Error(`${path} is not a version 1 benchmark baseline`);
 	}
 
-	return parsed as Baseline;
+	const baseline = parsed as Baseline;
+	if (baseline.suite !== suite) {
+		throw new Error(`${path} was recorded for suite "${baseline.suite}", not "${suite}"`);
+	}
+
+	return baseline;
 }
 
 export function saveBaseline(suite: string, path: string, trials: Trials): void {

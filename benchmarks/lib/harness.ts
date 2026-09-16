@@ -8,7 +8,7 @@
  * so it only pays for the fixtures it imports.
  */
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { bench, do_not_optimize, run } from "mitata";
@@ -18,9 +18,16 @@ import { type Baseline, compareBaseline, readBaseline, saveBaseline } from "./ba
 const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Where a suite's recorded baseline lives.  Machine-specific, so gitignored. */
-export function baselinePath(suite: string): string {
+function baselinePath(suite: string): string {
 	return join(benchmarksDir, "baselines", `${suite}.json`);
 }
+
+/**
+ * Flags that take a following value.  `run.ts` needs this to tell a suite
+ * selector from a flag's argument, so the list lives here where both can see it:
+ * a flag known to one and not the other silently changes which suites run.
+ */
+export const VALUE_FLAGS: ReadonlySet<string> = new Set(["--filter", "--postgres-url"]);
 
 ////////////////////////////////////////////////////////////
 // Arguments.
@@ -79,7 +86,7 @@ function readOptions(suite: string): Options {
 	return {
 		save,
 		filter,
-		baseline: compare ? readBaseline(baselinePath(suite)) : undefined,
+		baseline: compare ? readBaseline(baselinePath(suite), suite) : undefined,
 	};
 }
 
@@ -88,20 +95,38 @@ function readOptions(suite: string): Options {
 ////////////////////////////////////////////////////////////
 
 /**
+ * A benchmark's name is its `--filter` pattern, and `--filter` takes a regex, so
+ * a name has to match itself as one.  `+` and `()` have both silently made a
+ * benchmark unselectable here before, so every name is checked at declaration
+ * rather than left to whoever next copies one out of the report.
+ */
+function assertFilterable(name: string): string {
+	let matches: boolean;
+	try {
+		matches = new RegExp(name).test(name);
+	} catch {
+		// An unbalanced bracket or paren throws rather than failing to match.
+		matches = false;
+	}
+
+	if (!matches) {
+		throw new Error(`Benchmark name is not usable as a --filter pattern: ${name}`);
+	}
+	return name;
+}
+
+/**
  * `do_not_optimize` keeps the JIT from discarding work whose result is thrown
  * away, which is every benchmark in this directory.
- *
- * Benchmark names are used as `--filter` patterns, which are regexes, so avoid
- * regex metacharacters in them — `+` and `()` in particular have bitten us.
  */
 export function benchAsync(name: string, fn: () => Promise<unknown>) {
-	return bench(name, async () => {
+	return bench(assertFilterable(name), async () => {
 		do_not_optimize(await fn());
 	});
 }
 
 export function benchSync(name: string, fn: () => unknown) {
-	return bench(name, () => {
+	return bench(assertFilterable(name), () => {
 		do_not_optimize(fn());
 	});
 }
@@ -115,7 +140,9 @@ export function benchSync(name: string, fn: () => unknown) {
  * arguments ask.  Sets a non-zero exit code on a regression rather than
  * throwing, so the report is still readable.
  */
-export async function runSuite(suite: string): Promise<void> {
+export async function runSuite(
+	suite = basename(process.argv[1] ?? "", ".bench.ts"),
+): Promise<void> {
 	const { save, filter, baseline } = readOptions(suite);
 
 	// `throw: true` makes mitata propagate a failing benchmark instead of
