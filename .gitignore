@@ -38,4 +38,4 @@ plan.md
 plan*.md
 
 # benchmark baselines (machine-specific)
-benchmarks/baseline.json
+benchmarks/baselines/

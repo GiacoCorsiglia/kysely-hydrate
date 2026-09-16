@@ -42,6 +42,8 @@ export interface BaselineEntry {
 
 export interface Baseline {
 	version: 1;
+	/** Which suite recorded this, so a baseline can't be diffed against another's. */
+	suite: string;
 	createdAt: string;
 	runtime: string;
 	cpu: string;
@@ -100,7 +102,7 @@ function failedBenchmarks(trials: Trials): string[] {
 	return trials.benchmarks.filter((t) => !t.runs[0]?.stats).map((t) => t.alias);
 }
 
-function toBaseline(trials: Trials): Baseline {
+function toBaseline(suite: string, trials: Trials): Baseline {
 	const benchmarks: Record<string, BaselineEntry> = {};
 
 	for (const trial of trials.benchmarks) {
@@ -123,6 +125,7 @@ function toBaseline(trials: Trials): Baseline {
 
 	return {
 		version: 1,
+		suite,
 		createdAt: new Date().toISOString(),
 		runtime: trials.context.runtime ?? "unknown",
 		cpu: trials.context.cpu.name ?? "unknown",
@@ -146,6 +149,7 @@ export function readBaseline(path: string): Baseline {
 		typeof parsed !== "object" ||
 		parsed === null ||
 		(parsed as Baseline).version !== 1 ||
+		typeof (parsed as Baseline).suite !== "string" ||
 		typeof (parsed as Baseline).benchmarks !== "object"
 	) {
 		throw new Error(`${path} is not a version 1 benchmark baseline`);
@@ -154,7 +158,7 @@ export function readBaseline(path: string): Baseline {
 	return parsed as Baseline;
 }
 
-export function saveBaseline(path: string, trials: Trials): void {
+export function saveBaseline(suite: string, path: string, trials: Trials): void {
 	const failed = failedBenchmarks(trials);
 	if (failed.length > 0) {
 		throw new Error(`Refusing to save a baseline; these benchmarks failed: ${failed.join(", ")}`);
@@ -163,7 +167,7 @@ export function saveBaseline(path: string, trials: Trials): void {
 	// Two-space JSON with a trailing newline, so a saved baseline diffs readably.
 	// mitata's raw result is ~15MB because it carries every sample and the
 	// generated source of its measurement loop; only the summary is kept.
-	writeFileSync(path, `${JSON.stringify(toBaseline(trials), null, 2)}\n`);
+	writeFileSync(path, `${JSON.stringify(toBaseline(suite, trials), null, 2)}\n`);
 	console.log(`\nSaved baseline to ${path}`);
 }
 
@@ -243,11 +247,16 @@ export interface CompareOptions {
  * exit status.
  */
 export function compareBaseline(
+	suite: string,
 	baseline: Baseline,
 	trials: Trials,
 	{ reportMissing = true }: CompareOptions = {},
 ): boolean {
-	const current = toBaseline(trials);
+	const current = toBaseline(suite, trials);
+
+	if (baseline.suite !== suite) {
+		throw new Error(`Baseline was recorded for suite "${baseline.suite}", not "${suite}"`);
+	}
 	const failed = failedBenchmarks(trials);
 
 	console.log(`\n  baseline: ${baseline.createdAt}, ${baseline.runtime}, ${baseline.cpu}`);
