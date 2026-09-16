@@ -56,8 +56,8 @@ export function hasFlag(flag: string, argv: readonly string[] = process.argv.sli
 
 interface Options {
 	save: boolean;
-	compare: boolean;
 	filter: string | undefined;
+	/** The baseline to diff against, already read; absent unless `--compare` was given. */
 	baseline: Baseline | undefined;
 }
 
@@ -78,7 +78,6 @@ function readOptions(suite: string): Options {
 
 	return {
 		save,
-		compare,
 		filter,
 		baseline: compare ? readBaseline(baselinePath(suite)) : undefined,
 	};
@@ -117,7 +116,7 @@ export function benchSync(name: string, fn: () => unknown) {
  * throwing, so the report is still readable.
  */
 export async function runSuite(suite: string): Promise<void> {
-	const { save, compare, filter, baseline } = readOptions(suite);
+	const { save, filter, baseline } = readOptions(suite);
 
 	// `throw: true` makes mitata propagate a failing benchmark instead of
 	// recording the error on the run and carrying on, which would drop it from
