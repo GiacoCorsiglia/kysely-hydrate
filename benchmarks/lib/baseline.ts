@@ -19,12 +19,24 @@
  * mean to within 1% across runs; and `heapMin` is dramatically less stable than
  * the mean, drifting up to 566x across runs where the mean drifts 1.19x.
  *
- * The mean does have one failure mode, which {@link heapFloor} handles.  A
- * benchmark that allocates very little occasionally reports roughly 20 kb more
+ * The mean has two failure modes, and between them they are why **allocation is
+ * reported but never fails a comparison** — only time sets the exit code.
+ *
+ * A benchmark that allocates very little occasionally reports roughly 20 kb more
  * than it should, when a collection lands inside a sample window and survives
- * into the mean.  For a benchmark allocating megabytes that contamination is
- * lost in the noise; for one allocating a few hundred bytes it is a 2000%
- * "regression".
+ * into the mean.  For a benchmark allocating megabytes that is lost in the
+ * noise; for one allocating a few hundred bytes it is a 2000% "regression".
+ * {@link heapFloor} drops those.
+ *
+ * The one the floor can't help with is at the other end.  A benchmark
+ * allocating megabytes per iteration reports a mean that depends on what else
+ * ran in the process: `sorted 10k rows, sort:nested` reads about 5 mb on its
+ * own and 11 to 14 mb inside the full suite, a spread of nearly 3x with no
+ * change to the code.  A baseline recorded at one end then reports a 180%
+ * regression against the other, and nothing about the recording says which end
+ * it came from.  Measured over six runs of 130 benchmarks, every false positive
+ * came from allocation and none from time, so time is the gate and allocation
+ * is for reading.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -191,9 +203,14 @@ interface Delta {
 
 const noDelta = (label: string): Delta => ({ label, regressed: false });
 
+/**
+ * Allocation is reported but never sets the exit code; see the note at the top
+ * of this file.  The label still says WORSE so a real jump is visible in the
+ * table, it just isn't grounds for failing.
+ */
 function toHeapDelta(before: BaselineEntry, after: BaselineEntry): Delta {
 	if (!comparableHeap(before.heap) || !comparableHeap(after.heap)) return noDelta("too small");
-	return toDelta(before.heap, after.heap);
+	return { ...toDelta(before.heap, after.heap), regressed: false };
 }
 
 function toDelta(before: number | undefined, after: number | undefined): Delta {
@@ -280,7 +297,7 @@ export function compareBaseline(
 		timeDeltas.push(time.label);
 		heaps.push(entry?.heap === undefined ? "-" : formatBytes(entry.heap));
 		heapDeltas.push(heap.label);
-		if (time.regressed || heap.regressed) regressed = true;
+		if (time.regressed) regressed = true;
 	};
 
 	for (const [name, after] of Object.entries(current.benchmarks)) {
@@ -308,10 +325,13 @@ export function compareBaseline(
 	]);
 
 	console.log(
-		`\nFlagged beyond ${(noiseThreshold * 100).toFixed(0)}% on time or allocation. "too small" marks a benchmark`,
+		`\nTime is flagged beyond ${(noiseThreshold * 100).toFixed(0)}%, and is the only thing that fails a run.`,
 	);
 	console.log(
-		`allocating under ${(heapFloor / 1024).toFixed(0)} kb per iteration, where the heap probe isn't reliable.`,
+		`Allocation is shown to read, not to gate: its mean is unreliable at both ends. "too small"`,
+	);
+	console.log(
+		`marks a benchmark under ${(heapFloor / 1024).toFixed(0)} kb per iteration, below the probe's resolution.`,
 	);
 
 	if (failed.length > 0) {
