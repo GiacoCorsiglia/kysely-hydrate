@@ -108,12 +108,10 @@ function measure(name: string): Measurement {
 		throw new Error(`types/${name}.ts instantiated a different number of types on each run`);
 	}
 	const median = (xs: number[]) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-	const heap = verifyOnly ? undefined : checkOnce(file, true).heap;
 	return {
 		instantiations: first!.instantiations,
 		types: first!.types,
 		time: median(runs.map((r) => r.time)),
-		...(heap !== undefined && { heap }),
 	};
 }
 
@@ -127,7 +125,7 @@ if (names.length === 0) throw new Error(`No types fixture matches --filter ${fil
 
 // `empty` loads the library and the schema; the rest are reported net of it.
 const empty = measure("empty");
-const results = new Map(
+const results = new Map<string, Measurement>(
 	names.map((name) => {
 		const m = measure(name);
 		return [
@@ -139,6 +137,10 @@ const results = new Map(
 if (verifyOnly) {
 	console.log(`types: ${names.length} fixtures verified.`);
 	process.exit();
+}
+// Weighed after every fixture is timed, so the collections don't slow the timings.
+if (globalThis.gc) {
+	for (const [name, m] of results) m.heap = checkOnce(join(fixturesDir, `${name}.ts`), true).heap;
 }
 
 /** `p50` is check time and `count` net instantiations, so time is never misread. */
