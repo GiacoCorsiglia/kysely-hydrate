@@ -49,13 +49,22 @@ const db = emptyDb();
 const selectAliases = (aliases: readonly string[]) =>
 	rootNode(db.selectNoFrom(aliases.map((alias) => k.sql.lit(1).as(alias))));
 
+/** Every shortened name, so the scaling group knows the module-level map's exact size. */
+const registered = new Set<string>();
+const recordShortened = (identifiers: string[]) => {
+	for (const id of identifiers) if (id.includes("~")) registered.add(id);
+	return identifiers;
+};
+
 /**
  * Shortens `aliases` into the module-level map and marks `queryId` for
  * restoring, through `transformQuery`, the only entry point.
  */
 const registrar = fixLongAliases();
 const registerAliases = (aliases: readonly string[], queryId = k.createQueryId()) =>
-	outputAliases(registrar.transformQuery({ queryId, node: selectAliases(aliases) }));
+	recordShortened(
+		outputAliases(registrar.transformQuery({ queryId, node: selectAliases(aliases) })),
+	);
 
 const plugin = fixLongAliases();
 const camelPlugin = fixLongAliases(new k.CamelCasePlugin());
@@ -130,25 +139,28 @@ group({
 
 // `scan` exists so queries without a long identifier skip `transformNode`'s
 // deep clone.  CamelCasePlugin, the documented setup, deep-clones in its own right.
-const transformQuery = (p: k.KyselyPlugin, node: k.RootOperationNode) => ({
+// `join` is the posts join's alias as the database must see it, short enough to keep.
+const transformQuery = (p: k.KyselyPlugin, node: k.RootOperationNode, join: string) => ({
 	run: () => p.transformQuery({ queryId, node }),
 	check: (out: k.RootOperationNode) => {
 		const identifiers = identifiersIn(out);
 		assert.equal(identifiers.length, identifiersIn(node).length);
 		assert.ok(identifiers.every(fits));
+		assert.ok(identifiers.includes(join), `no ${join} in the output`);
 		// Nothing to shorten must mean no clone.
 		assert.equal(out === node, node === shortJoins);
 	},
 });
 
+const longQuery = transformQuery(plugin, longJoins, "postsAuthoredByEachRegisteredUser");
+const camelQuery = transformQuery(camelPlugin, longJoins, "posts_authored_by_each_registered_user");
 group({
-	"transformQuery, long identifiers": transformQuery(plugin, longJoins),
-	"transformQuery, no long identifiers": transformQuery(plugin, shortJoins),
-	"transformQuery, long identifiers, wrapping CamelCasePlugin": transformQuery(
-		camelPlugin,
-		longJoins,
-	),
+	"transformQuery, long identifiers": longQuery,
+	"transformQuery, no long identifiers": transformQuery(plugin, shortJoins, "posts"),
+	"transformQuery, long identifiers, wrapping CamelCasePlugin": camelQuery,
 });
+// Verifying shortens these into the map anyway; doing it now lets `registered` count them.
+for (const { run } of [longQuery, camelQuery]) recordShortened(identifiersIn(run()));
 
 // Aliases of a deep join's shape.  The shared prefix means shortened forms
 // differ only in the trailing hash, making `restore()` compare the most
@@ -163,8 +175,9 @@ const poolQueryId = k.createQueryId();
 const hashedShorts = registerAliases(pool.slice(0, HASHED_ALIASES), poolQueryId);
 
 /**
- * `hash()` is private and memoized per plugin, so it is measured by
- * difference: a fresh plugin has to hash all 100 aliases, a warm one none.
+ * `shorten()` is private and memoized per plugin, so it is measured by
+ * difference: a fresh plugin shortens all 100 aliases (hashing each, then
+ * searching for the longest prefix that fits beside the hash), a warm one none.
  */
 const warmPlugin = fixLongAliases();
 warmPlugin.transformQuery({ queryId, node: hashedNode });
@@ -175,56 +188,71 @@ const hashes = (p: () => k.KyselyPlugin) => ({
 
 group({
 	"transformQuery 100 long aliases, names cached": hashes(() => warmPlugin),
-	"transformQuery 100 long aliases, names hashed": hashes(() => fixLongAliases()),
+	"transformQuery 100 long aliases, names shortened": hashes(() => fixLongAliases()),
 	"fixLongAliases construction": { run: () => fixLongAliases() },
 });
 
 // On a miss, `restore()` walks all of `originalByShort` per pass, repeating
 // until a pass changes nothing, so a novel key costs time proportional to every
 // alias the process has ever shortened.  The map only grows, so these must run
-// in ascending order, each growing it on its first call; verifying them up
-// front would register the largest map before the smallest measurement.  So
-// each checks its own first result instead, which mitata discards as warmup.
-let registered = HASHED_ALIASES;
+// in ascending order, each growing it to exactly `aliases` entries on its first
+// call (the fixtures above already put 129 there, so the smallest is 200).
+// Verifying them up front would register the largest map before the smallest
+// measurement, so each checks its own first result instead, which mitata
+// discards as warmup.
+//
+// A subquery's shortened alias, hoisted and prefixed by an outer query, is long
+// again and shortened in turn.  Its original holds the inner short name, which
+// the map lists earlier, so restoring it takes a second substituting pass.
+const nestedOriginal = `hoistedByTheEnclosingQuery$$${hashedShorts[0]}`;
+const [nestedShort] = registerAliases([nestedOriginal], poolQueryId);
+const nestedRestored = nestedOriginal.replace(hashedShorts[0]!, () => pool[0]!);
+let nextPoolAlias = HASHED_ALIASES;
 let novelKeys = 0;
 
-/** `suffix` is the key's already-shortened tail, or one that matches nothing. */
-function novelKey(aliases: number, suffix = hashedShorts[0]!) {
+/** `suffix` is the key's already-shortened tail and `restored` its original, or neither. */
+function novelKey(aliases: number, suffix = nestedShort!, restored = nestedRestored) {
 	let checked = false;
 	return {
 		run: async () => {
-			if (aliases > registered) {
-				registerAliases(pool.slice(registered, aliases), poolQueryId);
-				registered = aliases;
+			const missing = aliases - registered.size;
+			if (missing > 0) {
+				registerAliases(pool.slice(nextPoolAlias, (nextPoolAlias += missing)), poolQueryId);
 			}
-			const result = { rows: [{ [`enclosingQuery${novelKeys++}$$${suffix}`]: 1 }] };
-			const restored = await plugin.transformResult({ queryId: poolQueryId, result });
+			const prefix = `enclosingQuery${novelKeys++}$$`;
+			const result = { rows: [{ [prefix + suffix]: 1 }] };
+			const out = await plugin.transformResult({ queryId: poolQueryId, result });
 			if (!checked) {
 				checked = true;
-				const [key] = Object.keys(restored.rows[0]!);
-				assert.ok(
-					key?.includes("$$") && !key.includes("~"),
-					`a novel key was left shortened: ${key}`,
-				);
+				assert.equal(registered.size, aliases);
+				assert.deepEqual(out.rows, [{ [prefix + restored]: 1 }]);
 			}
-			return restored;
+			return out;
 		},
 	};
 }
 
-// Restored once by verification and cached from then on: the scaling control.
-const cachedKeyResult = { rows: [{ [`enclosingQueryCached$$${hashedShorts[0]}`]: 1 }] };
+// Restored once by verification, which a single pass would get wrong, and
+// cached from then on: the scaling control.
+const cachedKeyResult = { rows: [{ [`enclosingQueryCached$$${nestedShort}`]: 1 }] };
 
 group({
 	"restore a cached key": {
 		run: () => plugin.transformResult({ queryId: poolQueryId, result: cachedKeyResult }),
-		check: ({ rows }) => assert.deepEqual(rows, [{ [`enclosingQueryCached$$${pool[0]}`]: 1 }]),
+		check: ({ rows }) =>
+			assert.deepEqual(rows, [{ [`enclosingQueryCached$$${nestedRestored}`]: 1 }]),
 	},
-	"restore a novel key, 100 aliases registered": novelKey(100),
+	"restore a novel key, 200 aliases registered": novelKey(200),
 	"restore a novel key, 1k aliases registered": novelKey(1_000),
 	"restore a novel key, 10k aliases registered": novelKey(10_000),
-	// Nothing to substitute, so one pass settles it: the gap is what the repeat costs.
-	"restore a novel inert key, 10k aliases registered": novelKey(10_000, "unshortened_column"),
+	// Nothing to substitute, so one pass settles it, over a shorter string: the
+	// nested key's extra time is its two extra passes plus splitting the longer
+	// strings they restore.
+	"restore a novel inert key, 10k aliases registered": novelKey(
+		10_000,
+		"unshortened_column",
+		"unshortened_column",
+	),
 });
 
 await runSuite();

@@ -3,24 +3,7 @@ import { DecimalStub, PlainDateStub } from "../src/helpers/order-by.test-stubs.t
 import { type OrderBy, sortBy, sqlCompare } from "../src/helpers/order-by.ts";
 import { createdPrefixedAccessor, getPrefixedValue } from "../src/helpers/prefixes.ts";
 import { group, runSuite, type Workload } from "./lib/harness.ts";
-import { range } from "./lib/rows.ts";
-
-/** A seeded Fisher-Yates shuffle (mulberry32), so every run sorts the same permutation. */
-function shuffle<T>(values: readonly T[], seed: number): T[] {
-	let state = seed >>> 0;
-	const random = () => {
-		state = (state + 0x6d2b79f5) >>> 0;
-		let t = Math.imul(state ^ (state >>> 15), 1 | state);
-		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	};
-	const result = values.slice();
-	for (let i = result.length - 1; i > 0; i--) {
-		const j = Math.floor(random() * (i + 1));
-		[result[i], result[j]] = [result[j]!, result[i]!];
-	}
-	return result;
-}
+import { range, shuffle } from "./lib/rows.ts";
 
 type Row = Record<`k${0 | 1 | 2 | 3 | 4}` | "tied", number>;
 type GetValue = (row: Row, key: keyof Row | ((row: Row) => unknown)) => unknown;
@@ -59,12 +42,16 @@ const asPrefixed = (rows: Row[]) =>
 		Object.fromEntries(Object.entries(row).map(([key, value]) => [PREFIX + key, value])),
 	) as unknown as Row[];
 
-/** Every ordering below is decided by `k0`, so a stable sort on it is the expected result. */
+/**
+ * Every ordering below is decided by its first on anything but `tied`, always
+ * `k0`, so a stable sort on it in that ordering's direction is the expected result.
+ */
 function sorting(rows: Row[], orderings: OrderBy<Row>[], getValue?: GetValue): Workload {
 	const k0 = (row: Row) => (getValue ? getValue(row, "k0") : row.k0) as number;
+	const sign = orderings.find(({ key }) => key !== "tied")!.direction === "desc" ? -1 : 1;
 	return {
 		run: () => sortBy(rows, orderings, getValue),
-		expected: rows.slice().sort((a, b) => k0(a) - k0(b)),
+		expected: rows.slice().sort((a, b) => sign * (k0(a) - k0(b))),
 	};
 }
 
@@ -85,7 +72,11 @@ const decidedByFirst: OrderBy<Row>[] = [
 	asc("k3"),
 	asc("k4"),
 ];
-const decidedByLast = (n: number) => [...Array<OrderBy<Row>>(n - 1).fill(asc("tied")), ...byK0];
+// Descending, so a sort that ignored direction fails.
+const decidedByLast = (n: number): OrderBy<Row>[] => [
+	...Array<OrderBy<Row>>(n - 1).fill(asc("tied")),
+	{ key: "k0", direction: "desc" },
+];
 
 group({
 	"sortBy 100 rows": sorting(rows100, byK0),

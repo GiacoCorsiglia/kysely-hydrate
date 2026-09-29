@@ -4,6 +4,7 @@
  * with `group()` and ends with `await runSuite()`.  See the README.
  */
 import assert from "node:assert/strict";
+import { constants } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, isDeepStrictEqual, parseArgs, type ParseArgsOptionsConfig } from "node:util";
@@ -31,10 +32,15 @@ const cliOptions = {
 	/** Run every suite's correctness checks and exit without timing anything. */
 	"verify-only": { type: "boolean" },
 	filter: { type: "string" },
-	/** Where baselines are read and written; `--ref` points this at a scratch directory. */
+	/** Where baselines are read and written. */
 	"baselines-dir": { type: "string" },
 	/** Label for a saved baseline; `--ref` passes the side's name. */
 	label: { type: "string" },
+	/**
+	 * Internal to `--ref`: save this run's results into the given directory,
+	 * even filtered, since each of its runs is compared only against the others.
+	 */
+	"ref-run-dir": { type: "string" },
 	/** `run.ts` only: compare the working tree against this git ref. */
 	ref: { type: "string" },
 	"postgres-url": { type: "string" },
@@ -42,7 +48,22 @@ const cliOptions = {
 } as const satisfies ParseArgsOptionsConfig;
 
 export function parseCli(args: string[], allowPositionals = false) {
-	return parseArgs({ args, options: cliOptions, allowPositionals, strict: true, tokens: true });
+	const parsed = parseArgs({
+		args,
+		options: cliOptions,
+		allowPositionals,
+		strict: true,
+		tokens: true,
+	});
+	const { save, compare, filter, "verify-only": verifyOnly } = parsed.values;
+	// A filtered save would drop every unmatched benchmark from the baseline.
+	if (save && filter !== undefined) {
+		throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
+	}
+	if (verifyOnly && (save || compare)) {
+		throw new Error("--verify-only times nothing, so there is nothing to --save or --compare");
+	}
+	return parsed;
 }
 
 let parsed: ReturnType<typeof parseCli>["values"] | undefined;
@@ -74,15 +95,15 @@ export function assertDeepEqual(actual: unknown, expected: unknown): void {
 	assert.fail(`Expected\n${brief(expected)}\nbut got\n${brief(actual)}`);
 }
 
-/** Everything declared with a check, in declaration order. */
-const verified = new Map<Workload<any>, string>();
+/** Every declared workload, in declaration order. */
+const declared = new Map<Workload<any>, string>();
 
 /**
  * Declares a mitata `summary()` group, each benchmark named `prefix` + its
  * key, the first the baseline the rest are compared against.  Every entry with
- * `expected` or `check` is run once and asserted before anything is timed; one
- * without is never run early, which a benchmark whose first call changes
- * shared state needs.
+ * `expected` or `check` is run once and asserted before anything is timed.
+ * One without is never run early when timing, which a benchmark whose first
+ * call changes shared state needs; `--verify-only` still runs it once.
  */
 export function group<R extends Record<string, unknown>>(
 	workloads: { [K in keyof R]: Workload<R[K]> },
@@ -100,22 +121,28 @@ export function group<R extends Record<string, unknown>>(
 				throw new Error(`Benchmark name is not usable as a --filter pattern: ${name}`);
 
 			const { run } = workload;
-			// mitata times a call as async when it returns a promise.
 			// `do_not_optimize` stops the JIT discarding work whose result is unused.
+			// A promise is returned as is: mitata awaits it, and a `.then()` here
+			// would double the cost of a sub-microsecond async call.
 			const b = bench(name, () => {
 				const result = run();
-				return result instanceof Promise ? result.then(do_not_optimize) : do_not_optimize(result);
+				do_not_optimize(result);
+				return result;
 			});
 			if (i === 0) b.baseline(true);
-			if (("expected" in workload || workload.check) && !verified.has(workload)) {
-				verified.set(workload, name);
-			}
+			if (!declared.has(workload)) declared.set(workload, name);
 		});
 	});
 }
 
+/**
+ * Runs and asserts every checked workload.  Under `--verify-only`, nothing is
+ * timed afterwards, so every unchecked one runs too, to prove it doesn't throw.
+ */
 async function verifyDeclared(): Promise<void> {
-	for (const [{ run, check, ...rest }, name] of verified) {
+	const all = cli()["verify-only"];
+	for (const [{ run, check, ...rest }, name] of declared) {
+		if (!all && !check && !("expected" in rest)) continue;
 		try {
 			const result = await run();
 			if ("expected" in rest) assertDeepEqual(result, rest.expected);
@@ -127,6 +154,57 @@ async function verifyDeclared(): Promise<void> {
 }
 
 ////////////////////////////////////////////////////////////
+// Tearing down.
+////////////////////////////////////////////////////////////
+
+const teardowns = new Set<() => unknown>();
+let tearingDown: Promise<void> | undefined;
+
+/** Runs every registered teardown, newest first, once; later calls await the first. */
+function teardown(): Promise<void> {
+	return (tearingDown ??= (async () => {
+		for (const fn of [...teardowns].reverse()) {
+			teardowns.delete(fn);
+			try {
+				await fn();
+			} catch (error) {
+				console.error("Teardown failed:", error);
+			}
+		}
+	})());
+}
+
+/** Tears down, then exits as the process would have. */
+const exitAfterTeardown = (code: number) => () => void teardown().finally(() => process.exit(code));
+
+let handling = false;
+
+/**
+ * Registers `fn` to release a resource the moment it's opened.  It runs once:
+ * at the end of `runSuite()`, on SIGINT or SIGTERM, or on an uncaught error,
+ * whichever comes first.  The returned function runs it early and forgets it.
+ */
+export function onTeardown(fn: () => unknown): () => Promise<void> {
+	if (!handling) {
+		handling = true;
+		for (const signal of ["SIGINT", "SIGTERM"] as const) {
+			process.on(signal, exitAfterTeardown(128 + constants.signals[signal]));
+		}
+		process.on("uncaughtException", (error) => {
+			console.error(error);
+			exitAfterTeardown(1)();
+		});
+	}
+	let done: Promise<void> | undefined;
+	const once = () => (done ??= (async () => void (await fn()))());
+	teardowns.add(once);
+	return async () => {
+		teardowns.delete(once);
+		await once();
+	};
+}
+
+////////////////////////////////////////////////////////////
 // Running.
 ////////////////////////////////////////////////////////////
 
@@ -135,32 +213,31 @@ interface SuiteOptions {
 	verify?: () => unknown;
 	/** Times the suite; defaults to running every declared `group()` through mitata. */
 	measure?: () => Measured | Promise<Measured>;
-	/** Releases what the suite opened, whether or not the run succeeded. */
-	teardown?: () => unknown;
 }
 
 /**
  * Verifies, measures, then saves or compares a baseline as the flags ask.
  * Verifying comes first because a change that makes a workload skip its work
  * would otherwise read as a large speedup.  A regression sets the exit code
- * instead of throwing, so the report is still printed.
+ * instead of throwing, so the report is still printed.  Every `onTeardown()`
+ * runs at the end, whether or not the run succeeded.
  */
-export async function runSuite({
-	verify,
-	measure = runMitata,
-	teardown,
-}: SuiteOptions = {}): Promise<void> {
+export async function runSuite({ verify, measure = runMitata }: SuiteOptions = {}): Promise<void> {
 	const suite = basename(process.argv[1] ?? "", ".bench.ts");
-	const { save, compare, filter, label, "baselines-dir": dir, "verify-only": verifyOnly } = cli();
+	const {
+		save,
+		compare,
+		filter,
+		label,
+		"baselines-dir": dir = join(benchmarksDir, "baselines"),
+		"ref-run-dir": refRunDir,
+		"verify-only": verifyOnly,
+	} = cli();
+	const path = (d: string) => join(d, `${suite}.json`);
 
 	try {
-		// A filtered save into the default directory would drop every unmatched benchmark.
-		if (save && filter !== undefined && dir === undefined) {
-			throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
-		}
-		const path = join(dir ?? join(benchmarksDir, "baselines"), `${suite}.json`);
 		// Read before running, so a missing baseline fails in a second, not minutes.
-		const before = compare ? readBaseline(path, suite) : undefined;
+		const before = compare ? readBaseline(path(dir), suite) : undefined;
 
 		await verifyDeclared();
 		await verify?.();
@@ -172,16 +249,17 @@ export async function runSuite({
 			label: label ?? new Date().toISOString(),
 			...(await measure()),
 		};
-		if (save) {
-			writeBaseline(path, after);
-			console.log(`\nSaved baseline to ${path}`);
+		for (const target of [save && dir, refRunDir]) {
+			if (!target) continue;
+			writeBaseline(path(target), after);
+			console.log(`\nSaved baseline to ${path(target)}`);
 		}
 		if (before && !compareBaselines(before, after, { reportMissing: filter === undefined })) {
 			process.exitCode = 1;
 		}
 	} finally {
 		// A pg pool left open would keep the process alive after a good report.
-		await teardown?.();
+		await teardown();
 	}
 }
 

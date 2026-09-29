@@ -4,7 +4,7 @@
  * which a user of the published `.d.ts` never checks, stay out of the count.
  * See the README for how the numbers are compared.
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { cpus } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,8 @@ import { formatBytes, formatTime, printTable } from "./lib/baseline.ts";
 import { benchmarksDir, cli, runSuite } from "./lib/harness.ts";
 
 const fixturesDir = join(benchmarksDir, "types");
+/** Checked first in every program; see the file. */
+const warmUp = join(fixturesDir, "warm-up.ts");
 const { options } = ts.getParsedCommandLineOfConfigFile(
 	join(benchmarksDir, "..", "tsconfig.json"),
 	{},
@@ -28,7 +30,7 @@ const { options } = ts.getParsedCommandLineOfConfigFile(
 const { filter } = cli();
 const pattern = filter === undefined ? undefined : new RegExp(filter);
 const names = readdirSync(fixturesDir)
-	.filter((f) => f.endsWith(".ts") && f !== "schema.ts")
+	.filter((f) => f.endsWith(".ts") && f !== "schema.ts" && f !== "warm-up.ts")
 	.map((f) => f.slice(0, -".ts".length))
 	.filter((n) => !pattern || pattern.test(n))
 	.sort();
@@ -38,21 +40,22 @@ let oldProgram: ts.Program | undefined;
 
 /**
  * Checks one fixture in a fresh program, reusing parsed files from the last
- * one.  The counts are taken around the fixture's own check, so loading the
- * library and the schema stays out of them.  Collecting garbage around the
- * check slows it down, so a call either times the check or weighs what it
- * retained, never both.
+ * one.  The counts are taken around the fixture's own check, after the
+ * warm-up's, so they are what the fixture adds on top of resolving the
+ * library's shared types; a fresh checker per call keeps them independent of
+ * which fixtures ran before.  Collecting garbage around the check slows it
+ * down, so a call either times the check or weighs what it retained, never both.
  */
 function checkOnce(name: string, weigh = false) {
 	const file = join(fixturesDir, `${name}.ts`);
 	const program = ts.createProgram({
-		rootNames: [file],
+		rootNames: [warmUp, file],
 		options,
 		...(oldProgram && { oldProgram }),
 	});
 	oldProgram = program;
-	program.getTypeChecker();
 	const source = program.getSourceFile(file)!;
+	const warmUpDiagnostics = program.getSemanticDiagnostics(program.getSourceFile(warmUp));
 	const counts = () => [program.getInstantiationCount(), program.getTypeCount()] as const;
 
 	const [i0, t0] = counts();
@@ -68,7 +71,30 @@ function checkOnce(name: string, weigh = false) {
 	gc?.();
 	const heap = gc && process.memoryUsage().heapUsed - heap0;
 	const [i1, t1] = counts();
-	return { diagnostics, instantiations: i1 - i0, types: t1 - t0, time, heap };
+	return {
+		diagnostics: [...warmUpDiagnostics, ...diagnostics],
+		instantiations: i1 - i0,
+		types: t1 - t0,
+		time,
+		heap,
+		program,
+		source,
+	};
+}
+
+/** Does `node` contain a call to expect-type's `toEqualTypeOf<...>()`? */
+function assertsType(checker: ts.TypeChecker, node: ts.Node): boolean {
+	const isAssertion =
+		ts.isCallExpression(node) &&
+		node.typeArguments?.length === 1 &&
+		ts.isPropertyAccessExpression(node.expression) &&
+		node.expression.name.text === "toEqualTypeOf" &&
+		!!checker
+			.getSymbolAtLocation(node.expression.name)
+			?.declarations?.some((d) => d.getSourceFile().fileName.includes("/expect-type/"));
+	return (
+		isAssertion || !!ts.forEachChild(node, (child) => assertsType(checker, child) || undefined)
+	);
 }
 
 /**
@@ -77,11 +103,10 @@ function checkOnce(name: string, weigh = false) {
  * speedup.
  */
 function verify(name: string): void {
-	const file = join(fixturesDir, `${name}.ts`);
-	if (!readFileSync(file, "utf8").includes(".toEqualTypeOf<")) {
+	const { diagnostics, program, source } = checkOnce(name);
+	if (!assertsType(program.getTypeChecker(), source)) {
 		throw new Error(`types/${name}.ts asserts nothing with expectTypeOf(...).toEqualTypeOf<...>()`);
 	}
-	const { diagnostics } = checkOnce(name);
 	if (diagnostics.length > 0) {
 		const host = {
 			getCanonicalFileName: (f: string) => f,

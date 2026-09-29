@@ -12,30 +12,49 @@ import * as k from "kysely";
 
 import { fixLongAliases, MAX_IDENTIFIER_BYTES } from "../src/fix-long-aliases.ts";
 import { querySet } from "../src/query-set.ts";
-import {
-	type DB,
-	DEPARTMENTS_PER_ORG,
-	EMPLOYEES_PER_DEPARTMENT,
-	ORGS,
-	seededPostgres,
-	seededSqlite,
-} from "./lib/db.ts";
-import { assertDeepEqual, cli, group, runSuite } from "./lib/harness.ts";
+import { type DB, seededPostgres, seededSqlite, tableRows } from "./lib/db.ts";
+import { assertDeepEqual, cli, group, onTeardown, runSuite } from "./lib/harness.ts";
 import { queries } from "./lib/queries.ts";
 
 const sqliteDb = await seededSqlite();
+onTeardown(() => sqliteDb.destroy());
 
+/** The URL with its password hidden, for printing. */
+function redact(url: string): string {
+	try {
+		const parsed = new URL(url);
+		if (parsed.password) parsed.password = "***";
+		return parsed.href;
+	} catch {
+		return "(an unparseable URL)";
+	}
+}
+
+/** Refused, or timed out connecting: pg-pool's messages for the latter carry no code. */
+const nothingListening = (error: unknown) =>
+	error instanceof Error &&
+	((error as NodeJS.ErrnoException).code === "ECONNREFUSED" ||
+		/^(Connection terminated due to connection timeout|timeout exceeded when trying to connect)$/.test(
+			error.message,
+		));
+
+/**
+ * Only the default URL may be unreachable: a URL someone gave, as CI does,
+ * must work.  Any failure after connecting, such as bad credentials or a
+ * failed seed, fails the run.
+ */
 async function connectPostgres() {
 	if (cli()["no-postgres"]) return console.log("Postgres benchmarks skipped: --no-postgres.\n");
-	const url =
-		cli()["postgres-url"] ??
-		process.env.POSTGRES_URL ??
-		"postgres://postgres:postgres@localhost:5434/kysely_hydrate_test";
+	const given = cli()["postgres-url"] ?? process.env.POSTGRES_URL;
+	const url = given ?? "postgres://postgres:postgres@localhost:5434/kysely_hydrate_test";
 	try {
 		return await seededPostgres(url);
 	} catch (error) {
+		if (given !== undefined || !nothingListening(error)) {
+			throw new Error(`Postgres benchmarks failed on ${redact(url)}`, { cause: error });
+		}
 		console.log(
-			`Postgres benchmarks skipped: cannot reach ${url}\n  ${String(error)}\n` +
+			`Postgres benchmarks skipped: nothing listening on ${redact(url)}\n  ${String(error)}\n` +
 				"  Start one with: docker compose up --detach --wait postgres\n",
 		);
 	}
@@ -60,6 +79,19 @@ async function users(): Promise<Users> {
 	return reference;
 }
 const allUsers = async (out: unknown) => assertDeepEqual(out, await users());
+
+/** `value` with every key camelCased, as `CamelCasePlugin` returns it. */
+const camelKeys = (value: unknown): unknown =>
+	Array.isArray(value)
+		? value.map(camelKeys)
+		: typeof value === "object" && value !== null
+			? Object.fromEntries(
+					Object.entries(value).map(([key, v]) => [
+						key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()),
+						camelKeys(v),
+					]),
+				)
+			: value;
 
 function declareDialect(dialect: string, db: k.Kysely<DB>) {
 	const { users: userSet, postsComments } = queries(db);
@@ -171,22 +203,24 @@ function orgHierarchy(db: k.Kysely<DB>, ...names: [departments: string, employee
 		)
 		.orderBy("id");
 
+	// Whatever aliases Postgres saw, the rows come back under the names asked for.
+	const rows = tableRows();
+	const expected = rows.organizations.map((org) => ({
+		...org,
+		[departments]: rows.organizational_departments
+			.filter((d) => d.organization_id === org.id)
+			.map(({ id, organization_id }) => ({
+				id,
+				organization_id,
+				[employees]: rows.departmental_employee_records.filter(
+					(e) => e.organizational_department_id === id,
+				),
+			})),
+	}));
 	const deepest = `${departments}$$${employees}$$employee_secondary_contact_email_address`;
 	return {
 		run: () => query.execute(),
-		check: (orgs: Record<string, any>[]) => {
-			assert.equal(orgs.length, ORGS);
-			assert.equal(orgs[0]![departments].length, DEPARTMENTS_PER_ORG);
-			const staff = orgs[0]![departments][0][employees];
-			assert.equal(staff.length, EMPLOYEES_PER_DEPARTMENT);
-			// Whatever aliases Postgres saw, the rows come back under the names asked for.
-			assert.deepEqual(staff[0], {
-				id: 1,
-				organizational_department_id: 1,
-				employee_preferred_full_display_name: "Employee 1",
-				employee_secondary_contact_email_address: "employee1@example.com",
-			});
-		},
+		check: (orgs: unknown) => assertDeepEqual(orgs, expected),
 		overflows: Buffer.byteLength(deepest) > MAX_IDENTIFIER_BYTES,
 	};
 }
@@ -208,14 +242,7 @@ if (postgres) {
 		"postgres execute, fixLongAliases": { run: () => fixed.execute(), check: allUsers },
 		"postgres execute, fixLongAliases with CamelCasePlugin": {
 			run: () => camel.execute(),
-			check: (out) => {
-				const users = out as unknown as {
-					posts: { userId: number; comments: { postId: number }[] }[];
-				}[];
-				assert.equal(users.length, 500);
-				assert.equal(users[0]!.posts[0]!.userId, 1);
-				assert.equal(users[0]!.posts[0]!.comments[0]!.postId, 1);
-			},
+			check: async (out) => assertDeepEqual(out, camelKeys(await users())),
 		},
 	});
 
@@ -230,9 +257,4 @@ if (postgres) {
 	});
 }
 
-await runSuite({
-	teardown: async () => {
-		await sqliteDb.destroy();
-		await postgres?.destroy();
-	},
-});
+await runSuite();

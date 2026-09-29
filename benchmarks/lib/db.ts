@@ -6,6 +6,7 @@ import SQLite from "better-sqlite3";
 import * as k from "kysely";
 import pg from "pg";
 
+import { onTeardown } from "./harness.ts";
 import { makeRows, range } from "./rows.ts";
 
 export interface DB {
@@ -50,15 +51,15 @@ export function emptyDb(): k.Kysely<DB> {
 	return new k.Kysely<DB>({ dialect: new k.SqliteDialect({ database }) });
 }
 
-export const ORGS = 20;
-export const DEPARTMENTS_PER_ORG = 3;
-export const EMPLOYEES_PER_DEPARTMENT = 5;
+const ORGS = 20;
+const DEPARTMENTS_PER_ORG = 3;
+const EMPLOYEES_PER_DEPARTMENT = 5;
 
 /**
  * Each table's rows, taken from the same join rows the `hydrate` suite
  * hydrates, so the users -> posts -> comments join returns exactly those.
  */
-function tableRows(): { [T in keyof DB]: DB[T][] } {
+export function tableRows(): { [T in keyof DB]: DB[T][] } {
 	const byId = <T extends { id: number }>(rows: T[]) => [
 		...new Map(rows.map((r) => [r.id, r])).values(),
 	];
@@ -115,7 +116,9 @@ export const seededSqlite = () => seed(emptyDb());
 
 /**
  * Seeds a fresh schema of its own, set as every pooled connection's search
- * path, so `destroy()` drops it and closes the pool in one go.
+ * path.  Dropping it and closing the pool is registered with `onTeardown()`
+ * before anything is created, so an interrupted run or a failed seed leaves
+ * nothing behind.
  */
 export async function seededPostgres(connectionString: string) {
 	const name = `bench_${Math.random().toString(36).slice(2, 10)}`;
@@ -126,18 +129,25 @@ export async function seededPostgres(connectionString: string) {
 		connectionTimeoutMillis: 2_000,
 		options: `-c search_path=${name}`,
 	});
+	const db = new k.Kysely<DB>({ dialect: new k.PostgresDialect({ pool }) });
+	let created = false;
+	const destroy = onTeardown(async () => {
+		try {
+			if (created) await k.sql.raw(`DROP SCHEMA ${name} CASCADE`).execute(db);
+		} finally {
+			await db.destroy();
+		}
+	});
 	try {
+		// One implicit transaction: the schema exists only if every table does.
 		await pool.query(`CREATE SCHEMA ${name}; ${schema}`);
+		created = true;
+		await seed(db);
+		// Fresh statistics, so query plans don't depend on when autovacuum ran.
+		await k.sql.raw(`ANALYZE ${Object.keys(tableRows()).join(", ")}`).execute(db);
 	} catch (error) {
-		await pool.end().catch(() => {});
+		await destroy();
 		throw error;
 	}
-	const db = await seed(new k.Kysely<DB>({ dialect: new k.PostgresDialect({ pool }) }));
-	return {
-		db,
-		destroy: async () => {
-			await k.sql.raw(`DROP SCHEMA ${name} CASCADE`).execute(db);
-			await db.destroy();
-		},
-	};
+	return { db, destroy };
 }

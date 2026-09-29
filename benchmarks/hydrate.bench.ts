@@ -17,6 +17,7 @@ import {
 	makeJoinRows,
 	makeRows,
 	range,
+	shuffle,
 } from "./lib/rows.ts";
 
 /**
@@ -164,10 +165,14 @@ group({
 		rows10k,
 		equalTo(extras),
 	),
+	// `rows10k` is in key order at every level, which would make ordering it
+	// TimSort's best case and grouping it unordered match `base` already.  Each
+	// user's rows are shuffled instead (`sort: "nested"` leaves the top level to
+	// SQL), so only ordering every nested level by key rebuilds `base`'s output.
 	"10k rows, orderByKeys": hydrating(
 		every((h) => h.orderByKeys()),
-		rows10k,
-		sizes([500, 2500, 10_000], "posts", "comments"),
+		range(500).flatMap((u) => shuffle(rows10k.slice(u * 20, u * 20 + 20), u)),
+		equalTo(base),
 	),
 	"10k rows, mapped": hydrating(
 		nested.map((u: any) => ({ ...u, label: `${u.username} has ${u.posts.length} posts` })),
@@ -223,23 +228,31 @@ group({
 	"10k duplicated rows to 500 entities": hydrating(flat, rows10k, sizes([500])),
 });
 
-/** `tenant_id` derives from `id`, so both keys group identically: arity is the only variable. */
+/**
+ * Entity `n` is keyed by `uid: n` alone, or by `tenant_id` and `id`, each of
+ * which repeats: grouping by either column alone merges entities.  The two keys
+ * group identically, so arity is the only variable.
+ */
+const tenantKeys = (n: number, prefix = "") => ({
+	[`${prefix}uid`]: n,
+	[`${prefix}tenant_id`]: 1 + ((n - 1) % 4),
+	[`${prefix}id`]: Math.ceil(n / 4),
+});
 const compositeRows = rows10k.map((row) => ({
-	tenant_id: 1 + (row.id % 4),
-	id: row.id,
-	items$$tenant_id: 1 + (row.id % 4),
-	items$$id: row.posts$$id,
+	...tenantKeys(row.id),
+	...tenantKeys(row.posts$$id!, "items$$"),
 	items$$label: row.posts$$title,
 }));
-const keyed = (k: string | [string, string]) =>
+const keyed = (k: string | [string, string], check: (out: any) => unknown) =>
 	hydrating(
 		createHydrator<any>(k).hasMany("items", "items$$", (h: any) => h(k)),
 		compositeRows,
-		sizes([500, 2500], "items"),
+		check,
 	);
+const singleKey = keyed("uid", sizes([500, 2500], "items"));
 group({
-	"10k rows, single column key": keyed("id"),
-	"10k rows, two column key": keyed(["tenant_id", "id"]),
+	"10k rows, single column key": singleKey,
+	"10k rows, two column key": keyed(["tenant_id", "id"], equalTo(singleKey)),
 });
 
 // Same fetched row count at both levels; nested attaches key 2,500 parents, not 500.

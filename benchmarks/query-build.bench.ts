@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import { querySet } from "../src/query-set.ts";
 import { emptyDb } from "./lib/db.ts";
-import { group, runSuite } from "./lib/harness.ts";
+import { assertDeepEqual, group, runSuite } from "./lib/harness.ts";
 import { queries } from "./lib/queries.ts";
 import { range } from "./lib/rows.ts";
 
@@ -18,9 +18,9 @@ interface Compilable {
 	compile(): { sql: string };
 }
 
-/** What an entry's compiled SQL must look like. */
+/** What an entry's compiled SQL must look like.  Every entry counts its joins, so none can drop one. */
 interface Shape {
-	joins?: number;
+	joins: number;
 	has?: RegExp | RegExp[];
 	lacks?: RegExp;
 }
@@ -30,7 +30,7 @@ type Entry = [qs: Compilable, shape: Shape];
 const joinCount = (sql: string) => (sql.match(/ join /g) ?? []).length;
 
 const assertShape = (sql: string, { joins, has = [], lacks }: Shape) => {
-	if (joins !== undefined) assert.equal(joinCount(sql), joins);
+	assert.equal(joinCount(sql), joins);
 	for (const pattern of [has].flat()) assert.match(sql, pattern);
 	if (lacks) assert.doesNotMatch(sql, lacks);
 };
@@ -170,11 +170,11 @@ compileGroup(
 // lands on the joined query.  The unpaginated rows are the reference points.
 compileGroup({
 	"many join, no pagination": [manyJoin, { joins: 1, lacks: /limit|offset/ }],
-	"many join, limit": [manyJoin.limit(50), { has: wrapped("user") }],
-	"many join, offset": [manyJoin.offset(50), { has: wrapped("user") }],
+	"many join, limit": [manyJoin.limit(50), { joins: 1, has: wrapped("user") }],
+	"many join, offset": [manyJoin.offset(50), { joins: 1, has: wrapped("user") }],
 	"one join, no pagination": [oneJoin, { joins: 1, lacks: /limit|offset/ }],
-	"one join, limit": [oneJoin.limit(50), { has: /limit \?$/, lacks: wrapped("user") }],
-	"one join, offset": [oneJoin.offset(50), { has: /offset \?$/, lacks: wrapped("user") }],
+	"one join, limit": [oneJoin.limit(50), { joins: 1, has: /limit \?$/, lacks: wrapped("user") }],
+	"one join, offset": [oneJoin.offset(50), { joins: 1, has: /offset \?$/, lacks: wrapped("user") }],
 });
 
 // With a many-join and pagination, the write CTE is hoisted above the derived table.
@@ -187,11 +187,11 @@ compileGroup({
 	),
 	"insertAs, returningAll": [
 		querySet(db).insertAs("post", (d) => d.insertInto("posts").values(insertRow).returningAll()),
-		{ has: /returning \*\)/ },
+		{ joins: 0, has: /returning \*\)/ },
 	],
 	"insertAs with many join, limit": [
 		withComments(insert).limit(10),
-		{ has: [writeCte('insert into "posts"'), wrapped("post")] },
+		{ joins: 1, has: [writeCte('insert into "posts"'), wrapped("post")] },
 	],
 	"insert on a select base": [
 		manyJoin.insert(
@@ -203,7 +203,10 @@ compileGroup({
 
 compileGroup({
 	"no joins": [users, { joins: 0, has: /from "users"/ }],
-	"no joins, where": [users.where("username", "=", "name"), { has: /where "username" = \?/ }],
+	"no joins, where": [
+		users.where("username", "=", "name"),
+		{ joins: 0, has: /where "username" = \?/ },
+	],
 	"no joins, CTE base": [
 		querySet(db).selectAs(
 			"user",
@@ -212,37 +215,42 @@ compileGroup({
 				.selectFrom("users")
 				.select(["id", "username", "email"]),
 		),
-		{ has: /with "recent" as \(/ },
+		{ joins: 0, has: /with "recent" as \(/ },
 	],
 	"many join, where": [
 		manyJoin.where("username", "=", "name"),
 		{ joins: 1, has: /where "username" = \?/ },
 	],
-	"many join, orderBy": [manyJoin.orderBy("username"), { has: /order by "user"."username" asc/ }],
+	"many join, orderBy": [
+		manyJoin.orderBy("username"),
+		{ joins: 1, has: /order by "user"."username" asc/ },
+	],
 });
 
 // Terminals over one query set: depth 2, ordered, and limited, so the wrap is in play.
 const representative = usersPostsComments.orderBy("id").limit(500);
 const compiled = (check: (sql: string) => unknown) => (q: Compilable) => check(q.compile().sql);
+/** The representative's full query: both joins, around the wrapped pagination. */
+const full: Shape = { joins: 2, has: wrapped("user") };
 
 group({
-	// The one benchmark that constructs inside the measured call: it builds
-	// `representative` from scratch, so each terminal reads as what it adds.
+	// Builds `representative` from scratch inside the measured call; the
+	// terminals run on it prebuilt, so none of them includes this cost.
 	"querySet build": {
 		run: () => queries(db).usersPostsComments.orderBy("id").limit(500),
 		check: compiled((sql) => assert.equal(sql, representative.compile().sql)),
 	},
 	"querySet toQuery": {
 		run: () => representative.toQuery(),
-		check: compiled((sql) => assert.match(sql, /^select /)),
+		check: compiled((sql) => assertShape(sql, full)),
 	},
 	"querySet compile": {
 		run: () => representative.compile(),
-		check: ({ sql }) => assert.match(sql, wrapped("user")),
+		check: ({ sql }) => assertShape(sql, full),
 	},
 	"querySet toOperationNode": {
 		run: () => representative.toOperationNode(),
-		check: (node) => assert.equal(node.kind, "SelectQueryNode"),
+		check: (node) => assertDeepEqual(node, representative.toQuery().toOperationNode()),
 	},
 	// Returns the stored base query untouched: the floor, not a ratio to read.
 	"querySet toBaseQuery": {

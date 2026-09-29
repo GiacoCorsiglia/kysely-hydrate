@@ -41,13 +41,16 @@ interface Trials {
 /** A relative change below this is machine noise, not a change in the code. */
 const noiseThreshold = 0.2;
 
-/** A deterministic count only moves when the code does, so its band is tight. */
-const countThreshold = 0.02;
+/**
+ * A deterministic count only moves when the code does, so its band is tight:
+ * doubling `Flatten`'s mapped work moved the netted counts by only 1-2.4%.
+ */
+const countThreshold = 0.005;
 
 /**
- * Allocation per iteration below which a heap reading isn't compared.  It sits
- * well above the ~20 kb a garbage collection can add when it lands inside a
- * sample.
+ * Allocation per iteration below which, on both sides, heap isn't compared.
+ * It sits well above the ~20 kb a garbage collection can add when it lands
+ * inside a sample.
  */
 const heapFloor = 64 * 1024;
 
@@ -60,7 +63,8 @@ export function fromTrials(trials: Trials): Measured {
 		benchmarks[alias] = { p50: stats.p50, ...(stats.heap && { heap: stats.heap.avg }) };
 	}
 	return {
-		runtime: trials.context.runtime ?? "unknown",
+		// With the version, so a Node upgrade shows as a different runtime.
+		runtime: `${trials.context.runtime ?? "unknown"} ${process.version}`,
 		cpu: trials.context.cpu.name ?? "unknown",
 		benchmarks,
 	};
@@ -74,9 +78,15 @@ export function readBaseline(path: string, suite: string): Baseline {
 	} catch (cause) {
 		throw new Error(`Could not read a benchmark baseline from ${path}`, { cause });
 	}
-	if (parsed?.version !== 2 || typeof parsed.benchmarks !== "object") {
-		throw new Error(`${path} is not a version 2 benchmark baseline; re-record it`);
-	}
+	const isRecord = (v: unknown): v is Record<string, unknown> =>
+		typeof v === "object" && v !== null && !Array.isArray(v);
+	const valid =
+		isRecord(parsed) &&
+		parsed.version === 2 &&
+		(["label", "runtime", "cpu"] as const).every((key) => typeof parsed[key] === "string") &&
+		isRecord(parsed.benchmarks) &&
+		Object.values(parsed.benchmarks).every((e) => isRecord(e) && typeof e.p50 === "number");
+	if (!valid) throw new Error(`${path} is not a version 2 benchmark baseline; re-record it`);
 	if (parsed.suite !== suite) {
 		throw new Error(`${path} was recorded for suite "${parsed.suite}", not "${suite}"`);
 	}
@@ -88,16 +98,26 @@ export function writeBaseline(path: string, baseline: Baseline): void {
 	writeFileSync(path, `${JSON.stringify(baseline, null, 2)}\n`);
 }
 
+/** Throws unless every run recorded the same benchmarks, naming any that some lack. */
+export function assertSameBenchmarks(runs: readonly Baseline[]): void {
+	const names = new Set(runs.flatMap((r) => Object.keys(r.benchmarks)));
+	const partial = [...names].filter((name) => runs.some((r) => !(name in r.benchmarks)));
+	if (partial.length > 0) {
+		throw new Error(`Missing from some runs: ${partial.join(", ")}`);
+	}
+}
+
 /**
  * Averages several runs of one suite into one.  `--ref` mode records each side
  * twice, in ABBA order, so that drift over the session cancels out rather than
- * favouring whichever side ran second.
+ * favouring whichever side ran second.  Every run must record the same
+ * benchmarks, so one a run skipped can't vanish from the comparison.
  */
 export function mergeBaselines(runs: readonly [Baseline, ...Baseline[]]): Baseline {
+	assertSameBenchmarks(runs);
 	const benchmarks: Record<string, BaselineEntry> = {};
 	for (const name of Object.keys(runs[0].benchmarks)) {
 		const entries = runs.map((r) => r.benchmarks[name]);
-		if (entries.some((e) => e === undefined)) continue;
 		const merged: Partial<BaselineEntry> = {};
 		for (const key of ["p50", "heap", "count"] as const) {
 			const values = entries.map((e) => e![key]);
@@ -155,8 +175,10 @@ export function printTable(header: readonly string[], rows: readonly (readonly s
 /**
  * Prints each benchmark's median time and mean allocation against `before`,
  * and its count when it has one.  Returns true when nothing regressed: the
- * count where there is one, the time otherwise.  `reportMissing` is false for
- * a filtered run, where almost everything is missing by design.
+ * count where there is one, the time otherwise.  A benchmark in `before` but
+ * not `after` fails too, unless `reportMissing` is false: a filtered run,
+ * where almost everything is missing by design.  So does a run where nothing
+ * was compared.
  */
 export function compareBaselines(
 	before: Baseline,
@@ -172,6 +194,7 @@ export function compareBaselines(
 	const counted = Object.values(after.benchmarks).some((e) => e.count !== undefined);
 	const rows: string[][] = [];
 	let regressed = false;
+	let compared = 0;
 
 	for (const [name, now] of Object.entries(after.benchmarks)) {
 		const then = before.benchmarks[name];
@@ -184,9 +207,12 @@ export function compareBaselines(
 		const time = then ? delta(then.p50, now.p50, counted ? Infinity : noiseThreshold) : isNew;
 		const heap = !then
 			? "new"
-			: (then.heap ?? 0) < heapFloor || (now.heap ?? 0) < heapFloor
-				? "too small"
-				: delta(then.heap!, now.heap!).label;
+			: then.heap === undefined || now.heap === undefined
+				? "-"
+				: Math.max(then.heap, now.heap) < heapFloor
+					? "too small"
+					: delta(then.heap, now.heap).label;
+		if (then) compared++;
 		regressed ||= counted ? count.regressed : time.regressed;
 		rows.push([
 			name,
@@ -201,6 +227,7 @@ export function compareBaselines(
 	if (reportMissing) {
 		for (const name of Object.keys(before.benchmarks)) {
 			if (!(name in after.benchmarks)) {
+				regressed = true;
 				rows.push([name, ...(counted ? ["-", "missing"] : []), "-", "missing", "-", "missing"]);
 			}
 		}
@@ -223,10 +250,10 @@ export function compareBaselines(
 			: `\nTime beyond ±${noiseThreshold * 100}% is flagged and fails the run; allocation is shown only.`,
 	);
 
-	// An empty table means the filter matched nothing; passing it would turn a
-	// typo into a green check.
-	if (rows.length === 0) {
-		console.log("\n  ! No benchmarks ran, so nothing was compared.");
+	// Nothing compared means a filter matched nothing, or the baseline shares no
+	// benchmark with this run; passing it would turn a typo into a green check.
+	if (compared === 0) {
+		console.log("\n  ! No benchmark was in both runs, so nothing was compared.");
 		return false;
 	}
 	return !regressed;
