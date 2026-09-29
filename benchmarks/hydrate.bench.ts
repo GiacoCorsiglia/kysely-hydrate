@@ -1,463 +1,348 @@
-/**
- * Hydration: turning flat join rows into nested objects.  This is the library's
- * hottest runtime path and the one most worth watching.
- *
- * Run through `npm run bench` (see `run.ts` for the flags).  The `summary()`
- * groupings below compare benchmarks against each other within a single
- * process, which is the trustworthy comparison: every variant sees the same
- * heap, the same JIT state and the same machine.
- *
- * Hydration is object-graph construction, so how much it allocates is as much
- * the story as how long it takes; the suite runs under `--expose-gc` so mitata
- * reports both.
- */
+/** Hydration: turning flat join rows into nested objects, the hottest runtime path. */
 import assert from "node:assert/strict";
 
 import { summary } from "mitata";
 
-import { createHydrator } from "../src/hydrator.ts";
+import {
+	type CollectionMode,
+	createHydrator,
+	type FullHydrator,
+	type HydrateOptions,
+	type MappedHydrator,
+} from "../src/hydrator.ts";
 import { benchAsync, runSuite } from "./lib/harness.ts";
 import {
 	autoIncluded,
-	type FlatRow,
+	chainJoins,
 	type HydratedUser,
+	type Join,
 	makeDistinctRows,
+	makeJoinRows,
 	makeRows,
 	querySetOptions,
+	type Row,
 	times,
 	withSort,
 } from "./lib/rows.ts";
 
-////////////////////////////////////////////////////////////
-// Rows.
-////////////////////////////////////////////////////////////
+type Level = FullHydrator<any, any>;
+type Workload = readonly [MappedHydrator<any, unknown>, input: unknown, options?: HydrateOptions];
 
-const rows1 = makeRows(1, 5, 4); // 20 rows -> 1 entity
-const rows10 = makeRows(10, 5, 4); // 200 rows -> 10 entities
-const rows1k = makeRows(50, 5, 4); // 1,000 rows -> 50 entities
-const rows10k = makeRows(500, 5, 4); // 10,000 rows -> 500 entities
-const distinctRows10k = makeDistinctRows(10_000); // 10,000 rows -> 10,000 entities
+const hydrate = ([hydrator, input, options = querySetOptions]: Workload) =>
+	hydrator.hydrate(input as never, options);
+const hydrated = async <T = any[]>(w: Workload) => autoIncluded<T>(await hydrate(w));
 
 /**
- * Rows whose joins all missed, as a left join leaves them.  `groupByKey` skips
- * null keys, so nested collections stay empty and the per-entity work is only
- * the base level.  Each of the 500 rows is repeated by reference rather than
- * copied, so this allocates less up front than a driver's result would; it
- * changes nothing the hydrator does, but the heap figure is the hydrator's
- * alone.
+ * Declares a `summary()` group, the first entry its baseline.  `gc` suits
+ * ms-scale workloads allocating megabytes per call (see the README).
  */
+function group(workloads: Record<string, Workload>, { gc = true } = {}) {
+	summary(() => {
+		Object.entries(workloads).forEach(([name, w], i) =>
+			benchAsync(name, () => hydrate(w), { baseline: i === 0, gcEachIteration: gc }),
+		);
+	});
+}
+
+/** The columns at `prefix`'s own level of `row`, unprefixed. */
+const ownColumns = (row: object, prefix: string) =>
+	Object.keys(row)
+		.filter((k) => k.startsWith(prefix) && !k.slice(prefix.length).includes("$$"))
+		.map((k) => k.slice(prefix.length));
+
+/**
+ * A hydrator for `joins`, nesting each as `mode`, with `modify` applied at
+ * every level (given that level's columns, read from `sample`).
+ */
+interface Nesting {
+	modify?: (h: Level, columns: string[]) => Level;
+	mode?: CollectionMode;
+	sample?: object | undefined;
+}
+
+function nest(
+	joins: readonly Join[],
+	{ modify = (h) => h, mode = "many", sample = {} }: Nesting = {},
+	prefix = "",
+	h: Level = createHydrator<any>("id"),
+): Level {
+	return joins.reduce(
+		(parent, { name, joins = [] }) =>
+			parent.has(mode, name, `${name}$$`, (c: any) =>
+				nest(joins, { modify, mode, sample }, `${prefix}${name}$$`, c("id")),
+			),
+		modify(h, ownColumns(sample, prefix)),
+	);
+}
+
+/** Flattens `entities` along `path`, so a dropped level shows as a short count. */
+const descend = (entities: any[], path: string[]): any[] =>
+	path.reduce((level, key) => level.flatMap((e) => e[key]), entities);
+
+////////////////////////////////////////////////////////////
+// Fixtures.
+////////////////////////////////////////////////////////////
+
+const chain = chainJoins([5, 4]);
+const rows1 = makeRows(1, 5, 4);
+const rows10 = makeRows(10, 5, 4);
+const rows1k = makeRows(50, 5, 4);
+const rows10k = makeRows(500, 5, 4);
+const distinctRows10k = makeDistinctRows(10_000);
+/** Rows are repeated by reference, so the heap figure is the hydrator's alone. */
 const nullJoinRows10k = makeDistinctRows(500).flatMap((row) => times(20, () => row));
-
-/**
- * One post per user and one comment per post, so `hasOne` and `hasMany` are both
- * valid over exactly these rows.  Any wider fixture makes `hasOne` throw a
- * cardinality violation rather than measure anything, so this is the only shape
- * that compares the two fairly.
- */
+/** One child per parent: any wider and `hasOne` throws instead of measuring. */
 const oneToOneRows10k = makeRows(10_000, 1, 1);
 
-////////////////////////////////////////////////////////////
-// Hydrators.
-////////////////////////////////////////////////////////////
+const nested = nest(chain);
+const flat = createHydrator<any>("id");
+const every = (modify: (h: Level, columns: string[]) => Level) =>
+	nest(chain, { modify, sample: rows10k[0] });
+const key = (r: { id: number }) => r.id * 2;
 
-/** No orderings, so hydration never sorts regardless of the sort mode. */
-const nested = createHydrator<FlatRow>("id").hasMany("posts", "posts$$", (h) =>
-	h("id").hasMany("comments", "comments$$", (h) => h("id")),
-);
+const attached = (parents: number, perParent: number, parentKey: string) =>
+	times(parents * perParent, (id) => ({ id, [parentKey]: Math.ceil(id / perParent), label: `A${id}` }));
+const withAttaches = (users: number) => {
+	const [posts, profiles] = [attached(users, 5, "user_id"), attached(users, 1, "user_id")];
+	return nested
+		.attachMany("otherPosts", () => posts, { matchChild: "user_id" })
+		.attachOne("profile", () => profiles, { matchChild: "user_id" });
+};
+const likesPerUser = attached(500, 5, "user_id");
+const likesPerPost = attached(2500, 1, "post_id");
 
-const nestedWithExtras = createHydrator<FlatRow>("id")
-	.extras({ upper: (r) => r.username.toUpperCase() })
-	.hasMany("posts", "posts$$", (h) =>
-		h("id")
-			.extras({ slug: (r) => String(r.title).toLowerCase() })
-			.hasMany("comments", "comments$$", (h) => h("id")),
-	);
+/** Output objects built by keyed stores leave V8's fast mode between 16 and 20 columns. */
+const WIDTHS = [9, 16, 20, 30, 60];
+const wideRows = (columns: number) =>
+	times(2000, (id) => {
+		const row: Row = { id };
+		for (let c = 1; c < columns; c++) row[`col${c}`] = `value ${id}-${c}`;
+		return row;
+	});
 
-/**
- * Orders by strings at every level, the expensive case: sorting is skipped
- * entirely unless a level declares an ordering, so this is the only hydrator
- * whose sort mode changes what runs.
- */
-const nestedSorted = createHydrator<FlatRow>("id")
-	.orderBy("username", "desc")
-	.hasMany("posts", "posts$$", (h) =>
-		h("id")
-			.orderBy("title", "desc")
-			.hasMany("comments", "comments$$", (h) => h("id").orderBy("content", "desc")),
-	);
+const DEPTH_FAN_OUT = [[16], [4, 4], [4, 2, 2], [2, 2, 2, 2]];
+const depthJoins = DEPTH_FAN_OUT.map((fanOut) => chainJoins(fanOut));
+const chainNames = (joins: Join[]): string[] =>
+	joins.length ? [joins[0]!.name, ...chainNames(joins[0]!.joins ?? [])] : [];
 
-/** Ordering by the numeric key columns only, the cheaper sorting case. */
-const nestedKeyed = nested.orderByKeys();
+const siblingJoins: Join[] = [
+	{ name: "posts", count: 10, text: "title" },
+	{ name: "tags", count: 10 },
+];
+const singleJoin: Join[] = [{ name: "posts", count: 20, text: "title" }];
 
-const flat = createHydrator<FlatRow>("id");
-
-/**
- * The same rows through `hasOne` rather than `hasMany`.  A one-collection keeps
- * a single child instead of building an array, so this is the shape a query
- * without row explosion produces.
- */
-const nestedOne = createHydrator<FlatRow>("id").hasOne("post", "posts$$", (h) =>
-	h("id").hasOne("comment", "comments$$", (h) => h("id")),
-);
-
-/**
- * Auto-inclusion has to work out the field list per level from the rows; naming
- * fields explicitly skips that.  Both produce the same output here, so the gap
- * is the cost of inferring it.
- */
-const nestedExplicitFields = createHydrator<FlatRow>("id")
-	.fields(["id", "username", "email"])
-	.hasMany("posts", "posts$$", (h) =>
-		h("id")
-			.fields(["id", "title", "user_id"])
-			.hasMany("comments", "comments$$", (h) => h("id").fields(["id", "content", "post_id"])),
-	);
-
-/** `.map()` is terminal, and runs once per top-level entity. */
-const nestedMapped = nested.map((entity) => {
-	const user = autoIncluded<HydratedUser>(entity);
-	return { ...user, label: `${user.username} has ${user.posts.length} posts` };
-});
+/** `tenant_id` derives from `id`, so both keys group identically: arity is the only variable. */
+const compositeRows = rows10k.map((row, i) => ({
+	tenant_id: 1 + (row.id % 4),
+	id: row.id,
+	items$$tenant_id: 1 + (row.id % 4),
+	items$$id: row.posts$$id ?? i,
+	items$$label: row.posts$$title,
+}));
+const keyed = (k: string | [string, string]) =>
+	createHydrator<any>(k).hasMany("items", "items$$", (h: any) => h(k));
 
 ////////////////////////////////////////////////////////////
-// Wide rows.
-//
-// Auto-inclusion caches the field list per level (`autoFieldsCache`), so the
-// column count is what that cache is sized against.  A 60-column row is not
-// unusual for a `select *` across a few joined tables.
+// Workloads.
 ////////////////////////////////////////////////////////////
 
-const WIDE_COLUMNS = 60;
+const W = {
+	base: [nested, rows10k],
+	fieldsDeclared: [every((h, columns) => h.fields(columns)), rows10k],
+	fieldsTransformed: [
+		every((h, columns) => h.fields(Object.fromEntries(columns.map((c) => [c, String])))),
+		rows10k,
+	],
+	omit: [every((h) => h.omit(["id"])), rows10k],
+	extras: [every((h) => h.extras({ key })), rows10k],
+	extend: [every((h) => h.extend((r) => ({ key: key(r) }))), rows10k],
+	with: [every((h) => h.with(createHydrator<any>("id").extras({ key }))), rows10k],
+	orderByKeys: [every((h) => h.orderByKeys()), rows10k],
+	mapped: [nested.map((u: any) => ({ ...u, label: `${u.username} has ${u.posts.length} posts` })), rows10k],
 
-type WideRow = { id: number } & Record<string, unknown>;
+	oneToOneMany: [nested, oneToOneRows10k],
+	oneToOneOne: [nest(chain, { mode: "one" }), oneToOneRows10k],
+	oneToOneOrThrow: [nest(chain, { mode: "oneOrThrow" }), oneToOneRows10k],
+	nullJoin: [nested, nullJoinRows10k],
 
-const wideRows = times(2000, (i) => {
-	const row: WideRow = { id: i };
-	for (let c = 0; c < WIDE_COLUMNS; c++) row[`col${c}`] = `value ${i}-${c}`;
-	return row;
-});
+	sortNone: [every((h, columns) => h.orderBy(columns[1]!, "desc")), rows10k, withSort("none")],
 
-const wide = createHydrator<WideRow>("id");
+	distinct: [flat, distinctRows10k],
+	duplicated: [flat, rows10k],
 
-/** The same row count at the usual width, hoisted so the slice isn't timed. */
-const narrowRows2k = distinctRows10k.slice(0, 2000);
+	singleKey: [keyed("id"), compositeRows],
+	compositeKey: [keyed(["tenant_id", "id"]), compositeRows],
 
-////////////////////////////////////////////////////////////
-// Composite keys.
-//
-// `groupByKey` compares keys by value, so a two-column key builds and compares a
-// composite per row rather than reading one.
-////////////////////////////////////////////////////////////
+	attaches: [withAttaches(500), rows10k],
+	attachUsers: [nested.attachMany("likes", () => likesPerUser, { matchChild: "user_id" }), rows10k],
+	attachPosts: [
+		nest(chain, {
+			modify: (h, columns) =>
+				columns.includes("title")
+					? h.attachMany("likes", () => likesPerPost, { matchChild: "post_id" })
+					: h,
+			sample: rows10k[0],
+		}),
+		rows10k,
+	],
 
-interface CompositeRow {
-	tenant_id: number;
-	id: number;
-	name: string;
-	items$$tenant_id: number;
-	items$$id: number;
-	items$$label: string;
-}
+	siblings: [nest(siblingJoins), makeJoinRows(100, siblingJoins)],
+	single: [nest(singleJoin), makeJoinRows(100, singleJoin)],
 
-const compositeRows = makeRows(500, 5, 4).map(
-	(row, i): CompositeRow => ({
-		tenant_id: 1 + (row.id % 4),
-		id: row.id,
-		name: row.username,
-		items$$tenant_id: 1 + (row.id % 4),
-		items$$id: row.posts$$id ?? i,
-		items$$label: row.posts$$title ?? "",
-	}),
-);
+	one: [flat, rows1[0]],
+	rows20: [nested, rows1],
+	rows20Attaches: [withAttaches(1), rows1],
+	rows200: [nested, rows10],
+	rows1k: [nested, rows1k],
+} satisfies Record<string, Workload>;
 
-const singleKey = createHydrator<CompositeRow>("id").hasMany("items", "items$$", (h) => h("id"));
-
-const compositeKey = createHydrator<CompositeRow>(["tenant_id", "id"]).hasMany(
-	"items",
-	"items$$",
-	(h) => h(["tenant_id", "id"]),
-);
-
-////////////////////////////////////////////////////////////
-// Attached collections.
-////////////////////////////////////////////////////////////
-
-const attachedPosts = (users: number, perUser: number) =>
-	times(users, (u) =>
-		times(perUser, (p) => ({
-			id: (u - 1) * perUser + p,
-			user_id: u,
-			title: `Attached post ${(u - 1) * perUser + p}`,
-		})),
-	).flat();
-
-const attachedProfiles = (users: number) =>
-	times(users, (u) => ({ id: u, user_id: u, bio: `Bio ${u}` }));
-
-const attachedPosts1 = attachedPosts(1, 5);
-const attachedProfiles1 = attachedProfiles(1);
-const attachedPosts500 = attachedPosts(500, 5);
-const attachedProfiles500 = attachedProfiles(500);
-
-/**
- * Attach fetching is the library's only async phase, and it groups the fetched
- * rows by match key up front.  The fetch functions return a pre-built array so
- * the benchmark measures that grouping and stitching, not I/O.
- */
-const withAttaches1 = nested
-	.attachMany("otherPosts", () => attachedPosts1, { matchChild: "user_id" })
-	.attachOne("profile", () => attachedProfiles1, { matchChild: "user_id" })
-	.orderByKeys();
-
-const withAttaches500 = nested
-	.attachMany("otherPosts", () => attachedPosts500, { matchChild: "user_id" })
-	.attachOne("profile", () => attachedProfiles500, { matchChild: "user_id" })
-	.orderByKeys();
-
-interface HydratedUserWithAttaches extends HydratedUser {
-	otherPosts: { id: number; user_id: number; title: string }[];
-	profile: { id: number; user_id: number; bio: string } | null;
-}
+const sorted = (sort: "nested" | "all"): Workload => [W.sortNone[0], rows10k, withSort(sort)];
+const widths = WIDTHS.map((columns): Workload => [flat, wideRows(columns)]);
+const depths = depthJoins.map((joins): Workload => [nest(joins), makeJoinRows(625, joins)]);
 
 ////////////////////////////////////////////////////////////
 // Correctness.
 ////////////////////////////////////////////////////////////
 
-/**
- * Every workload runs once here and has its output asserted before anything is
- * timed.  Without this a change that makes hydration bail out early — returning
- * nothing, or skipping the sort — reads as a large speedup instead of a failure.
- */
 async function verifyWorkloads(): Promise<void> {
-	const users = (rows: readonly FlatRow[]) =>
-		nested.hydrate(rows, querySetOptions).then((r) => autoIncluded<HydratedUser[]>(r));
+	const users = await hydrated<HydratedUser[]>(W.base);
+	assert.equal(users.length, 500);
+	assert.equal(descend(users, ["posts"]).length, 2500);
+	assert.equal(descend(users, ["posts", "comments"]).length, 10_000);
+	for (const [w, n] of [[W.rows20, 1], [W.rows200, 10], [W.rows1k, 50]] as const) {
+		assert.equal((await hydrated(w)).length, n);
+	}
+	assert.equal((await hydrated<Row>(W.one)).id, 1);
 
-	const entities = await users(rows10k);
-	assert.equal(entities.length, 500, "10k rows should collapse into 500 entities");
-	assert.equal(entities[0]!.posts.length, 5);
-	assert.equal(entities[0]!.posts[0]!.comments.length, 4);
+	// Every modifier applies at all three levels, so check the deepest.
+	const comment = async (w: Workload) => descend(await hydrated(w), ["posts", "comments"])[0];
+	assert.deepEqual(await hydrated(W.fieldsDeclared), users);
+	assert.deepEqual(await comment(W.fieldsTransformed), { id: "1", content: "Comment 1", post_id: "1" });
+	assert.deepEqual(await comment(W.omit), { content: "Comment 1", post_id: 1 });
+	const extras = await hydrated(W.extras);
+	assert.equal(descend(extras, ["posts", "comments"])[0].key, 2);
+	assert.deepEqual(await hydrated(W.extend), extras);
+	assert.deepEqual(await hydrated(W.with), extras);
+	assert.equal(descend(await hydrated(W.orderByKeys), ["posts", "comments"]).length, 10_000);
+	assert.equal((await hydrated(W.mapped))[0].label, "user1 has 5 posts");
 
-	assert.equal((await users(rows1)).length, 1);
-	assert.equal((await users(rows10)).length, 10);
-	assert.equal((await users(rows1k)).length, 50);
-	assert.equal(autoIncluded<FlatRow>(await flat.hydrate(rows1[0]!, querySetOptions)).id, 1);
-	assert.equal((await nestedWithExtras.hydrate(rows10k, querySetOptions))[0]!.upper, "USER1");
-	assert.equal((await nestedKeyed.hydrate(rows10k, querySetOptions)).length, 500);
-
-	// Distinct rows key to one entity each; the same hydrator over `rows10k` has
-	// 20 rows per entity to collapse.  The pair is only meaningful if they really
-	// do differ this way.
-	assert.equal((await flat.hydrate(distinctRows10k, querySetOptions)).length, 10_000);
-	assert.equal((await flat.hydrate(rows10k, querySetOptions)).length, 500);
-
-	// Joins that missed leave null keys, which `groupByKey` skips, so the nested
-	// collections come back empty rather than holding a phantom child.
-	const nullJoined = autoIncluded<HydratedUser[]>(
-		await nested.hydrate(nullJoinRows10k, querySetOptions),
-	);
+	const [many, one, orThrow] = await Promise.all([
+		hydrated(W.oneToOneMany),
+		hydrated(W.oneToOneOne),
+		hydrated(W.oneToOneOrThrow),
+	]);
+	assert.equal(many.length, 10_000);
+	assert.equal(one[9999].posts.comments.id, many[9999].posts[0].comments[0].id);
+	assert.equal(Array.isArray(one[9999].posts), false, "hasOne should not produce an array");
+	assert.deepEqual(orThrow, one);
+	const nullJoined = await hydrated<HydratedUser[]>(W.nullJoin);
 	assert.equal(nullJoined.length, 500);
 	assert.equal(nullJoined[0]!.posts.length, 0, "a missed join should produce no children");
 
-	// One-collections keep a single child rather than an array.  These rows hold
-	// exactly one child per parent, so the hasMany hydrator must agree.
-	const one = autoIncluded<{ post: { comment: unknown } | null }[]>(
-		await nestedOne.hydrate(oneToOneRows10k, querySetOptions),
-	);
-	const many = autoIncluded<HydratedUser[]>(await nested.hydrate(oneToOneRows10k, querySetOptions));
-	assert.equal(one.length, 10_000);
-	assert.equal(many.length, 10_000);
-	assert.equal(many[0]!.posts.length, 1);
-	assert.equal(Array.isArray(one[0]!.post), false, "hasOne should not produce an array");
-	assert.notEqual(one[0]!.post, null);
+	// The sort modes only differ against a hydrator that orders, so show they do.
+	const [none, byNested, all] = await Promise.all([
+		hydrated<HydratedUser[]>(W.sortNone),
+		hydrated<HydratedUser[]>(sorted("nested")),
+		hydrated<HydratedUser[]>(sorted("all")),
+	]);
+	assert.equal(all[0]!.username, "user99", '"all" sorts the top level descending');
+	assert.equal(byNested[0]!.username, "user1", '"nested" leaves the top level alone');
+	assert.equal(byNested[0]!.posts[0]!.title, "Post 5", '"nested" still sorts collections');
+	assert.equal(none[0]!.posts[0]!.title, "Post 1", '"none" sorts nothing');
 
-	// Explicit fields and auto-inclusion must agree, or the pair compares two
-	// different amounts of work rather than two ways of deciding the same fields.
-	const explicit = autoIncluded<HydratedUser[]>(
-		await nestedExplicitFields.hydrate(rows10k, querySetOptions),
-	);
-	assert.deepEqual(explicit[0], entities[0], "explicit fields should match auto-inclusion");
+	assert.equal((await hydrated(W.distinct)).length, 10_000);
+	assert.equal((await hydrated(W.duplicated)).length, 500);
+	for (const w of [W.singleKey, W.compositeKey]) {
+		assert.equal(descend(await hydrated(w), ["items"]).length, 2500);
+	}
 
-	assert.equal(
-		(await nestedMapped.hydrate(rows10k, querySetOptions))[0]!.label,
-		"user1 has 5 posts",
-	);
+	const attaches = await hydrated(W.attaches);
+	assert.equal(attaches[499].otherPosts.length, 5);
+	assert.equal(attaches[499].profile.user_id, 500);
+	assert.equal((await hydrated(W.attachUsers))[499].likes.length, 5);
+	const postLikes = descend(await hydrated(W.attachPosts), ["posts", "likes"]);
+	assert.equal(postLikes.length, 2500);
+	assert.equal(postLikes[2499].post_id, 2500);
+	const small = await hydrated(W.rows20Attaches);
+	assert.equal(small[0].otherPosts.length, 5);
+	assert.equal(small[0].profile.user_id, 1);
 
-	assert.equal((await wide.hydrate(wideRows, querySetOptions)).length, 2000);
-	assert.equal(
-		Object.keys(autoIncluded<object>((await wide.hydrate(wideRows, querySetOptions))[0])).length,
-		WIDE_COLUMNS + 1,
-	);
+	const siblings = await hydrated(W.siblings);
+	const single = await hydrated(W.single);
+	assert.equal(W.siblings[1].length, 10_000, "sibling joins should multiply");
+	assert.equal(descend(siblings, ["posts"]).length + descend(siblings, ["tags"]).length, 2000);
+	assert.equal(descend(single, ["posts"]).length, 2000);
 
-	// `tenant_id` is derived from `id`, so the two-column key groups exactly as
-	// the single-column one does.  That is deliberate: identical grouping leaves
-	// key arity as the only difference between the two benchmarks.
-	const single = await singleKey.hydrate(compositeRows, querySetOptions);
-	const composite = await compositeKey.hydrate(compositeRows, querySetOptions);
-	assert.equal(single.length, 500);
-	assert.equal(composite.length, 500);
-
-	// Sorting is skipped entirely at levels that declare no ordering, so the sort
-	// modes are only worth benchmarking against a hydrator that orders — and only
-	// if the modes actually produce different output.  Assert that they do.
-	const sorted = (mode: "all" | "nested" | "none") =>
-		nestedSorted.hydrate(rows10k, withSort(mode)).then((r) => autoIncluded<HydratedUser[]>(r));
-
-	const sortedAll = await sorted("all");
-	const sortedNested = await sorted("nested");
-	const unsorted = await sorted("none");
-
-	assert.equal(sortedAll[0]!.username, "user99", '"all" sorts the top level descending');
-	assert.equal(sortedNested[0]!.username, "user1", '"nested" leaves the top level alone');
-	assert.equal(unsorted[0]!.username, "user1");
-	assert.equal(sortedNested[0]!.posts[0]!.title, "Post 5", '"nested" still sorts collections');
-	assert.equal(unsorted[0]!.posts[0]!.title, "Post 1", '"none" sorts nothing');
-
-	// Attached collections are fetched once for all parents and grouped by match
-	// key; check the stitching landed on the right parent.
-	const attached1 = autoIncluded<HydratedUserWithAttaches[]>(
-		await withAttaches1.hydrate(rows1, querySetOptions),
-	);
-	assert.equal(attached1[0]!.otherPosts.length, 5);
-	assert.equal(attached1[0]!.profile?.bio, "Bio 1");
-
-	const attached500 = autoIncluded<HydratedUserWithAttaches[]>(
-		await withAttaches500.hydrate(rows10k, querySetOptions),
-	);
-	assert.equal(attached500.length, 500);
-	assert.equal(attached500[499]!.otherPosts.length, 5);
-	assert.equal(attached500[499]!.profile?.bio, "Bio 500");
+	for (const [i, w] of widths.entries()) {
+		const out = await hydrated(w);
+		assert.equal(out.length, 2000);
+		assert.equal(Object.keys(out[0]).length, WIDTHS[i]);
+	}
+	for (const [i, w] of depths.entries()) {
+		assert.equal(descend(await hydrated(w), chainNames(depthJoins[i]!)).length, 10_000, `depth ${i + 1}`);
+	}
 }
 
-await verifyWorkloads();
-
 ////////////////////////////////////////////////////////////
-// 10,000 rows into 500 entities, feature by feature.
+// Benchmarks.
 ////////////////////////////////////////////////////////////
 
-summary(() => {
-	benchAsync("10k rows to 500 entities", () => nested.hydrate(rows10k, querySetOptions)).baseline(
-		true,
-	);
-	benchAsync("10k rows to 500 entities, extras", () =>
-		nestedWithExtras.hydrate(rows10k, querySetOptions),
-	);
-	benchAsync("10k rows to 500 entities, orderByKeys", () =>
-		nestedKeyed.hydrate(rows10k, querySetOptions),
-	);
-	benchAsync("10k rows to 500 entities, mapped", () =>
-		nestedMapped.hydrate(rows10k, querySetOptions),
-	);
-	// `withAttaches500` orders by keys, so the orderByKeys row above is its
-	// like-for-like partner rather than the bare baseline.
-	benchAsync("10k rows to 500 entities, 2 attaches", () =>
-		withAttaches500.hydrate(rows10k, querySetOptions),
-	);
+group({
+	"10k rows to 500 entities": W.base,
+	"10k rows, fields declared": W.fieldsDeclared,
+	"10k rows, fields transformed": W.fieldsTransformed,
+	"10k rows, omit": W.omit,
+	"10k rows, extras": W.extras,
+	"10k rows, extend": W.extend,
+	"10k rows, with": W.with,
+	"10k rows, orderByKeys": W.orderByKeys,
+	"10k rows, mapped": W.mapped,
 });
 
-////////////////////////////////////////////////////////////
-// Deciding which fields to include.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchAsync("10k rows, fields inferred", () => nested.hydrate(rows10k, querySetOptions)).baseline(
-		true,
-	);
-	benchAsync("10k rows, fields declared", () =>
-		nestedExplicitFields.hydrate(rows10k, querySetOptions),
-	);
+group({
+	"10k one-to-one rows, hasMany": W.oneToOneMany,
+	"10k one-to-one rows, hasOne": W.oneToOneOne,
+	"10k one-to-one rows, hasOneOrThrow": W.oneToOneOrThrow,
+	"10k rows, every join missed": W.nullJoin,
 });
 
-////////////////////////////////////////////////////////////
-// Collection shape.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	// The first two run over rows holding exactly one child per parent, which is
-	// the only shape `hasOne` accepts, so the gap between them is building an
-	// array against keeping a single child.
-	benchAsync("10k one-to-one rows, hasMany", () =>
-		nested.hydrate(oneToOneRows10k, querySetOptions),
-	).baseline(true);
-	benchAsync("10k one-to-one rows, hasOne", () =>
-		nestedOne.hydrate(oneToOneRows10k, querySetOptions),
-	);
-	benchAsync("10k rows, every join missed", () => nested.hydrate(nullJoinRows10k, querySetOptions));
+group({
+	"sorted 10k rows, sort:none": W.sortNone,
+	"sorted 10k rows, sort:nested": sorted("nested"),
+	"sorted 10k rows, sort:all": sorted("all"),
 });
 
-////////////////////////////////////////////////////////////
-// What sorting costs.
-//
-// All three use the same hydrator, which orders by a string at every level, so
-// the sort mode is the only variable.  The options are hoisted because building
-// them inside the measured call would time an object literal too.
-////////////////////////////////////////////////////////////
-
-const sortNone = withSort("none");
-const sortNested = withSort("nested");
-const sortAll = withSort("all");
-
-summary(() => {
-	benchAsync("sorted 10k rows, sort:none", () => nestedSorted.hydrate(rows10k, sortNone)).baseline(
-		true,
-	);
-	benchAsync("sorted 10k rows, sort:nested", () => nestedSorted.hydrate(rows10k, sortNested));
-	benchAsync("sorted 10k rows, sort:all", () => nestedSorted.hydrate(rows10k, sortAll));
+group({
+	"10k distinct rows to 10k entities": W.distinct,
+	"10k duplicated rows to 500 entities": W.duplicated,
 });
 
-////////////////////////////////////////////////////////////
-// Per-entity cost against per-row cost.
-//
-// Both hydrate 10,000 rows, but one produces 10,000 entities and the other 500,
-// so the gap is per-entity overhead and the allocation that comes with it, not
-// grouping alone.
-////////////////////////////////////////////////////////////
+group({ "10k rows, single column key": W.singleKey, "10k rows, two column key": W.compositeKey });
 
-summary(() => {
-	benchAsync("10k distinct rows to 10k entities", () =>
-		flat.hydrate(distinctRows10k, querySetOptions),
-	).baseline(true);
-	benchAsync("10k duplicated rows to 500 entities", () => flat.hydrate(rows10k, querySetOptions));
+// Same fetched row count at both levels; nested attaches key 2,500 parents, not 500.
+group({
+	"10k rows, no attaches": W.base,
+	"10k rows, attachOne and attachMany": W.attaches,
+	"10k rows, attachMany on users": W.attachUsers,
+	"10k rows, attachMany on posts": W.attachPosts,
 });
 
-////////////////////////////////////////////////////////////
-// Key arity.
-////////////////////////////////////////////////////////////
+// Same 2,100 entities; the cartesian product of sibling joins is 5x the rows.
+group({ "100 users, 20 posts": W.single, "100 users, 10 posts x 10 tags": W.siblings });
 
-summary(() => {
-	benchAsync("10k rows, single column key", () =>
-		singleKey.hydrate(compositeRows, querySetOptions),
-	).baseline(true);
-	benchAsync("10k rows, two column key", () =>
-		compositeKey.hydrate(compositeRows, querySetOptions),
-	);
-});
+// 10k rows at every depth, so the per-level cost is what grows.
+group(Object.fromEntries(depths.map((w, i) => [`10k rows, depth ${i + 1}`, w])));
+group(Object.fromEntries(widths.map((w, i) => [`2k rows of ${WIDTHS[i]} columns`, w])));
 
-////////////////////////////////////////////////////////////
-// Row width.
-////////////////////////////////////////////////////////////
+group(
+	{
+		"1 row to 1 entity, no collections": W.one,
+		"20 rows to 1 entity": W.rows20,
+		"20 rows to 1 entity, 2 attaches": W.rows20Attaches,
+		"200 rows to 10 entities": W.rows200,
+		"1k rows to 50 entities": W.rows1k,
+	},
+	{ gc: false },
+);
 
-summary(() => {
-	benchAsync("2k rows of 60 columns", () => wide.hydrate(wideRows, querySetOptions)).baseline(true);
-	benchAsync("2k rows of 9 columns", () => flat.hydrate(narrowRows2k, querySetOptions));
-});
-
-////////////////////////////////////////////////////////////
-// Small results, where fixed per-call costs dominate.
-//
-// The scaling entries all use one hydrator, so they read as a curve; the
-// attaches entry sits here because its result is the same size, not because it
-// belongs to that curve.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchAsync("1 row to 1 entity, no collections", () =>
-		flat.hydrate(rows1[0]!, querySetOptions),
-	).baseline(true);
-	benchAsync("20 rows to 1 entity", () => nestedKeyed.hydrate(rows1, querySetOptions));
-	benchAsync("20 rows to 1 entity, 2 attaches", () =>
-		withAttaches1.hydrate(rows1, querySetOptions),
-	);
-	benchAsync("200 rows to 10 entities", () => nestedKeyed.hydrate(rows10, querySetOptions));
-	benchAsync("1k rows to 50 entities", () => nestedKeyed.hydrate(rows1k, querySetOptions));
-});
-
-await runSuite("hydrate");
+await runSuite({ verify: verifyWorkloads });

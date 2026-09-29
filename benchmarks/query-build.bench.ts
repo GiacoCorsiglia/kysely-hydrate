@@ -28,7 +28,7 @@ interface Shape {
 
 type Entry = [qs: Compilable, shape: Shape];
 
-const compileEntries: [name: string, Entry][] = [];
+const compileEntries: (readonly [name: string, Entry])[] = [];
 
 /** A `summary()` group timing `compile()` on each entry; the first is the baseline. */
 function compileGroup(entries: Record<string, Entry>) {
@@ -141,7 +141,10 @@ compileGroup(
 		[1, 2, 3, 4].map((n): [string, Entry] => {
 			// The deepest level's columns carry a prefix per level above them.
 			const prefix = chain.slice(0, n).map(([key]) => key);
-			return [`depth: ${n}`, [depth(n), { joins: n, has: new RegExp(`"${prefix.join("\\$\\$")}\\$\\$id"`) }]];
+			return [
+				`depth: ${n}`,
+				[depth(n), { joins: n, has: new RegExp(`"${prefix.join("\\$\\$")}\\$\\$id"`) }],
+			];
 		}),
 	),
 );
@@ -158,7 +161,10 @@ compileGroup(
 compileGroup(
 	byMethod(
 		Object.fromEntries(
-			["leftJoinLateralMany", "innerJoinLateralMany", "leftJoinLateralOne"].map((m) => [m, lateral(m)]),
+			["leftJoinLateralMany", "innerJoinLateralMany", "leftJoinLateralOne"].map((m) => [
+				m,
+				lateral(m),
+			]),
 		),
 	),
 );
@@ -217,10 +223,6 @@ compileGroup({
 		{ joins: 1, has: /where "username" = \?/ },
 	],
 	"many join, orderBy": [manyJoin.orderBy("username"), { has: /order by "user"."username" asc/ }],
-	"many join, orderBy in nested": [
-		users.leftJoinMany("posts", posts.orderBy("title"), "posts.user_id", "user.id"),
-		{ has: /order by .*"posts"."title"/ },
-	],
 });
 
 // Terminals over one query set: depth 2, ordered, and limited, so the wrap is in play.
