@@ -1,104 +1,119 @@
 /**
- * Runs the benchmark suites, each in its own process.
+ * Runs the benchmark suites, each in its own process, so each pays only for the
+ * fixtures it imports.  See the README for usage.
  *
- *   npm run bench                     # every suite
- *   npm run bench -- order-by         # just the suites whose name contains this
- *   npm run bench -- --filter sortBy  # flags pass through to each suite
- *   npm run bench:save                # record a baseline per suite
- *   npm run bench:compare             # diff each suite against its baseline
- *
- * Separate processes are what let a suite import only its own fixtures: the
- * order-by suite never builds 10,000 rows or a SQLite database, so a targeted
- * run starts in milliseconds instead of seconds.  A shared process would also
- * make every suite's hydrate call sites megamorphic, though measurement says
- * that costs only a few percent once mitata collects between benchmarks.
+ * `--ref <git-ref>` checks the ref out into a scratch worktree, copies this
+ * checkout's `benchmarks/` over it so both sides run identical benchmark code,
+ * then runs each suite in ABBA order (ref, HEAD, HEAD, ref) and compares the
+ * averages.  Running both sides back to back beats a baseline recorded hours
+ * earlier, and the ABBA order cancels out drift over the session.
  */
-import { spawn } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { VALUE_FLAGS } from "./lib/harness.ts";
+import { compareBaselines, mergeBaselines, readBaseline } from "./lib/baseline.ts";
+import { benchmarksDir, parseCli } from "./lib/harness.ts";
 
-const benchmarksDir = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const { values, positionals, tokens } = parseCli(args, true);
 
-/** Suite files, in the order they should run: cheap and focused ones first. */
-const order = ["order-by", "plugins", "query-build", "hydrate", "execute"];
+/** Cheap, focused suites first; any suite not listed runs after these, alphabetically. */
+const order = ["order-by", "plugins", "query-build", "hydrate", "execute", "types"];
+const rank = (s: string) => (order.includes(s) ? order.indexOf(s) : order.length);
 
-function suiteNames(): string[] {
-	const found = readdirSync(benchmarksDir)
-		.filter((f) => f.endsWith(".bench.ts"))
-		.map((f) => f.slice(0, -".bench.ts".length));
+const available = readdirSync(benchmarksDir)
+	.filter((f) => f.endsWith(".bench.ts"))
+	.map((f) => f.slice(0, -".bench.ts".length))
+	.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 
-	// Known suites first in the order above, then anything new, so adding a file
-	// doesn't require touching this list.
-	return [
-		...order.filter((s) => found.includes(s)),
-		...found.filter((s) => !order.includes(s)).sort(),
-	];
-}
-
-/**
- * Splits `npm run bench -- hydrate --filter sortBy` into the suites to run and
- * the flags to hand each one.
- *
- * This walks left to right and consults {@link VALUE_FLAGS}, rather than asking
- * whether a word follows a flag.  The naive version got both npm scripts wrong:
- * `bench:save -- hydrate` became `--save hydrate`, `hydrate` looked like
- * `--save`'s value, and all five suites ran.  A word appearing twice
- * (`hydrate --filter hydrate`) broke it the other way.
- */
-function parseArgs(args: readonly string[]): { selectors: string[]; flags: string[] } {
-	const selectors: string[] = [];
-	const flags: string[] = [];
-
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i]!;
-		if (!arg.startsWith("--")) {
-			selectors.push(arg);
-			continue;
-		}
-
-		flags.push(arg);
-		// `--flag=value` carries its own value; `--flag value` takes the next word.
-		if (VALUE_FLAGS.has(arg) && i + 1 < args.length) flags.push(args[++i]!);
-	}
-
-	return { selectors, flags };
-}
-
-const { selectors, flags } = parseArgs(process.argv.slice(2));
-
-const suites = suiteNames().filter(
-	(s) => selectors.length === 0 || selectors.some((sel) => s.includes(sel)),
+const suites = available.filter(
+	(s) => positionals.length === 0 || positionals.some((sel) => s.includes(sel)),
 );
-
 if (suites.length === 0) {
+	console.error(`No benchmark suite matches ${positionals.join(", ")}. Available: ${available}`);
+	process.exit(1);
+}
+
+if (values.ref !== undefined && (values.save || values.compare || values["baselines-dir"])) {
 	console.error(
-		selectors.length > 0
-			? `No benchmark suite matches ${selectors.join(", ")}. Available: ${suiteNames().join(", ")}`
-			: "No *.bench.ts files found in benchmarks/",
+		"--ref records and compares its own runs; drop --save, --compare and --baselines-dir",
 	);
 	process.exit(1);
 }
 
+/** The flags to hand each suite: everything but the selectors and `--ref`. */
+const passthrough = tokens.flatMap((t) => {
+	if (t.kind !== "option" || t.name === "ref") return [];
+	return t.value === undefined || t.inlineValue ? [args[t.index]!] : [args[t.index]!, t.value];
+});
+
+/** Runs one suite to completion; true when it exited cleanly. */
+function runSuite(suite: string, cwd: string, extra: string[] = []): boolean {
+	// --expose-gc lets mitata collect between samples and report heap usage.
+	const { status } = spawnSync(
+		process.execPath,
+		["--expose-gc", join(cwd, "benchmarks", `${suite}.bench.ts`), ...passthrough, ...extra],
+		{ stdio: "inherit", cwd },
+	);
+	return status === 0;
+}
+
+const banner = (title: string) => console.log(`\n${"=".repeat(70)}\n${title}\n${"=".repeat(70)}`);
+const root = join(benchmarksDir, "..");
 let failed = 0;
 
-for (const suite of suites) {
-	console.log(`\n${"=".repeat(70)}\n${suite}\n${"=".repeat(70)}`);
+if (values.ref === undefined) {
+	for (const suite of suites) {
+		banner(suite);
+		if (!runSuite(suite, root)) failed++;
+	}
+} else {
+	const ref = values.ref;
+	const scratch = mkdtempSync(join(tmpdir(), "kysely-hydrate-bench-"));
+	const worktree = join(scratch, "ref");
+	const git = (...a: string[]) => execFileSync("git", a, { cwd: root, stdio: "inherit" });
 
-	const code = await new Promise<number>((resolve, reject) => {
-		const child = spawn(
-			process.execPath,
-			// --expose-gc lets mitata collect between samples and report heap usage.
-			["--expose-gc", join(benchmarksDir, `${suite}.bench.ts`), ...flags],
-			{ stdio: "inherit" },
-		);
-		child.on("error", reject);
-		child.on("close", (c) => resolve(c ?? 1));
-	});
+	git("worktree", "add", "--detach", worktree, ref);
+	try {
+		rmSync(join(worktree, "benchmarks"), { recursive: true, force: true });
+		cpSync(benchmarksDir, join(worktree, "benchmarks"), {
+			recursive: true,
+			filter: (src) => !src.includes(join("benchmarks", "baselines")),
+		});
+		symlinkSync(join(root, "node_modules"), join(worktree, "node_modules"), "dir");
 
-	if (code !== 0) failed++;
+		for (const suite of suites) {
+			const sides = [
+				[ref, worktree],
+				["HEAD", root],
+				["HEAD", root],
+				[ref, worktree],
+			] as const;
+			const recorded = sides.map(([label, cwd], i) => {
+				banner(`${suite}: ${label} (${i + 1} of 4)`);
+				const dir = join(scratch, String(i));
+				return runSuite(suite, cwd, ["--save", "--baselines-dir", dir, "--label", label])
+					? readBaseline(join(dir, `${suite}.json`), suite)
+					: undefined;
+			});
+			if (recorded.some((r) => r === undefined)) {
+				failed++;
+				continue;
+			}
+
+			banner(`${suite}: ${ref} against HEAD`);
+			const [a1, b1, b2, a2] = recorded as NonNullable<(typeof recorded)[number]>[];
+			const ok = compareBaselines(mergeBaselines([a1!, a2!]), mergeBaselines([b1!, b2!]), {
+				reportMissing: values.filter === undefined,
+			});
+			if (!ok) failed++;
+		}
+	} finally {
+		git("worktree", "remove", "--force", worktree);
+		rmSync(scratch, { recursive: true, force: true });
+	}
 }
 
 if (failed > 0) {

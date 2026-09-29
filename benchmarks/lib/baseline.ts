@@ -1,194 +1,121 @@
 /**
- * Saving and comparing benchmark baselines.
- *
- * mitata compares benchmarks against each other within a run (that's what
- * `summary()` prints), but has no built-in notion of comparing one run against
- * an earlier one.  This adds it, over the stats mitata already returns.
- *
- * Both signals are noisy enough to need a threshold.  Measured over three
- * consecutive runs of unchanged code on one machine, wall-clock medians drifted
- * by up to 17% and allocation per iteration by up to 16%, so
- * {@link noiseThreshold} treats anything smaller as the machine rather than the
- * code.  Only a diff taken on quiet, dedicated hardware should be read finer
- * than that.
- *
- * Allocation is compared as mitata's mean, which measurement says is the right
- * statistic and the only robust one available.  Two things that look like better
- * ideas are not: the within-run spread (`heapMax / heapMin`) is no guide to
- * quality, since benchmarks with a 20,000x internal spread still reproduce their
- * mean to within 1% across runs; and `heapMin` is dramatically less stable than
- * the mean, drifting up to 566x across runs where the mean drifts 1.19x.
- *
- * The mean has two failure modes, and between them they are why **allocation is
- * reported but never fails a comparison** — only time sets the exit code.
- *
- * A benchmark that allocates very little occasionally reports roughly 20 kb more
- * than it should, when a collection lands inside a sample window and survives
- * into the mean.  For a benchmark allocating megabytes that is lost in the
- * noise; for one allocating a few hundred bytes it is a 2000% "regression".
- * {@link heapFloor} drops those.
- *
- * The one the floor can't help with is at the other end.  A benchmark
- * allocating megabytes per iteration reports a mean that depends on what else
- * ran in the process: `sorted 10k rows, sort:nested` reads about 5 mb on its
- * own and 11 to 14 mb inside the full suite, a spread of nearly 3x with no
- * change to the code.  A baseline recorded at one end then reports a 180%
- * regression against the other, and nothing about the recording says which end
- * it came from.  Measured over six runs of 130 benchmarks, every false positive
- * came from allocation and none from time, so time is the gate and allocation
- * is for reading.
+ * Saving benchmark results and comparing one run against another.  mitata only
+ * compares benchmarks within a run; this adds comparison across runs.  The
+ * README explains why only time fails a comparison and allocation is shown
+ * but never fails one.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
-/** Times are nanoseconds, heap is bytes: mitata's own units, kept as-is. */
+/** Median time in nanoseconds and mean heap bytes per iteration: mitata's units. */
 export interface BaselineEntry {
-	avg: number;
 	p50: number;
-	p75: number;
-	p99: number;
-	min: number;
-	max: number;
 	heap?: number;
-	gc?: number;
 }
 
 export interface Baseline {
-	version: 1;
-	/** Which suite recorded this, so a baseline can't be diffed against another's. */
+	version: 2;
+	/** Which suite recorded this, so one suite's baseline can't be diffed against another's. */
 	suite: string;
-	createdAt: string;
+	/** Where the numbers came from: a timestamp, or a git ref in `--ref` mode. */
+	label: string;
 	runtime: string;
 	cpu: string;
 	benchmarks: Record<string, BaselineEntry>;
 }
 
-/** The subset of mitata's result shape this module needs. */
-interface Trials {
+/** The subset of mitata's `run()` result this module reads. */
+export interface Trials {
 	context: { runtime: string | null; cpu: { name: string | null } };
 	benchmarks: readonly {
 		alias: string;
-		runs: readonly {
-			error?: unknown;
-			stats?:
-				| {
-						avg: number;
-						p50: number;
-						p75: number;
-						p99: number;
-						min: number;
-						max: number;
-						heap?: { avg: number } | undefined;
-						gc?: { avg: number } | undefined;
-				  }
-				| undefined;
-		}[];
+		runs: readonly { stats?: { p50: number; heap?: { avg: number } | undefined } | undefined }[];
 	}[];
 }
 
-/**
- * Relative change below which a delta is treated as machine noise rather than a
- * change in the code.  Applied to both time and allocation; see the note above.
- */
+/** A relative change below this is machine noise, not a change in the code. */
 export const noiseThreshold = 0.2;
 
 /**
- * Allocation per iteration below which a heap measurement isn't compared; see
- * the note above.  Set well clear of the ~20 kb contamination quantum, which
- * keeps the heap signal for every benchmark where it survived repeated runs and
- * drops it only for the handful too small to measure this way.
+ * Allocation per iteration below which a heap reading isn't compared.  It sits
+ * well above the ~20 kb a garbage collection can add when it lands inside a
+ * sample.
  */
 const heapFloor = 64 * 1024;
 
-/** Whether a heap measurement is large enough to diff meaningfully. */
-function comparableHeap(heap: number | undefined): heap is number {
-	return heap !== undefined && heap >= heapFloor;
-}
-
-/**
- * Benchmarks that failed rather than producing stats.  mitata records the error
- * on the run instead of throwing, so without this a benchmark that starts
- * throwing would quietly vanish from the baseline and from every later
- * comparison.
- */
-function failedBenchmarks(trials: Trials): string[] {
-	return trials.benchmarks.filter((t) => !t.runs[0]?.stats).map((t) => t.alias);
-}
-
-function toBaseline(suite: string, trials: Trials): Baseline {
+export function fromTrials(suite: string, trials: Trials, label: string): Baseline {
 	const benchmarks: Record<string, BaselineEntry> = {};
-
-	for (const trial of trials.benchmarks) {
-		// Static benchmarks produce exactly one run; parameterized ones would
-		// produce several, which this format doesn't distinguish, so take the first.
-		const stats = trial.runs[0]?.stats;
-		if (!stats) continue;
-
-		benchmarks[trial.alias] = {
-			avg: stats.avg,
-			p50: stats.p50,
-			p75: stats.p75,
-			p99: stats.p99,
-			min: stats.min,
-			max: stats.max,
-			...(stats.heap && { heap: stats.heap.avg }),
-			...(stats.gc && { gc: stats.gc.avg }),
-		};
+	for (const { alias, runs } of trials.benchmarks) {
+		// `run({ throw: true })` means a failing benchmark never gets this far.
+		// Static benchmarks have exactly one run.
+		const stats = runs[0]?.stats;
+		if (!stats) throw new Error(`Benchmark "${alias}" produced no stats`);
+		benchmarks[alias] = { p50: stats.p50, ...(stats.heap && { heap: stats.heap.avg }) };
 	}
-
 	return {
-		version: 1,
+		version: 2,
 		suite,
-		createdAt: new Date().toISOString(),
+		label,
 		runtime: trials.context.runtime ?? "unknown",
 		cpu: trials.context.cpu.name ?? "unknown",
 		benchmarks,
 	};
 }
 
-/**
- * Reads and validates a baseline.  Call this before running the suite, so a bad
- * path fails in a second rather than after several minutes of benchmarking.
- */
+/** Reads and checks a baseline; call it before the suite runs, so a bad path fails at once. */
 export function readBaseline(path: string, suite: string): Baseline {
-	let parsed: unknown;
+	let parsed: Baseline;
 	try {
 		parsed = JSON.parse(readFileSync(path, "utf8"));
 	} catch (cause) {
 		throw new Error(`Could not read a benchmark baseline from ${path}`, { cause });
 	}
-
-	if (
-		typeof parsed !== "object" ||
-		parsed === null ||
-		(parsed as Baseline).version !== 1 ||
-		typeof (parsed as Baseline).suite !== "string" ||
-		typeof (parsed as Baseline).benchmarks !== "object"
-	) {
-		throw new Error(`${path} is not a version 1 benchmark baseline`);
+	if (parsed?.version !== 2 || typeof parsed.benchmarks !== "object") {
+		throw new Error(`${path} is not a version 2 benchmark baseline; re-record it`);
 	}
-
-	const baseline = parsed as Baseline;
-	if (baseline.suite !== suite) {
-		throw new Error(`${path} was recorded for suite "${baseline.suite}", not "${suite}"`);
+	if (parsed.suite !== suite) {
+		throw new Error(`${path} was recorded for suite "${parsed.suite}", not "${suite}"`);
 	}
-
-	return baseline;
+	return parsed;
 }
 
-export function saveBaseline(suite: string, path: string, trials: Trials): void {
-	const failed = failedBenchmarks(trials);
-	if (failed.length > 0) {
-		throw new Error(`Refusing to save a baseline; these benchmarks failed: ${failed.join(", ")}`);
-	}
-
-	// Two-space JSON with a trailing newline, so a saved baseline diffs readably.
-	// mitata's raw result is ~15MB because it carries every sample and the
-	// generated source of its measurement loop; only the summary is kept.
-	writeFileSync(path, `${JSON.stringify(toBaseline(suite, trials), null, 2)}\n`);
-	console.log(`\nSaved baseline to ${path}`);
+export function writeBaseline(path: string, baseline: Baseline): void {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify(baseline, null, 2)}\n`);
 }
 
-function formatTime(ns: number): string {
+/**
+ * Averages several runs of one suite into one.  `--ref` mode records each side
+ * twice, in ABBA order, so that drift over the session cancels out rather than
+ * favouring whichever side ran second.
+ */
+export function mergeBaselines(runs: readonly Baseline[]): Baseline {
+	const [first] = runs;
+	if (!first) throw new Error("No runs to merge");
+
+	const mean = (values: (number | undefined)[]) =>
+		values.some((v) => v === undefined)
+			? undefined
+			: (values as number[]).reduce((a, b) => a + b, 0) / values.length;
+
+	const benchmarks: Record<string, BaselineEntry> = {};
+	for (const name of Object.keys(first.benchmarks)) {
+		const entries = runs.map((r) => r.benchmarks[name]);
+		if (entries.some((e) => e === undefined)) continue;
+		const heap = mean(entries.map((e) => e!.heap));
+		benchmarks[name] = {
+			p50: mean(entries.map((e) => e!.p50))!,
+			...(heap !== undefined && { heap }),
+		};
+	}
+	return { ...first, benchmarks };
+}
+
+////////////////////////////////////////////////////////////
+// Reporting.
+////////////////////////////////////////////////////////////
+
+export function formatTime(ns: number): string {
 	if (ns >= 1e6) return `${(ns / 1e6).toFixed(2)} ms`;
 	if (ns >= 1e3) return `${(ns / 1e3).toFixed(2)} µs`;
 	return `${ns.toFixed(2)} ns`;
@@ -200,156 +127,90 @@ function formatBytes(bytes: number): string {
 	return `${bytes.toFixed(0)} b`;
 }
 
-interface Delta {
+export interface Delta {
 	label: string;
-	/** Whether this counts as a regression, rather than something to read off the label. */
 	regressed: boolean;
 }
 
-const noDelta = (label: string): Delta => ({ label, regressed: false });
-
 /**
- * Allocation is reported but never sets the exit code; see the note at the top
- * of this file.  The label still says WORSE so a real jump is visible in the
- * table, it just isn't grounds for failing.
+ * Labels the change from `before` to `after`.  The band is asymmetric by ratio:
+ * +20% flags but its inverse, -16.7%, does not, which is the right bias for a
+ * regression gate.
  */
-function toHeapDelta(before: BaselineEntry, after: BaselineEntry): Delta {
-	if (!comparableHeap(before.heap) || !comparableHeap(after.heap)) return noDelta("too small");
-	return { ...toDelta(before.heap, after.heap), regressed: false };
-}
-
-function toDelta(before: number | undefined, after: number | undefined): Delta {
-	if (before === undefined || after === undefined) return noDelta("-");
-
+export function delta(before: number, after: number, threshold = noiseThreshold): Delta {
 	const ratio = after / before - 1;
-	// A zero baseline (or a zero reading) makes the ratio meaningless rather than
-	// infinitely bad.
-	if (!Number.isFinite(ratio)) return noDelta("n/a");
+	if (!Number.isFinite(ratio)) return { label: "n/a", regressed: false };
 
 	const pct = `${ratio >= 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%`;
-
-	// The band is deliberately ratio-asymmetric: +20% flags but its exact inverse,
-	// -16.7%, does not.  That's the right bias for a regression gate.
-	if (Math.abs(ratio) < noiseThreshold) return noDelta(`${pct} (noise)`);
-	if (ratio < 0) return noDelta(`${pct} faster`);
+	if (Math.abs(ratio) < threshold) return { label: `${pct} (noise)`, regressed: false };
+	if (ratio < 0) return { label: `${pct} faster`, regressed: false };
 	return { label: `${pct} WORSE`, regressed: true };
 }
 
-interface Column {
-	header: string;
-	align: "left" | "right";
-	values: string[];
-}
+/** Prints rows of cells, the first column left-aligned and the rest right-aligned. */
+export function printTable(header: readonly string[], rows: readonly (readonly string[])[]): void {
+	const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
+	const line = (cells: readonly string[]) =>
+		cells.map((c, i) => (i === 0 ? c.padEnd(widths[i]!) : c.padStart(widths[i]!))).join("  ");
 
-function printTable(columns: Column[]): void {
-	const widths = columns.map((c) => Math.max(c.header.length, ...c.values.map((v) => v.length)));
-	const pad = (value: string, i: number) =>
-		columns[i]!.align === "left" ? value.padEnd(widths[i]!) : value.padStart(widths[i]!);
-	const gap = "  ";
-
-	console.log(`\n${columns.map((c, i) => pad(c.header, i)).join(gap)}`);
-	console.log("-".repeat(widths.reduce((a, b) => a + b, 0) + gap.length * (columns.length - 1)));
-
-	for (let row = 0; row < (columns[0]?.values.length ?? 0); row++) {
-		console.log(columns.map((c, i) => pad(c.values[row]!, i)).join(gap));
-	}
-}
-
-export interface CompareOptions {
-	/**
-	 * Whether to list benchmarks the baseline has and this run doesn't.  False
-	 * when the run was filtered, where almost everything is "missing" by design.
-	 */
-	reportMissing?: boolean;
+	console.log(`\n${line(header)}`);
+	console.log("-".repeat(widths.reduce((a, b) => a + b + 2, -2)));
+	for (const row of rows) console.log(line(row));
 }
 
 /**
- * Prints each benchmark's median time and mean allocation against a saved
- * baseline.  Returns true when nothing regressed, so a caller can use it as an
- * exit status.
+ * Prints each benchmark's median time and mean allocation against `before`.
+ * Returns true when no time regressed.  `reportMissing` is false for a
+ * filtered run, where almost everything is missing by design.
  */
-export function compareBaseline(
-	suite: string,
-	baseline: Baseline,
-	trials: Trials,
-	{ reportMissing = true }: CompareOptions = {},
+export function compareBaselines(
+	before: Baseline,
+	after: Baseline,
+	{ reportMissing = true } = {},
 ): boolean {
-	const current = toBaseline(suite, trials);
-
-	if (baseline.suite !== suite) {
-		throw new Error(`Baseline was recorded for suite "${baseline.suite}", not "${suite}"`);
-	}
-	const failed = failedBenchmarks(trials);
-
-	console.log(`\n  baseline: ${baseline.createdAt}, ${baseline.runtime}, ${baseline.cpu}`);
-	console.log(`  current:  ${current.createdAt}, ${current.runtime}, ${current.cpu}`);
-
-	if (baseline.cpu !== current.cpu || baseline.runtime !== current.runtime) {
-		console.log("\n  ! Baseline was recorded on a different machine or runtime; deltas are");
-		console.log("    not meaningful.  Re-record with `npm run bench:save`.");
+	console.log(`\n  before: ${before.label}, ${before.runtime}, ${before.cpu}`);
+	console.log(`  after:  ${after.label}, ${after.runtime}, ${after.cpu}`);
+	if (before.cpu !== after.cpu || before.runtime !== after.runtime) {
+		console.log("\n  ! Recorded on a different machine or runtime; deltas are not meaningful.");
 	}
 
-	const names: string[] = [];
-	const times: string[] = [];
-	const timeDeltas: string[] = [];
-	const heaps: string[] = [];
-	const heapDeltas: string[] = [];
+	const rows: string[][] = [];
 	let regressed = false;
 
-	const push = (name: string, time: Delta, heap: Delta, entry?: BaselineEntry) => {
-		names.push(name);
-		times.push(entry === undefined ? "-" : formatTime(entry.p50));
-		timeDeltas.push(time.label);
-		heaps.push(entry?.heap === undefined ? "-" : formatBytes(entry.heap));
-		heapDeltas.push(heap.label);
-		if (time.regressed) regressed = true;
-	};
-
-	for (const [name, after] of Object.entries(current.benchmarks)) {
-		const before = baseline.benchmarks[name];
-		if (before) {
-			push(name, toDelta(before.p50, after.p50), toHeapDelta(before, after), after);
-		} else {
-			push(name, noDelta("new"), noDelta("new"), after);
-		}
+	for (const [name, now] of Object.entries(after.benchmarks)) {
+		const then = before.benchmarks[name];
+		const time = then ? delta(then.p50, now.p50) : { label: "new", regressed: false };
+		const heap = !then
+			? "new"
+			: (then.heap ?? 0) < heapFloor || (now.heap ?? 0) < heapFloor
+				? "too small"
+				: delta(then.heap!, now.heap!).label;
+		regressed ||= time.regressed;
+		rows.push([
+			name,
+			formatTime(now.p50),
+			time.label,
+			now.heap === undefined ? "-" : formatBytes(now.heap),
+			heap,
+		]);
 	}
 
 	if (reportMissing) {
-		for (const name of Object.keys(baseline.benchmarks)) {
-			if (name in current.benchmarks) continue;
-			push(name, noDelta("missing"), noDelta("missing"));
+		for (const name of Object.keys(before.benchmarks)) {
+			if (!(name in after.benchmarks)) rows.push([name, "-", "missing", "-", "missing"]);
 		}
 	}
 
-	printTable([
-		{ header: "benchmark", align: "left", values: names },
-		{ header: "p50", align: "right", values: times },
-		{ header: "vs base", align: "right", values: timeDeltas },
-		{ header: "heap", align: "right", values: heaps },
-		{ header: "vs base", align: "right", values: heapDeltas },
-	]);
-
+	printTable(["benchmark", "p50", "vs before", "heap", "vs before"], rows);
 	console.log(
-		`\nTime is flagged beyond ${(noiseThreshold * 100).toFixed(0)}%, and is the only thing that fails a run.`,
-	);
-	console.log(
-		`Allocation is shown to read, not to gate: its mean is unreliable at both ends. "too small"`,
-	);
-	console.log(
-		`marks a benchmark under ${(heapFloor / 1024).toFixed(0)} kb per iteration, below the probe's resolution.`,
+		`\nTime beyond ±${noiseThreshold * 100}% is flagged and fails the run; allocation is shown only.`,
 	);
 
-	if (failed.length > 0) {
-		console.log(`\n  ! These benchmarks failed to run: ${failed.join(", ")}`);
-		return false;
-	}
-
-	// An empty table means the filter matched nothing.  Reporting that as a clean
-	// comparison would turn a typo into a passing check.
-	if (names.length === 0) {
+	// An empty table means the filter matched nothing; passing it would turn a
+	// typo into a green check.
+	if (rows.length === 0) {
 		console.log("\n  ! No benchmarks ran, so nothing was compared.");
 		return false;
 	}
-
 	return !regressed;
 }

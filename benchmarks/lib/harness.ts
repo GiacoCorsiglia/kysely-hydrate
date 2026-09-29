@@ -1,167 +1,141 @@
 /**
- * The bits every benchmark suite shares: argument handling, wrappers that keep
- * the JIT from discarding a discarded result, and the run/save/compare cycle.
- *
- * A suite file declares its benchmarks with {@link benchAsync} / {@link benchSync}
- * inside mitata's `summary()` groups, then ends with a single
- * `await runSuite("name")`.  Each suite runs in its own process (see `run.ts`),
- * so it only pays for the fixtures it imports.
+ * What every suite shares: the command line, the benchmark declarations, and
+ * the verify / run / save / compare cycle.  A suite declares its benchmarks
+ * inside mitata `summary()` groups and ends with `await runSuite({ verify })`.
+ * See the README for the flags and how to read the output.
  */
-import { mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
 import { bench, do_not_optimize, run } from "mitata";
 
-import { type Baseline, compareBaseline, readBaseline, saveBaseline } from "./baseline.ts";
+import { compareBaselines, fromTrials, readBaseline, writeBaseline } from "./baseline.ts";
 
-const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-
-/** Where a suite's recorded baseline lives.  Machine-specific, so gitignored. */
-function baselinePath(suite: string): string {
-	return join(benchmarksDir, "baselines", `${suite}.json`);
-}
+export const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * Flags that take a following value.  `run.ts` needs this to tell a suite
- * selector from a flag's argument, so the list lives here where both can see it:
- * a flag known to one and not the other silently changes which suites run.
+ * Every flag any suite or `run.ts` accepts.  One list, parsed strictly on both
+ * sides, so a typo fails loudly and `run.ts` knows which flags take a value.
  */
-export const VALUE_FLAGS: ReadonlySet<string> = new Set(["--filter", "--postgres-url"]);
+export const cliOptions = {
+	save: { type: "boolean" },
+	compare: { type: "boolean" },
+	/** Run every suite's correctness checks and exit without timing anything. */
+	"verify-only": { type: "boolean" },
+	filter: { type: "string" },
+	/** Where baselines are read and written; `--ref` points this at a scratch directory. */
+	"baselines-dir": { type: "string" },
+	/** Label for a saved baseline; `--ref` passes the git ref. */
+	label: { type: "string" },
+	/** `run.ts` only: compare the working tree against this git ref. */
+	ref: { type: "string" },
+	"postgres-url": { type: "string" },
+	"no-postgres": { type: "boolean" },
+} as const satisfies ParseArgsOptionsConfig;
 
-////////////////////////////////////////////////////////////
-// Arguments.
-////////////////////////////////////////////////////////////
+let parsed: ReturnType<typeof parseCli>["values"] | undefined;
 
-/** Reads `--flag value` or `--flag=value`, and rejects anything ambiguous. */
-export function flagValue(
-	flag: string,
-	argv: readonly string[] = process.argv.slice(2),
-): string | undefined {
-	const matches = argv.filter((a) => a === flag || a.startsWith(`${flag}=`));
-
-	if (matches.length === 0) return undefined;
-	if (matches.length > 1) throw new Error(`${flag} was given more than once`);
-
-	const match = matches[0]!;
-	if (match.startsWith(`${flag}=`)) {
-		const value = match.slice(flag.length + 1);
-		if (value === "") throw new Error(`${flag} requires a value`);
-		return value;
-	}
-
-	// A separate value may legitimately start with "-" (a regex like "-foo"), so
-	// only a second flag is rejected.
-	const value = argv[argv.indexOf(match) + 1];
-	if (value === undefined || value.startsWith("--")) throw new Error(`${flag} requires a value`);
-	return value;
+export function parseCli(args: string[], allowPositionals = false) {
+	return parseArgs({ args, options: cliOptions, allowPositionals, strict: true, tokens: true });
 }
 
-export function hasFlag(flag: string, argv: readonly string[] = process.argv.slice(2)): boolean {
-	return argv.includes(flag);
-}
-
-interface Options {
-	save: boolean;
-	filter: string | undefined;
-	/** The baseline to diff against, already read; absent unless `--compare` was given. */
-	baseline: Baseline | undefined;
-}
-
-/**
- * Reads the suite's arguments and eagerly loads the baseline, so a bad or
- * missing one fails in a second rather than after the suite has run.
- */
-function readOptions(suite: string): Options {
-	const save = hasFlag("--save");
-	const compare = hasFlag("--compare");
-	const filter = flagValue("--filter");
-
-	if (save && filter !== undefined) {
-		// A filtered save would drop every unmatched benchmark from the baseline,
-		// and nothing would later report them as missing.
-		throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
-	}
-
-	return {
-		save,
-		filter,
-		baseline: compare ? readBaseline(baselinePath(suite), suite) : undefined,
-	};
+/** This suite's flags, parsed once. */
+export function cli() {
+	return (parsed ??= parseCli(process.argv.slice(2)).values);
 }
 
 ////////////////////////////////////////////////////////////
 // Declaring benchmarks.
 ////////////////////////////////////////////////////////////
 
+interface BenchOptions {
+	/** The entry the rest of its `summary()` group is compared against. */
+	baseline?: boolean;
+	/**
+	 * Collect garbage before every iteration.  Worth it for benchmarks that
+	 * allocate megabytes per call, where a collection landing in some samples
+	 * but not others splits the distribution in two.
+	 */
+	gcEachIteration?: boolean;
+}
+
 /**
- * A benchmark's name is its `--filter` pattern, and `--filter` takes a regex, so
- * a name has to match itself as one.  `+` and `()` have both silently made a
- * benchmark unselectable here before, so every name is checked at declaration
- * rather than left to whoever next copies one out of the report.
+ * `--filter` takes a regex, so a benchmark name has to match itself as one.
+ * `+` and `()` have silently made benchmarks unselectable before.
  */
-function assertFilterable(name: string): string {
-	let matches: boolean;
+function declare(name: string, fn: () => unknown, options: BenchOptions) {
+	let matches = false;
 	try {
 		matches = new RegExp(name).test(name);
-	} catch {
-		// An unbalanced bracket or paren throws rather than failing to match.
-		matches = false;
-	}
+	} catch {}
+	if (!matches) throw new Error(`Benchmark name is not usable as a --filter pattern: ${name}`);
 
-	if (!matches) {
-		throw new Error(`Benchmark name is not usable as a --filter pattern: ${name}`);
-	}
-	return name;
+	const b = bench(name, fn);
+	if (options.baseline) b.baseline(true);
+	if (options.gcEachIteration) b.gc("inner");
+	return b;
 }
 
-/**
- * `do_not_optimize` keeps the JIT from discarding work whose result is thrown
- * away, which is every benchmark in this directory.
- */
-export function benchAsync(name: string, fn: () => Promise<unknown>) {
-	return bench(assertFilterable(name), async () => {
-		do_not_optimize(await fn());
-	});
+/** `do_not_optimize` stops the JIT discarding work whose result is thrown away. */
+export function benchSync(name: string, fn: () => unknown, options: BenchOptions = {}) {
+	return declare(name, () => do_not_optimize(fn()), options);
 }
 
-export function benchSync(name: string, fn: () => unknown) {
-	return bench(assertFilterable(name), () => {
-		do_not_optimize(fn());
-	});
+export function benchAsync(name: string, fn: () => Promise<unknown>, options: BenchOptions = {}) {
+	return declare(name, async () => do_not_optimize(await fn()), options);
 }
 
 ////////////////////////////////////////////////////////////
 // Running.
 ////////////////////////////////////////////////////////////
 
+interface SuiteOptions {
+	/**
+	 * Runs every workload once and asserts its output before anything is timed.
+	 * A change that makes a workload stop doing its work would otherwise read as
+	 * a large speedup instead of a failure.
+	 */
+	verify?: () => unknown;
+	/** Releases what the suite opened, whether or not the run succeeded. */
+	teardown?: () => unknown;
+}
+
 /**
- * Runs everything the suite declared, then saves or compares a baseline as the
- * arguments ask.  Sets a non-zero exit code on a regression rather than
- * throwing, so the report is still readable.
+ * Verifies, runs everything the suite declared, then saves or compares a
+ * baseline as the flags ask.  A regression sets the exit code instead of
+ * throwing, so the report is still printed.
  */
-export async function runSuite(
-	suite = basename(process.argv[1] ?? "", ".bench.ts"),
-): Promise<void> {
-	const { save, filter, baseline } = readOptions(suite);
+export async function runSuite({ verify, teardown }: SuiteOptions = {}): Promise<void> {
+	const suite = basename(process.argv[1] ?? "", ".bench.ts");
+	const { save, compare, filter, label, ...flags } = cli();
+	const path = join(flags["baselines-dir"] ?? join(benchmarksDir, "baselines"), `${suite}.json`);
 
-	// `throw: true` makes mitata propagate a failing benchmark instead of
-	// recording the error on the run and carrying on, which would drop it from
-	// the report and from any baseline.
-	const trials = await run({
-		throw: true,
-		...(filter !== undefined && { filter: new RegExp(filter) }),
-	});
+	try {
+		if (save && filter !== undefined && flags["baselines-dir"] === undefined) {
+			// A filtered save would silently drop every unmatched benchmark.
+			throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
+		}
+		// Read before running, so a missing baseline fails in a second, not minutes.
+		const before = compare ? readBaseline(path, suite) : undefined;
 
-	if (save) {
-		mkdirSync(join(benchmarksDir, "baselines"), { recursive: true });
-		saveBaseline(suite, baselinePath(suite), trials);
-	}
+		await verify?.();
+		if (flags["verify-only"]) return console.log(`${suite}: workloads verified.`);
 
-	if (
-		baseline !== undefined &&
-		!compareBaseline(suite, baseline, trials, { reportMissing: filter === undefined })
-	) {
-		process.exitCode = 1;
+		// `throw: true` makes a failing benchmark fail the run instead of being
+		// dropped from the report and the baseline.
+		const trials = await run({ throw: true, ...(filter && { filter: new RegExp(filter) }) });
+		const after = fromTrials(suite, trials, label ?? new Date().toISOString());
+
+		if (save) {
+			writeBaseline(path, after);
+			console.log(`\nSaved baseline to ${path}`);
+		}
+		if (before && !compareBaselines(before, after, { reportMissing: filter === undefined })) {
+			process.exitCode = 1;
+		}
+	} finally {
+		// A pg pool left open would keep the process alive after a good report.
+		await teardown?.();
 	}
 }
