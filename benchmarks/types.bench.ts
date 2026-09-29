@@ -55,8 +55,12 @@ interface Measurement {
 
 let oldProgram: ts.Program | undefined;
 
-/** Checks one fixture in a fresh program, reusing parsed files from the last one. */
-function checkOnce(file: string) {
+/**
+ * Checks one fixture in a fresh program, reusing parsed files from the last
+ * one.  Collecting garbage around the check slows it down, so a run either
+ * times the check or weighs what it retained, never both.
+ */
+function checkOnce(file: string, weigh: boolean) {
 	const program = ts.createProgram({ rootNames: [file], options, oldProgram });
 	oldProgram = program;
 	program.getTypeChecker();
@@ -64,7 +68,8 @@ function checkOnce(file: string) {
 	const counts = () => [program.getInstantiationCount(), program.getTypeCount()] as const;
 
 	const [i0, t0] = counts();
-	globalThis.gc?.();
+	const gc = weigh ? globalThis.gc : undefined;
+	gc?.();
 	const heap0 = process.memoryUsage().heapUsed;
 	const start = process.hrtime.bigint();
 	const diagnostics = [
@@ -72,8 +77,8 @@ function checkOnce(file: string) {
 		...program.getSemanticDiagnostics(source),
 	];
 	const time = Number(process.hrtime.bigint() - start);
-	globalThis.gc?.();
-	const heap = globalThis.gc && process.memoryUsage().heapUsed - heap0;
+	gc?.();
+	const heap = gc && process.memoryUsage().heapUsed - heap0;
 	const [i1, t1] = counts();
 	return { diagnostics, instantiations: i1 - i0, types: t1 - t0, time, heap };
 }
@@ -88,7 +93,7 @@ function measure(name: string): Measurement {
 	if (name !== "empty" && !readFileSync(file, "utf8").includes(".toEqualTypeOf<")) {
 		throw new Error(`types/${name}.ts asserts nothing with expectTypeOf(...).toEqualTypeOf<...>()`);
 	}
-	const runs = Array.from({ length: verifyOnly ? 1 : repeats }, () => checkOnce(file));
+	const runs = Array.from({ length: verifyOnly ? 1 : repeats }, () => checkOnce(file, false));
 	const [first] = runs;
 	if (first!.diagnostics.length > 0) {
 		throw new Error(
@@ -103,7 +108,7 @@ function measure(name: string): Measurement {
 		throw new Error(`types/${name}.ts instantiated a different number of types on each run`);
 	}
 	const median = (xs: number[]) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-	const heap = first!.heap === undefined ? undefined : median(runs.map((r) => r.heap!));
+	const heap = verifyOnly ? undefined : checkOnce(file, true).heap;
 	return {
 		instantiations: first!.instantiations,
 		types: first!.types,

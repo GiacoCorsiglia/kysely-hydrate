@@ -55,7 +55,11 @@ export function times<T>(n: number, build: (i: number) => T): T[] {
 
 export type Row = Record<string, unknown>;
 
-const userColumns = (u: number): Row => ({ id: u, username: `user${u}`, email: `user${u}@example.com` });
+const userColumns = (u: number): Row => ({
+	id: u,
+	username: `user${u}`,
+	email: `user${u}@example.com`,
+});
 
 /** A joined collection: `count` children per parent, each with its own joined collections. */
 export interface Join {

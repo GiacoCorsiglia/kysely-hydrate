@@ -55,7 +55,7 @@ const ownColumns = (row: object, prefix: string) =>
  * every level (given that level's columns, read from `sample`).
  */
 interface Nesting {
-	modify?: (h: Level, columns: string[]) => Level;
+	modify?: (h: Level, columns: string[], prefix: string) => Level;
 	mode?: CollectionMode;
 	sample?: object | undefined;
 }
@@ -71,7 +71,7 @@ function nest(
 			parent.has(mode, name, `${name}$$`, (c: any) =>
 				nest(joins, { modify, mode, sample }, `${prefix}${name}$$`, c("id")),
 			),
-		modify(h, ownColumns(sample, prefix)),
+		modify(h, ownColumns(sample, prefix), prefix),
 	);
 }
 
@@ -101,7 +101,11 @@ const every = (modify: (h: Level, columns: string[]) => Level) =>
 const key = (r: { id: number }) => r.id * 2;
 
 const attached = (parents: number, perParent: number, parentKey: string) =>
-	times(parents * perParent, (id) => ({ id, [parentKey]: Math.ceil(id / perParent), label: `A${id}` }));
+	times(parents * perParent, (id) => ({
+		id,
+		[parentKey]: Math.ceil(id / perParent),
+		label: `A${id}`,
+	}));
 const withAttaches = (users: number) => {
 	const [posts, profiles] = [attached(users, 5, "user_id"), attached(users, 1, "user_id")];
 	return nested
@@ -158,7 +162,10 @@ const W = {
 	extend: [every((h) => h.extend((r) => ({ key: key(r) }))), rows10k],
 	with: [every((h) => h.with(createHydrator<any>("id").extras({ key }))), rows10k],
 	orderByKeys: [every((h) => h.orderByKeys()), rows10k],
-	mapped: [nested.map((u: any) => ({ ...u, label: `${u.username} has ${u.posts.length} posts` })), rows10k],
+	mapped: [
+		nested.map((u: any) => ({ ...u, label: `${u.username} has ${u.posts.length} posts` })),
+		rows10k,
+	],
 
 	oneToOneMany: [nested, oneToOneRows10k],
 	oneToOneOne: [nest(chain, { mode: "one" }), oneToOneRows10k],
@@ -177,8 +184,8 @@ const W = {
 	attachUsers: [nested.attachMany("likes", () => likesPerUser, { matchChild: "user_id" }), rows10k],
 	attachPosts: [
 		nest(chain, {
-			modify: (h, columns) =>
-				columns.includes("title")
+			modify: (h, _, prefix) =>
+				prefix === "posts$$"
 					? h.attachMany("likes", () => likesPerPost, { matchChild: "post_id" })
 					: h,
 			sample: rows10k[0],
@@ -209,7 +216,11 @@ async function verifyWorkloads(): Promise<void> {
 	assert.equal(users.length, 500);
 	assert.equal(descend(users, ["posts"]).length, 2500);
 	assert.equal(descend(users, ["posts", "comments"]).length, 10_000);
-	for (const [w, n] of [[W.rows20, 1], [W.rows200, 10], [W.rows1k, 50]] as const) {
+	for (const [w, n] of [
+		[W.rows20, 1],
+		[W.rows200, 10],
+		[W.rows1k, 50],
+	] as const) {
 		assert.equal((await hydrated(w)).length, n);
 	}
 	assert.equal((await hydrated<Row>(W.one)).id, 1);
@@ -217,7 +228,11 @@ async function verifyWorkloads(): Promise<void> {
 	// Every modifier applies at all three levels, so check the deepest.
 	const comment = async (w: Workload) => descend(await hydrated(w), ["posts", "comments"])[0];
 	assert.deepEqual(await hydrated(W.fieldsDeclared), users);
-	assert.deepEqual(await comment(W.fieldsTransformed), { id: "1", content: "Comment 1", post_id: "1" });
+	assert.deepEqual(await comment(W.fieldsTransformed), {
+		id: "1",
+		content: "Comment 1",
+		post_id: "1",
+	});
 	assert.deepEqual(await comment(W.omit), { content: "Comment 1", post_id: 1 });
 	const extras = await hydrated(W.extras);
 	assert.equal(descend(extras, ["posts", "comments"])[0].key, 2);
@@ -279,7 +294,11 @@ async function verifyWorkloads(): Promise<void> {
 		assert.equal(Object.keys(out[0]).length, WIDTHS[i]);
 	}
 	for (const [i, w] of depths.entries()) {
-		assert.equal(descend(await hydrated(w), chainNames(depthJoins[i]!)).length, 10_000, `depth ${i + 1}`);
+		assert.equal(
+			descend(await hydrated(w), chainNames(depthJoins[i]!)).length,
+			10_000,
+			`depth ${i + 1}`,
+		);
 	}
 }
 
