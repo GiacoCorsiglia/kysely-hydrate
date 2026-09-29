@@ -137,7 +137,11 @@ function declareDialect(dialect: string, db: k.Kysely<DB>) {
 			},
 			executeExists: {
 				run: () => all.executeExists(),
-				check: (exists) => assert.equal(exists, true),
+				// A query matching nothing must say so, or a constant `true` would pass.
+				check: async (exists) => {
+					assert.equal(exists, true);
+					assert.equal(await all.where("id", "<", 0).executeExists(), false);
+				},
 			},
 		},
 		`${dialect} `,

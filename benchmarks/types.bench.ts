@@ -34,7 +34,6 @@ const names = readdirSync(fixturesDir)
 	.map((f) => f.slice(0, -".ts".length))
 	.filter((n) => !pattern || pattern.test(n))
 	.sort();
-if (names.length === 0) throw new Error(`No types fixture matches --filter ${filter}`);
 
 let oldProgram: ts.Program | undefined;
 

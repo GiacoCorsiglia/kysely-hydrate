@@ -249,6 +249,11 @@ export async function runSuite({ verify, measure = runMitata }: SuiteOptions = {
 			label: label ?? new Date().toISOString(),
 			...(await measure()),
 		};
+		// Not an error: `--filter` spans every suite, and most match in only some.
+		// A `--compare` still fails below, since nothing was compared.
+		if (Object.keys(after.benchmarks).length === 0) {
+			console.log(`${suite}: no benchmark matches --filter ${filter}`);
+		}
 		for (const target of [save && dir, refRunDir]) {
 			if (!target) continue;
 			writeBaseline(path(target), after);

@@ -85,7 +85,14 @@ export function readBaseline(path: string, suite: string): Baseline {
 		parsed.version === 2 &&
 		(["label", "runtime", "cpu"] as const).every((key) => typeof parsed[key] === "string") &&
 		isRecord(parsed.benchmarks) &&
-		Object.values(parsed.benchmarks).every((e) => isRecord(e) && typeof e.p50 === "number");
+		Object.values(parsed.benchmarks).every(
+			(e) =>
+				isRecord(e) &&
+				typeof e.p50 === "number" &&
+				(["p50", "heap", "count"] as const).every(
+					(key) => e[key] === undefined || (Number.isFinite(e[key]) && (e[key] as number) >= 0),
+				),
+		);
 	if (!valid) throw new Error(`${path} is not a version 2 benchmark baseline; re-record it`);
 	if (parsed.suite !== suite) {
 		throw new Error(`${path} was recorded for suite "${parsed.suite}", not "${suite}"`);
@@ -152,8 +159,13 @@ export function formatBytes(bytes: number): string {
  * regression gate.
  */
 function delta(before: number, after: number, threshold = noiseThreshold) {
+	// Inputs are finite and non-negative, so only a zero `before` needs care.
+	if (before === 0) {
+		return after === 0
+			? { label: "+0.0% (noise)", regressed: false }
+			: { label: "up from 0 WORSE", regressed: true };
+	}
 	const ratio = after / before - 1;
-	if (!Number.isFinite(ratio)) return { label: "n/a", regressed: false };
 
 	const pct = `${ratio >= 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%`;
 	if (Math.abs(ratio) < threshold) return { label: `${pct} (noise)`, regressed: false };
