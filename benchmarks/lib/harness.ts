@@ -95,20 +95,29 @@ interface SuiteOptions {
 }
 
 /**
+ * Where this run reads and writes `suite`'s baseline.  Refuses a filtered
+ * `--save` into the default directory, which would silently drop every
+ * unmatched benchmark from the baseline.
+ */
+export function baselinePath(suite: string): string {
+	const { save, filter, "baselines-dir": dir } = cli();
+	if (save && filter !== undefined && dir === undefined) {
+		throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
+	}
+	return join(dir ?? join(benchmarksDir, "baselines"), `${suite}.json`);
+}
+
+/**
  * Verifies, runs everything the suite declared, then saves or compares a
  * baseline as the flags ask.  A regression sets the exit code instead of
  * throwing, so the report is still printed.
  */
 export async function runSuite({ verify, teardown }: SuiteOptions = {}): Promise<void> {
 	const suite = basename(process.argv[1] ?? "", ".bench.ts");
-	const { save, compare, filter, label, ...flags } = cli();
-	const path = join(flags["baselines-dir"] ?? join(benchmarksDir, "baselines"), `${suite}.json`);
+	const { compare, filter, label, ...flags } = cli();
 
 	try {
-		if (save && filter !== undefined && flags["baselines-dir"] === undefined) {
-			// A filtered save would silently drop every unmatched benchmark.
-			throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
-		}
+		const path = baselinePath(suite);
 		// Read before running, so a missing baseline fails in a second, not minutes.
 		const before = compare ? readBaseline(path, suite) : undefined;
 
@@ -120,7 +129,7 @@ export async function runSuite({ verify, teardown }: SuiteOptions = {}): Promise
 		const trials = await run({ throw: true, ...(filter && { filter: new RegExp(filter) }) });
 		const after = fromTrials(suite, trials, label ?? new Date().toISOString());
 
-		if (save) {
+		if (flags.save) {
 			writeBaseline(path, after);
 			console.log(`\nSaved baseline to ${path}`);
 		}

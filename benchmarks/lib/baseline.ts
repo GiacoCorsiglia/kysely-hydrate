@@ -1,8 +1,8 @@
 /**
  * Saving benchmark results and comparing one run against another.  mitata only
  * compares benchmarks within a run; this adds comparison across runs.  The
- * README explains why only time fails a comparison and allocation is shown
- * but never fails one.
+ * README explains why only time (or, for the types suite, a deterministic
+ * count) fails a comparison and allocation is shown but never fails one.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -11,6 +11,8 @@ import { dirname } from "node:path";
 export interface BaselineEntry {
 	p50: number;
 	heap?: number;
+	/** A deterministic count (the types suite's instantiations); when present it gates instead of time. */
+	count?: number;
 }
 
 export interface Baseline {
@@ -35,6 +37,9 @@ export interface Trials {
 
 /** A relative change below this is machine noise, not a change in the code. */
 export const noiseThreshold = 0.2;
+
+/** A deterministic count only moves when the code does, so its band is tight. */
+export const countThreshold = 0.02;
 
 /**
  * Allocation per iteration below which a heap reading isn't compared.  It sits
@@ -103,9 +108,11 @@ export function mergeBaselines(runs: readonly Baseline[]): Baseline {
 		const entries = runs.map((r) => r.benchmarks[name]);
 		if (entries.some((e) => e === undefined)) continue;
 		const heap = mean(entries.map((e) => e!.heap));
+		const count = mean(entries.map((e) => e!.count));
 		benchmarks[name] = {
 			p50: mean(entries.map((e) => e!.p50))!,
 			...(heap !== undefined && { heap }),
+			...(count !== undefined && { count }),
 		};
 	}
 	return { ...first, benchmarks };
@@ -159,9 +166,10 @@ export function printTable(header: readonly string[], rows: readonly (readonly s
 }
 
 /**
- * Prints each benchmark's median time and mean allocation against `before`.
- * Returns true when no time regressed.  `reportMissing` is false for a
- * filtered run, where almost everything is missing by design.
+ * Prints each benchmark's median time and mean allocation against `before`,
+ * and its count when it has one.  Returns true when nothing regressed: the
+ * count where there is one, the time otherwise.  `reportMissing` is false for
+ * a filtered run, where almost everything is missing by design.
  */
 export function compareBaselines(
 	before: Baseline,
@@ -174,20 +182,28 @@ export function compareBaselines(
 		console.log("\n  ! Recorded on a different machine or runtime; deltas are not meaningful.");
 	}
 
+	const counted = Object.values(after.benchmarks).some((e) => e.count !== undefined);
 	const rows: string[][] = [];
 	let regressed = false;
 
 	for (const [name, now] of Object.entries(after.benchmarks)) {
 		const then = before.benchmarks[name];
-		const time = then ? delta(then.p50, now.p50) : { label: "new", regressed: false };
+		const isNew = { label: "new", regressed: false };
+		const count =
+			then?.count !== undefined && now.count !== undefined
+				? delta(then.count, now.count, countThreshold)
+				: isNew;
+		// A counted benchmark gates on its count; an infinite band shows its time as noise.
+		const time = then ? delta(then.p50, now.p50, counted ? Infinity : noiseThreshold) : isNew;
 		const heap = !then
 			? "new"
 			: (then.heap ?? 0) < heapFloor || (now.heap ?? 0) < heapFloor
 				? "too small"
 				: delta(then.heap!, now.heap!).label;
-		regressed ||= time.regressed;
+		regressed ||= counted ? count.regressed : time.regressed;
 		rows.push([
 			name,
+			...(counted ? [String(now.count ?? "-"), count.label] : []),
 			formatTime(now.p50),
 			time.label,
 			now.heap === undefined ? "-" : formatBytes(now.heap),
@@ -197,13 +213,27 @@ export function compareBaselines(
 
 	if (reportMissing) {
 		for (const name of Object.keys(before.benchmarks)) {
-			if (!(name in after.benchmarks)) rows.push([name, "-", "missing", "-", "missing"]);
+			if (!(name in after.benchmarks)) {
+				rows.push([name, ...(counted ? ["-", "missing"] : []), "-", "missing", "-", "missing"]);
+			}
 		}
 	}
 
-	printTable(["benchmark", "p50", "vs before", "heap", "vs before"], rows);
+	printTable(
+		[
+			"benchmark",
+			...(counted ? ["count", "vs before"] : []),
+			"p50",
+			"vs before",
+			"heap",
+			"vs before",
+		],
+		rows,
+	);
 	console.log(
-		`\nTime beyond ±${noiseThreshold * 100}% is flagged and fails the run; allocation is shown only.`,
+		counted
+			? `\nA count beyond ±${countThreshold * 100}% is flagged and fails the run; time and allocation are shown only.`
+			: `\nTime beyond ±${noiseThreshold * 100}% is flagged and fails the run; allocation is shown only.`,
 	);
 
 	// An empty table means the filter matched nothing; passing it would turn a

@@ -12,24 +12,19 @@ import ts from "typescript";
 
 import {
 	type Baseline,
-	delta,
+	compareBaselines,
 	formatTime,
 	printTable,
 	readBaseline,
 	writeBaseline,
 } from "./lib/baseline.ts";
-import { benchmarksDir, cli } from "./lib/harness.ts";
+import { baselinePath, benchmarksDir, cli } from "./lib/harness.ts";
 
-/** Instantiation growth beyond this fails a comparison; the count is deterministic. */
-const countThreshold = 0.02;
 const repeats = 5;
 
 const { save, compare, filter, label, ...flags } = cli();
 const verifyOnly = flags["verify-only"] ?? false;
-const path = join(flags["baselines-dir"] ?? join(benchmarksDir, "baselines"), "types.json");
-if (save && filter !== undefined && flags["baselines-dir"] === undefined) {
-	throw new Error("--save cannot be combined with --filter: it would truncate the baseline");
-}
+const path = baselinePath("types");
 const before = compare ? readBaseline(path, "types") : undefined;
 
 const fixturesDir = join(benchmarksDir, "types");
@@ -166,52 +161,29 @@ const after: Baseline = {
 	),
 };
 
-const kb = (bytes: number | undefined) =>
-	bytes === undefined ? "-" : `${(bytes / 1024).toFixed(0)} kb`;
-const entryOf = (b: Baseline | undefined, name: string) =>
-	b?.benchmarks[name] as { p50: number; count?: number } | undefined;
-
-let regressed = false;
-const rows = [...results].map(([name, m]) => {
-	const row = [name, String(m.instantiations), String(m.types), formatTime(m.time), kb(m.heap)];
-	if (!before) return row;
-	const then = entryOf(before, name);
-	if (then?.count === undefined) return [...row, "new", "new"];
-	const count = delta(then.count, m.instantiations, countThreshold);
-	regressed ||= count.regressed;
-	// An infinite threshold labels every time change as noise: it never gates.
-	return [...row, count.label, delta(then.p50, m.time, Infinity).label];
-});
-if (before && filter === undefined) {
-	for (const name of Object.keys(before.benchmarks)) {
-		if (!results.has(name)) rows.push([name, "-", "-", "-", "-", "missing", "missing"]);
-	}
-}
-
 if (before) {
-	console.log(`\n  before: ${before.label}, ${before.runtime}`);
-	console.log(`  after:  ${after.label}, ${after.runtime}`);
+	if (!compareBaselines(before, after, { reportMissing: filter === undefined })) {
+		process.exitCode = 1;
+	}
+} else {
+	const kb = (bytes: number | undefined) =>
+		bytes === undefined ? "-" : `${(bytes / 1024).toFixed(0)} kb`;
+	printTable(
+		["fixture", "instantiations", "types", "check", "retained"],
+		[...results].map(([name, m]) => [
+			name,
+			String(m.instantiations),
+			String(m.types),
+			formatTime(m.time),
+			kb(m.heap),
+		]),
+	);
 }
-printTable(
-	[
-		"fixture",
-		"instantiations",
-		"types",
-		"check",
-		"retained",
-		...(before ? ["instantiations vs before", "check vs before"] : []),
-	],
-	rows,
-);
 console.log(
-	`\nNet of the empty fixture (${empty.instantiations} instantiations, ${formatTime(empty.time)}).` +
-		(before
-			? ` Instantiation growth beyond ${countThreshold * 100}% fails the run; check time is shown only.`
-			: ""),
+	`\nNet of the empty fixture (${empty.instantiations} instantiations, ${formatTime(empty.time)}).`,
 );
 
 if (save) {
 	writeBaseline(path, after);
 	console.log(`\nSaved baseline to ${path}`);
 }
-if (regressed) process.exitCode = 1;

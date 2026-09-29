@@ -1,7 +1,7 @@
 # Benchmarks
 
 Runtime benchmarks run on [mitata](https://github.com/evanwashere/mitata), and a
-type-checking benchmark runs on `tsc`.
+type-checking benchmark runs on the TypeScript compiler.
 
 ```sh
 npm run bench                          # every suite
@@ -77,7 +77,11 @@ narrowing p99 / p50.
 
 ## Type-checking
 
-The `types` suite type-checks fixture files under `benchmarks/types/` with `tsc`
-and records how many types were instantiated. The count is deterministic, so
-unlike time it's compared exactly: any growth beyond a small tolerance fails.
-Check time is reported alongside it for reading.
+The `types` suite type-checks each fixture under `benchmarks/types/` with the
+TypeScript compiler API, checking only the fixture itself, not the library's
+source, much as a user of the published types would. It reports instantiations
+and types net of an `empty` fixture that only imports the library. The count is
+deterministic, so unlike time it's compared tightly: growth beyond 2% fails.
+Check time and retained memory are reported for reading only. Every fixture
+must type-check and assert its result with `expectTypeOf(...).toEqualTypeOf<...>()`,
+so one whose types collapse to `any` fails instead of reading as a speedup.
