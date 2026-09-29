@@ -1,54 +1,27 @@
 /**
- * Row builders, shared by the suites that need flat rows.
- *
- * These mirror the shape a `querySet` produces for a users -> posts -> comments
- * join: one flat row per leaf, with ancestor columns repeated (the "row
- * explosion" hydration exists to undo).
- *
- * Nothing here is built at import.  A suite constructs only the row sets it
- * benchmarks, so an `order-by` micro-benchmark doesn't pay for 10,000 rows it
- * never touches.
+ * Row builders for the suites that need flat join rows: one row per leaf, with
+ * ancestor columns repeated (the "row explosion" hydration exists to undo).
+ * Nothing is built at import.
  */
 import { EnableAutoInclusion, type HydrateOptions } from "../../src/hydrator.ts";
 
-////////////////////////////////////////////////////////////
-// Hydration options.
-////////////////////////////////////////////////////////////
+/**
+ * What `QuerySet#hydrate` passes (see `src/query-set.ts`), so the numbers
+ * describe the path real callers take.  `EnableAutoInclusion` is internal; the
+ * benchmarks reach for it for the same reason `QuerySet` does.
+ */
+export const querySetOptions: HydrateOptions = { [EnableAutoInclusion]: true, sort: "nested" };
+
+export const withSort = (sort: NonNullable<HydrateOptions["sort"]>): HydrateOptions => ({
+	...querySetOptions,
+	sort,
+});
 
 /**
- * The options `QuerySet#hydrate` passes (see `src/query-set.ts`), which is how
- * essentially all hydration happens in practice.  Benchmarks that aren't
- * specifically measuring a different sort mode should use these, so the numbers
- * describe the path real callers take.
- *
- * `EnableAutoInclusion` is internal to the library; we reach for it here for the
- * same reason `QuerySet` does, namely that the benchmarks don't declare
- * `.fields()` and want every selected column included.
+ * Auto-inclusion returns fields the hydrator never declared, which its static
+ * type can't know about; assertions recover them through this, not casts.
  */
-export const querySetOptions: HydrateOptions = {
-	[EnableAutoInclusion]: true,
-	sort: "nested",
-};
-
-/** As {@link querySetOptions}, but with the sort mode overridden. */
-export function withSort(sort: NonNullable<HydrateOptions["sort"]>): HydrateOptions {
-	return { ...querySetOptions, sort };
-}
-
-/**
- * Auto-inclusion fills in fields the hydrator never declared, so a hydrator
- * built without `.fields()` has a static output type narrower than what it
- * actually returns.  `QuerySet` recovers the difference from the query's
- * selection; a standalone hydrator has nothing to recover it from.  Assertions
- * about hydrated rows go through this rather than scattering casts.
- */
-export function autoIncluded<T>(value: unknown): T {
-	return value as T;
-}
-
-////////////////////////////////////////////////////////////
-// Rows.
-////////////////////////////////////////////////////////////
+export const autoIncluded = <T>(value: unknown): T => value as T;
 
 export interface FlatRow {
 	id: number;
@@ -80,58 +53,77 @@ export function times<T>(n: number, build: (i: number) => T): T[] {
 	return Array.from({ length: n }, (_, i) => build(i + 1));
 }
 
-/**
- * The user columns, shared by both row builders so a change to `FlatRow` can't
- * leave them describing different users.
- */
-export const userColumns = (u: number) => ({
-	id: u,
-	username: `user${u}`,
-	email: `user${u}@example.com`,
-});
+export type Row = Record<string, unknown>;
 
-/** The join columns as a left join leaves them when nothing matched. */
-export const noJoinColumns = {
-	posts$$id: null,
-	posts$$title: null,
-	posts$$user_id: null,
-	posts$$comments$$id: null,
-	posts$$comments$$content: null,
-	posts$$comments$$post_id: null,
-} as const satisfies Omit<FlatRow, "id" | "username" | "email">;
+const userColumns = (u: number): Row => ({ id: u, username: `user${u}`, email: `user${u}@example.com` });
+
+/** A joined collection: `count` children per parent, each with its own joined collections. */
+export interface Join {
+	/** Plural table name; also the output key, and `name$$` is the column prefix. */
+	name: string;
+	count: number;
+	/** The text column, e.g. `title`; its value reads `Post 3` for the third post. */
+	text?: string;
+	joins?: Join[];
+}
 
 /**
- * Builds `users * postsPerUser * commentsPerPost` rows: the cartesian product a
- * two-level join returns.
+ * The rows a left join of `users` with `joins` returns.  Sibling joins
+ * multiply: each entity contributes the cartesian product of its joins' rows.
+ * Ids are numbered per table in row order, and each child carries a
+ * `<parent>_id` column pointing at its parent.
  */
-export function makeRows(users: number, postsPerUser: number, commentsPerPost: number): FlatRow[] {
-	const rows: FlatRow[] = [];
-	let postId = 1;
-	let commentId = 1;
-	for (let u = 1; u <= users; u++) {
-		for (let p = 0; p < postsPerUser; p++, postId++) {
-			for (let c = 0; c < commentsPerPost; c++, commentId++) {
-				rows.push({
-					...userColumns(u),
-					posts$$id: postId,
-					posts$$title: `Post ${postId}`,
-					posts$$user_id: u,
-					posts$$comments$$id: commentId,
-					posts$$comments$$content: `Comment ${commentId}`,
-					posts$$comments$$post_id: postId,
-				});
-			}
+export function makeJoinRows(users: number, joins: Join[]): Row[] {
+	const ids = new Map<string, number>();
+
+	const expand = (columns: Row, prefix: string, parent: string, id: number, joins: Join[]) => {
+		let rows = [columns];
+		for (const { name, count, text = "label", joins: nested = [] } of joins) {
+			const p = `${prefix}${name}$$`;
+			const singular = name.slice(0, -1);
+			const children = times(count, () => {
+				const childId = (ids.get(p) ?? 0) + 1;
+				ids.set(p, childId);
+				const label = `${singular[0]!.toUpperCase()}${singular.slice(1)} ${childId}`;
+				const child = { [`${p}id`]: childId, [`${p}${text}`]: label, [`${p}${parent}_id`]: id };
+				return expand(child, p, singular, childId, nested);
+			}).flat();
+			rows = rows.flatMap((row) => children.map((child) => ({ ...row, ...child })));
 		}
-	}
-	return rows;
+		return rows;
+	};
+
+	return times(users, (u) => expand(userColumns(u), "", "user", u, joins)).flat();
 }
 
+/** A chain of `fanOut.length` nested hasMany joins, `fanOut[d]` children per parent at depth d. */
+export const chainJoins = (fanOut: readonly number[], names = CHAIN): Join[] =>
+	fanOut.length === 0
+		? []
+		: [{ ...names[0]!, count: fanOut[0]!, joins: chainJoins(fanOut.slice(1), names.slice(1)) }];
+
+const CHAIN = [
+	{ name: "posts", text: "title" },
+	{ name: "comments", text: "content" },
+	{ name: "reactions" },
+	{ name: "votes" },
+];
+
+/** `users * postsPerUser * commentsPerPost` rows of a users -> posts -> comments join. */
+export const makeRows = (users: number, postsPerUser: number, commentsPerPost: number) =>
+	makeJoinRows(users, chainJoins([postsPerUser, commentsPerPost])) as unknown as FlatRow[];
+
 /**
- * Builds `count` rows that each key to a distinct entity, i.e. what a query
- * without any many-joins returns.  Grouping has nothing to collapse here, which
- * makes this the complement to {@link makeRows}, where 20 rows collapse into one
- * entity.
+ * `count` users whose joins all missed, as a left join leaves them: grouping
+ * has nothing to collapse, the complement to {@link makeRows}.
  */
-export function makeDistinctRows(count: number): FlatRow[] {
-	return times(count, (u) => ({ ...userColumns(u), ...noJoinColumns }));
-}
+export const makeDistinctRows = (count: number): FlatRow[] =>
+	times(count, (u) => ({
+		...(userColumns(u) as Pick<FlatRow, "id" | "username" | "email">),
+		posts$$id: null,
+		posts$$title: null,
+		posts$$user_id: null,
+		posts$$comments$$id: null,
+		posts$$comments$$content: null,
+		posts$$comments$$post_id: null,
+	}));

@@ -1,24 +1,7 @@
 /**
- * Benchmarks for query construction: `querySet()`, the join builders, and the
- * `to*Query()` / `compile()` terminals in `src/query-set.ts`.
- *
- *   npm run bench query-build                        # print a report
- *   npm run bench query-build -- --filter "sibling"  # only matching benchmarks
- *
- * Nothing here executes.  The database is `emptyDb()`: query building needs a
- * `Kysely` instance for its dialect and its types, never any rows, so seeding
- * one would only slow the suite's startup down.
- *
- * Read the numbers as relative comparisons within a `summary()` group.  Each
- * group varies exactly one thing — join count, nesting depth, join flavour,
- * pagination, the terminal, the write type — and holds the rest of the shape
- * fixed, so the ratio inside a group is the answer and the absolute microseconds
- * are just context.
- *
- * `QuerySet#compile()` is `toQuery().compile()`, so every "compile" benchmark
- * below covers building the Kysely query *and* rendering the SQL.  That is
- * deliberate: it is what a caller pays per query, and the terminals group
- * separates the two halves.
+ * Building and compiling query sets; nothing executes.  `compile()` is
+ * `toQuery().compile()`, so each compile benchmark covers building the Kysely
+ * query and rendering its SQL.  The terminals group separates the two.
  */
 import assert from "node:assert/strict";
 
@@ -27,563 +10,258 @@ import { summary } from "mitata";
 import { querySet } from "../src/query-set.ts";
 import { emptyDb } from "./lib/db.ts";
 import { benchSync, runSuite } from "./lib/harness.ts";
+import { queries } from "./lib/queries.ts";
 
 const db = emptyDb();
+const { users, posts, comments, usersPostsComments } = queries(db);
 
-////////////////////////////////////////////////////////////
-// Workloads.
-//
-// Every query set is built once, here, because all but one benchmark measures a
-// terminal against an already-built query set.  The single benchmark that
-// measures construction ("querySet build") calls a builder function instead, and
-// says so.
-//
-// The shapes are derived from each other wherever possible — `siblings3` is
-// `siblings1` plus two joins, `representative` is `usersPostsComments` plus a
-// limit — so a group can only differ in the way its comment claims.  `QuerySet`
-// is immutable, so deriving is safe.
-////////////////////////////////////////////////////////////
+interface Compilable {
+	compile(): { sql: string };
+}
 
-/** The base shared by every select query set below. */
-const users = () =>
-	querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username", "email"]));
+/** What `verifyWorkloads` asserts about an entry's compiled SQL. */
+interface Shape {
+	joins?: number;
+	has?: RegExp | RegExp[];
+	lacks?: RegExp;
+}
 
-//
-// Sibling joins: 1, 3 and 5 many-joins hanging off the same base.
-//
-// All five join the same table on the same refs and select the same columns, so
-// the only variable is how many of them there are.
-//
+type Entry = [qs: Compilable, shape: Shape];
 
-const siblings1 = users().leftJoinMany(
-	"p1",
-	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-	"p1.user_id",
-	"user.id",
-);
+const compileEntries: [name: string, Entry][] = [];
 
-const siblings3 = siblings1
-	.leftJoinMany(
-		"p2",
-		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-		"p2.user_id",
-		"user.id",
-	)
-	.leftJoinMany(
-		"p3",
-		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-		"p3.user_id",
-		"user.id",
+/** A `summary()` group timing `compile()` on each entry; the first is the baseline. */
+function compileGroup(entries: Record<string, Entry>) {
+	const named = Object.entries(entries).map(([name, entry]) => [`compile ${name}`, entry] as const);
+	compileEntries.push(...named);
+	summary(() => {
+		named.forEach(([name, [qs]], i) => benchSync(name, () => qs.compile(), { baseline: i === 0 }));
+	});
+}
+
+const joinCount = (sql: string) => (sql.match(/ join /g) ?? []).length;
+
+/** The pagination landed inside a derived table aliased as the base: the wrapped shape. */
+const wrapped = (alias: string) => new RegExp(`(limit|offset) \\?\\) as "${alias}"`);
+
+/** The write sits in the data-modifying CTE at the top of the statement. */
+const writeCte = (statement: string) => new RegExp(`^with "__base" as \\(${statement} `);
+
+/** The join a method should render: `innerJoinLateralMany` -> `inner join lateral (`. */
+const joinSql = (method: string) =>
+	new RegExp(
+		`${method.startsWith("left") ? "left" : "inner"} join ${method.includes("Lateral") ? "lateral " : ""}\\(`,
 	);
 
-const siblings5 = siblings3
-	.leftJoinMany(
-		"p4",
-		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-		"p4.user_id",
-		"user.id",
-	)
-	.leftJoinMany(
-		"p5",
-		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-		"p5.user_id",
-		"user.id",
+const byMethod = (qsByMethod: Record<string, Compilable>) =>
+	Object.fromEntries(
+		Object.entries(qsByMethod).map(([method, qs]): [string, Entry] => [
+			method,
+			[qs, { joins: 1, has: joinSql(method) }],
+		]),
 	);
 
-//
-// Nesting depth: 1 to 4 levels of many-join.
-//
-// Each level is a many-join inside the level above, so the SQL gains a derived
-// table per level and the column prefixes grow with it ("posts$$comments$$...").
-// The chain revisits `users` and `posts` at levels 3 and 4 because the benchmark
-// schema only has three tables; the join kind is what the code path turns on, not
-// which table it points at.  These cannot be derived from one another the way the
-// siblings are: nesting happens inside the join callback.
-//
+// Every join changes a query set's type, which TypeScript can't follow through a
+// loop or recursion.  The fixtures built that way are only compiled, so they
+// drop the types.
+const untyped = (qs: unknown) => qs as any;
 
-const depth1 = users().leftJoinMany(
-	"posts",
-	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-	"posts.user_id",
-	"user.id",
-);
+const siblings = (n: number) =>
+	Array.from({ length: n }, (_, i) => `p${i + 1}`).reduce(
+		(qs, key) => qs.leftJoinMany(key, posts, `${key}.user_id`, "user.id"),
+		untyped(users),
+	);
 
-/** users -> posts -> comments, the shape the terminals group also uses. */
-function buildUsersPostsComments() {
-	return users().leftJoinMany(
+/** Each level many-joins the next.  With three tables, levels 3 and 4 revisit posts and users. */
+const chain = [
+	["posts", posts, "posts.user_id", "user.id"],
+	["comments", comments, "comments.post_id", "post.id"],
+	["post", posts, "post.id", "comment.post_id"],
+	["author", users, "author.id", "post.user_id"],
+] as const;
+
+const depth = (n: number, parent: unknown = users, level = 0): Compilable => {
+	if (level === n) return untyped(parent);
+	const [key, qs, ...refs] = chain[level]!;
+	return untyped(parent).leftJoinMany(key, depth(n, qs, level + 1), ...refs);
+};
+
+const manyJoin = users.leftJoinMany("posts", posts, "posts.user_id", "user.id");
+const oneJoin = users.leftJoinOne("posts", posts, "posts.user_id", "user.id");
+
+// A lateral body is a correlated subquery with its own limit, so the lateral
+// group has its own baseline rather than comparing against a plain join.
+const lateral = (method: string) =>
+	untyped(users)[method](
 		"posts",
-		({ eb, qs }) =>
-			qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
-				"comments",
-				({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-				"comments.post_id",
-				"posts.id",
+		({ eb, qs }: any) =>
+			qs(
+				eb
+					.selectFrom("posts")
+					.select(["id", "title"])
+					.whereRef("posts.user_id", "=", "user.id")
+					.orderBy("posts.id", "desc")
+					.limit(method.endsWith("One") ? 1 : 2),
 			),
-		"posts.user_id",
-		"user.id",
+		(join: any) => join.onTrue(),
 	);
-}
 
-const depth2 = buildUsersPostsComments();
-
-const depth3 = users().leftJoinMany(
-	"posts",
-	({ eb, qs }) =>
-		qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
-			"comments",
-			({ eb, qs }) =>
-				qs(eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"])).leftJoinMany(
-					"authors",
-					({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
-					"authors.id",
-					"comments.user_id",
-				),
-			"comments.post_id",
-			"posts.id",
-		),
-	"posts.user_id",
-	"user.id",
-);
-
-const depth4 = users().leftJoinMany(
-	"posts",
-	({ eb, qs }) =>
-		qs(eb.selectFrom("posts").select(["id", "title", "user_id"])).leftJoinMany(
-			"comments",
-			({ eb, qs }) =>
-				qs(eb.selectFrom("comments").select(["id", "content", "post_id", "user_id"])).leftJoinMany(
-					"authors",
-					({ eb, qs }) =>
-						qs(eb.selectFrom("users").select(["id", "username"])).leftJoinMany(
-							"authorPosts",
-							({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-							"authorPosts.user_id",
-							"authors.id",
-						),
-					"authors.id",
-					"comments.user_id",
-				),
-			"comments.post_id",
-			"posts.id",
-		),
-	"posts.user_id",
-	"user.id",
-);
-
-//
-// Join flavours.  Same table, same refs, same selection: only the join method
-// differs, so the gap is the code path and nothing else.  `depth1` is the
-// `leftJoinMany` member of this set.
-//
-
-const leftOne = users().leftJoinOne(
-	"post",
-	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-	"post.user_id",
-	"user.id",
-);
-
-const innerOne = users().innerJoinOne(
-	"post",
-	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-	"post.user_id",
-	"user.id",
-);
-
-const innerMany = users().innerJoinMany(
-	"posts",
-	({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-	"posts.user_id",
-	"user.id",
-);
-
-//
-// Lateral joins.  A lateral join's body is a correlated subquery — that is the
-// point of it — so these carry a `whereRef` and their own `limit` that the plain
-// joins above do not.  The group's baseline is `leftJoinLateralMany`, not a plain
-// join, because comparing against one would attribute that extra subquery to
-// "lateral".
-//
-
-const lateralMany = users().leftJoinLateralMany(
-	"posts",
-	({ eb, qs }) =>
-		qs(
-			eb
-				.selectFrom("posts")
-				.select(["id", "title"])
-				.whereRef("posts.user_id", "=", "user.id")
-				.orderBy("posts.id")
-				.limit(2),
-		),
-	(join) => join.onTrue(),
-);
-
-const lateralInnerMany = users().innerJoinLateralMany(
-	"posts",
-	({ eb, qs }) =>
-		qs(
-			eb
-				.selectFrom("posts")
-				.select(["id", "title"])
-				.whereRef("posts.user_id", "=", "user.id")
-				.orderBy("posts.id")
-				.limit(2),
-		),
-	(join) => join.onTrue(),
-);
-
-const lateralOne = users().leftJoinLateralOne(
-	"latestPost",
-	({ eb, qs }) =>
-		qs(
-			eb
-				.selectFrom("posts")
-				.select(["id", "title"])
-				.whereRef("posts.user_id", "=", "user.id")
-				.orderBy("posts.id", "desc")
-				.limit(1),
-		),
-	(join) => join.onTrue(),
-);
-
-//
-// Pagination.  A limit or offset over a many-join cannot be applied to the joined
-// query — row explosion would make it count the wrong rows — so `#toQuery` builds
-// a paginated cardinality-one query and wraps it in a derived table, re-hoisting
-// every selection (see `#toCardinalityOneQuery`).  Over a one-join there is no
-// explosion and the limit lands on the joined query directly.  Both sides of that
-// branch are here, with their unpaginated shapes as the reference points.
-//
-
-const manyLimit = depth1.limit(50);
-const manyOffset = depth1.offset(50);
-const oneLimit = leftOne.limit(50);
-const oneOffset = leftOne.offset(50);
-
-//
-// Terminals, all against one query set: depth 2, ordered, and limited, so the
-// wrap above is in play.  This is the shape the hydrate suite's query-building
-// group used, which those four benchmarks move here from.
-//
-
-const representative = depth2.orderBy("id").limit(500);
-
-//
-// Writes.  A write query set becomes a data-modifying CTE with a SELECT over it,
-// and when the query wraps (a many-join plus pagination) that CTE and the
-// RETURNING columns are hoisted to the top level — see commit b8de50e.  The
-// insert pairs isolate: the RETURNING list, adding a join, and adding the wrap.
-//
-
-// The benchmark schema declares plain column types rather than `Generated`, so
-// every column is required on insert, keys included.
+// The schema's columns aren't `Generated`, so an insert supplies every one.
 const insertRow = { id: 1, user_id: 1, title: "Title", content: "Content" };
+const returned = ["id", "user_id", "title"] as const;
+const insert = querySet(db).insertAs("post", (d) =>
+	d.insertInto("posts").values(insertRow).returning(returned),
+);
+const writes = {
+	insertAs: [insert, 'insert into "posts"'],
+	updateAs: [
+		querySet(db).updateAs("post", (d) =>
+			d.updateTable("posts").set({ title: "Title" }).where("id", "=", 1).returning(returned),
+		),
+		'update "posts"',
+	],
+	deleteAs: [
+		querySet(db).deleteAs("post", (d) =>
+			d.deleteFrom("posts").where("id", "=", 1).returning(returned),
+		),
+		'delete from "posts"',
+	],
+} as const;
+const withComments = (qs: unknown) =>
+	untyped(qs).leftJoinMany("comments", comments, "comments.post_id", "post.id");
 
-const insertAll = querySet(db).insertAs("post", (d) =>
-	d.insertInto("posts").values(insertRow).returningAll(),
+compileGroup(
+	Object.fromEntries(
+		[1, 3, 5].map((n): [string, Entry] => [`sibling joins: ${n}`, [siblings(n), { joins: n }]]),
+	),
 );
 
-const insertColumns = querySet(db).insertAs("post", (d) =>
-	d.insertInto("posts").values(insertRow).returning(["id", "user_id", "title"]),
+compileGroup(
+	Object.fromEntries(
+		[1, 2, 3, 4].map((n): [string, Entry] => {
+			// The deepest level's columns carry a prefix per level above them.
+			const prefix = chain.slice(0, n).map(([key]) => key);
+			return [`depth: ${n}`, [depth(n), { joins: n, has: new RegExp(`"${prefix.join("\\$\\$")}\\$\\$id"`) }]];
+		}),
+	),
 );
 
-const insertJoined = insertColumns.leftJoinMany(
-	"comments",
-	({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-	"comments.post_id",
-	"post.id",
+compileGroup(
+	byMethod({
+		leftJoinMany: manyJoin,
+		leftJoinOne: oneJoin,
+		innerJoinOne: users.innerJoinOne("posts", posts, "posts.user_id", "user.id"),
+		innerJoinMany: users.innerJoinMany("posts", posts, "posts.user_id", "user.id"),
+	}),
 );
 
-/** The wrapping case: the write CTE has to be hoisted past the derived table. */
-const insertJoinedLimit = insertJoined.limit(10);
-
-/** `insert()` rather than `insertAs()`: the base stays a SELECT and the write is attached to it. */
-const insertOnSelect = users()
-	.leftJoinMany(
-		"posts",
-		({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
-		"posts.user_id",
-		"user.id",
-	)
-	.insert(
-		db
-			.insertInto("users")
-			.values({ id: 1, username: "name", email: "name@example.com" })
-			.returningAll(),
-	);
-
-const updateAll = querySet(db).updateAs("post", (d) =>
-	d.updateTable("posts").set({ title: "Title" }).where("id", "=", 1).returningAll(),
+compileGroup(
+	byMethod(
+		Object.fromEntries(
+			["leftJoinLateralMany", "innerJoinLateralMany", "leftJoinLateralOne"].map((m) => [m, lateral(m)]),
+		),
+	),
 );
 
-const updateJoined = querySet(db)
-	.updateAs("post", (d) =>
-		d
-			.updateTable("posts")
-			.set({ title: "Title" })
-			.where("id", "=", 1)
-			.returning(["id", "user_id", "title"]),
-	)
-	.leftJoinMany(
-		"comments",
-		({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-		"comments.post_id",
-		"post.id",
-	);
-
-const deleteAll = querySet(db).deleteAs("post", (d) =>
-	d.deleteFrom("posts").where("id", "=", 1).returningAll(),
-);
-
-const deleteJoined = querySet(db)
-	.deleteAs("post", (d) =>
-		d.deleteFrom("posts").where("id", "=", 1).returning(["id", "user_id", "title"]),
-	)
-	.leftJoinMany(
-		"comments",
-		({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "content", "post_id"])),
-		"comments.post_id",
-		"post.id",
-	);
-
-//
-// Clauses over a join-free base, where the fixed per-query cost is all there is.
-//
-
-const plain = users();
-const plainWhere = plain.where("username", "=", "name");
-const plainCte = querySet(db).selectAs(
-	"user",
-	db
-		.with("recent", (d) => d.selectFrom("posts").select(["id", "user_id"]))
-		.selectFrom("users")
-		.select(["id", "username", "email"]),
-);
-
-////////////////////////////////////////////////////////////
-// Correctness.
-////////////////////////////////////////////////////////////
-
-/** How many joins of any flavour the compiled SQL contains. */
-function joinCount(sql: string): number {
-	return (sql.match(/ join /g) ?? []).length;
-}
-
-/**
- * Whether the pagination was wrapped: the LIMIT (or OFFSET) landed inside a
- * derived table aliased as the base rather than on the outer query, which is the
- * one thing that distinguishes the wrapped shape from the unwrapped one.
- */
-function isWrapped(sql: string, alias: string): boolean {
-	return new RegExp(`(limit|offset) \\?\\) as "${alias}"`).test(sql);
-}
-
-/**
- * Every query set runs its terminal once here and has its SQL asserted before
- * anything is timed.  A change that silently dropped a join, stopped wrapping a
- * paginated query, or turned a write into a bare select would otherwise read as a
- * large speedup rather than a failure.
- */
-function verifyWorkloads(): void {
-	// Join count: the whole point of the first group is that only the count
-	// differs, so assert the count and nothing else about the shape.
-	assert.equal(joinCount(siblings1.compile().sql), 1);
-	assert.equal(joinCount(siblings3.compile().sql), 3);
-	assert.equal(joinCount(siblings5.compile().sql), 5);
-
-	// Depth: one join per level, and the deepest level's columns carry a prefix
-	// per level above them.
-	assert.equal(joinCount(depth1.compile().sql), 1);
-	assert.equal(joinCount(depth2.compile().sql), 2);
-	assert.equal(joinCount(depth3.compile().sql), 3);
-	assert.equal(joinCount(depth4.compile().sql), 4);
-	assert.match(depth4.compile().sql, /"posts\$\$comments\$\$authors\$\$authorPosts\$\$id"/);
-
-	// Join flavours: each produces the join it names.
-	assert.match(depth1.compile().sql, /left join \(/);
-	assert.match(leftOne.compile().sql, /left join \(/);
-	assert.match(innerOne.compile().sql, /inner join \(/);
-	assert.match(innerMany.compile().sql, /inner join \(/);
-	assert.match(lateralMany.compile().sql, /left join lateral \(/);
-	assert.match(lateralInnerMany.compile().sql, /inner join lateral \(/);
-	assert.match(lateralOne.compile().sql, /left join lateral \(/);
-
-	// Pagination: a many-join wraps, a one-join does not.  Both halves matter —
-	// the group is meaningless if the "wrapped" side stops wrapping, and equally
-	// so if the unwrapped side starts.
-	assert.equal(isWrapped(manyLimit.compile().sql, "user"), true);
-	assert.equal(isWrapped(manyOffset.compile().sql, "user"), true);
-	assert.equal(isWrapped(oneLimit.compile().sql, "post"), false);
-	assert.equal(isWrapped(oneOffset.compile().sql, "post"), false);
-	assert.equal(depth1.compile().sql.includes("limit"), false);
-	assert.match(oneLimit.compile().sql, /limit \?$/);
-
-	// The build benchmark constructs `representative` from scratch; if it drifted
-	// from the query set the terminals run against, the two halves of the
-	// build-versus-terminal comparison would stop describing the same query.
-	assert.equal(
-		buildUsersPostsComments().orderBy("id").limit(500).compile().sql,
-		representative.compile().sql,
-	);
-
-	// Terminals: each returns its own kind of query rather than the plain select.
-	assert.match(representative.toQuery().compile().sql, /^select /);
-	assert.match(representative.toCountQuery().compile().sql, /count\(\*\)/);
-	assert.match(representative.toExistsQuery().compile().sql, /^select exists /);
-	assert.equal(representative.toOperationNode().kind, "SelectQueryNode");
-	// The base query is the un-joined select the query set was created from; the
-	// joined query is that plus the joins but without the pagination wrap.
-	assert.equal(joinCount(representative.toBaseQuery().compile().sql), 0);
-	assert.equal(joinCount(representative.toJoinedQuery().compile().sql), 2);
-	assert.equal(representative.toJoinedQuery().compile().sql.includes("limit"), false);
-
-	// Writes: each produces its own statement, inside the data-modifying CTE.
-	assert.match(insertAll.compile().sql, /^with "__base" as \(insert into "posts" /);
-	assert.match(insertColumns.compile().sql, /returning "id", "user_id", "title"\)/);
-	assert.match(insertOnSelect.compile().sql, /^with "__base" as \(insert into "users" /);
-	assert.match(updateAll.compile().sql, /^with "__base" as \(update "posts" /);
-	assert.match(updateJoined.compile().sql, /^with "__base" as \(update "posts" /);
-	assert.match(deleteAll.compile().sql, /^with "__base" as \(delete from "posts" /);
-	assert.match(deleteJoined.compile().sql, /^with "__base" as \(delete from "posts" /);
-	assert.equal(joinCount(insertJoined.compile().sql), 1);
-
-	// The hoisting case: the wrap pushes the write CTE up to the top level while
-	// the paginated select becomes the derived table.
-	const hoisted = insertJoinedLimit.compile().sql;
-	assert.match(hoisted, /^with "__base" as \(insert into "posts" /);
-	assert.equal(isWrapped(hoisted, "post"), true);
-
-	// Clauses.
-	assert.equal(joinCount(plain.compile().sql), 0);
-	assert.match(plainWhere.compile().sql, /where "username" = \?/);
-	assert.match(plainCte.compile().sql, /with "recent" as \(/);
-}
-
-verifyWorkloads();
-
-////////////////////////////////////////////////////////////
-// Declaring benchmarks.
-////////////////////////////////////////////////////////////
-
-////////////////////////////////////////////////////////////
-// How join count scales.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchSync("compile 1 sibling join", () => siblings1.compile()).baseline(true);
-	benchSync("compile 3 sibling joins", () => siblings3.compile());
-	benchSync("compile 5 sibling joins", () => siblings5.compile());
+// Pagination over a many-join can't limit the exploded rows, so it wraps a
+// paginated cardinality-one query in a derived table; over a one-join the limit
+// lands on the joined query.  The unpaginated rows are the reference points.
+compileGroup({
+	"many join, no pagination": [manyJoin, { lacks: /limit|offset/ }],
+	"many join, limit": [manyJoin.limit(50), { has: wrapped("user") }],
+	"many join, offset": [manyJoin.offset(50), { has: wrapped("user") }],
+	"one join, no pagination": [oneJoin, { lacks: /limit|offset/ }],
+	"one join, limit": [oneJoin.limit(50), { has: /limit \?$/, lacks: wrapped("user") }],
+	"one join, offset": [oneJoin.offset(50), { has: /offset \?$/, lacks: wrapped("user") }],
 });
 
-////////////////////////////////////////////////////////////
-// How nesting depth scales.
-//
-// Depth costs more than the same number of sibling joins would: each level is a
-// derived table inside the one above, and every column below it gains another
-// prefix, so both the node tree and the identifiers grow.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchSync("compile depth 1", () => depth1.compile()).baseline(true);
-	benchSync("compile depth 2", () => depth2.compile());
-	benchSync("compile depth 3", () => depth3.compile());
-	benchSync("compile depth 4", () => depth4.compile());
+// With a many-join and pagination, the write CTE is hoisted above the derived table.
+compileGroup({
+	...Object.fromEntries(
+		Object.entries(writes).flatMap(([name, [qs, statement]]): [string, Entry][] => [
+			[name, [qs, { joins: 0, has: writeCte(statement) }]],
+			[`${name} with many join`, [withComments(qs), { joins: 1, has: writeCte(statement) }]],
+		]),
+	),
+	"insertAs, returningAll": [
+		querySet(db).insertAs("post", (d) => d.insertInto("posts").values(insertRow).returningAll()),
+		{ has: /returning \*\)/ },
+	],
+	"insertAs with many join, limit": [
+		withComments(insert).limit(10),
+		{ has: [writeCte('insert into "posts"'), wrapped("post")] },
+	],
+	"insert on a select base": [
+		manyJoin.insert(
+			db.insertInto("users").values({ id: 1, username: "name", email: "e" }).returningAll(),
+		),
+		{ joins: 1, has: writeCte('insert into "users"') },
+	],
 });
 
-////////////////////////////////////////////////////////////
-// One join flavour against another.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchSync("compile leftJoinMany", () => depth1.compile()).baseline(true);
-	benchSync("compile leftJoinOne", () => leftOne.compile());
-	benchSync("compile innerJoinOne", () => innerOne.compile());
-	benchSync("compile innerJoinMany", () => innerMany.compile());
+compileGroup({
+	"no joins": [users, { joins: 0 }],
+	"no joins, where": [users.where("username", "=", "name"), { has: /where "username" = \?/ }],
+	"no joins, CTE base": [
+		querySet(db).selectAs(
+			"user",
+			db
+				.with("recent", (d) => d.selectFrom("posts").select(["id", "user_id"]))
+				.selectFrom("users")
+				.select(["id", "username", "email"]),
+		),
+		{ has: /with "recent" as \(/ },
+	],
+	"many join, where": [
+		manyJoin.where("username", "=", "name"),
+		{ joins: 1, has: /where "username" = \?/ },
+	],
+	"many join, orderBy": [manyJoin.orderBy("username"), { has: /order by "user"."username" asc/ }],
+	"many join, orderBy in nested": [
+		users.leftJoinMany("posts", posts.orderBy("title"), "posts.user_id", "user.id"),
+		{ has: /order by .*"posts"."title"/ },
+	],
 });
 
-////////////////////////////////////////////////////////////
-// Lateral joins.
-////////////////////////////////////////////////////////////
+// Terminals over one query set: depth 2, ordered, and limited, so the wrap is in play.
+const representative = usersPostsComments.orderBy("id").limit(500);
 
 summary(() => {
-	benchSync("compile leftJoinLateralMany", () => lateralMany.compile()).baseline(true);
-	benchSync("compile innerJoinLateralMany", () => lateralInnerMany.compile());
-	benchSync("compile leftJoinLateralOne", () => lateralOne.compile());
-});
-
-////////////////////////////////////////////////////////////
-// What the pagination wrap costs.
-//
-// The two unpaginated rows are the reference points: the difference between each
-// of them and its paginated partner is the wrap, and only the many-join side pays
-// for it.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchSync("compile many join, no pagination", () => depth1.compile()).baseline(true);
-	benchSync("compile many join, limit", () => manyLimit.compile());
-	benchSync("compile many join, offset", () => manyOffset.compile());
-	benchSync("compile one join, no pagination", () => leftOne.compile());
-	benchSync("compile one join, limit", () => oneLimit.compile());
-	benchSync("compile one join, offset", () => oneOffset.compile());
-});
-
-////////////////////////////////////////////////////////////
-// Building the query set against the terminals that consume it.
-//
-// "querySet build" is the one benchmark here that constructs inside the measured
-// call: it builds exactly `representative`, which every other row in this group
-// starts from already built.  So the baseline is the chain of `leftJoinMany` /
-// `orderBy` / `limit` calls, and each row above it is what a terminal adds on
-// top.
-////////////////////////////////////////////////////////////
-
-summary(() => {
-	benchSync("querySet build", () => buildUsersPostsComments().orderBy("id").limit(500)).baseline(
-		true,
-	);
+	// The one benchmark that constructs inside the measured call: it builds
+	// `representative` from scratch, so each terminal reads as what it adds.
+	benchSync("querySet build", () => queries(db).usersPostsComments.orderBy("id").limit(500), {
+		baseline: true,
+	});
 	benchSync("querySet toQuery", () => representative.toQuery());
 	benchSync("querySet compile", () => representative.compile());
 	benchSync("querySet toOperationNode", () => representative.toOperationNode());
-	// `toBaseQuery` hands back the stored base query builder untouched, so it reads
-	// as roughly zero and the summary's ratio against it is meaningless.  It stays
-	// in the group as the floor: it is what a terminal costs when it does no work,
-	// which is the other end of the range `compile` sits at.
+	// Returns the stored base query untouched: the floor, not a ratio to read.
 	benchSync("querySet toBaseQuery", () => representative.toBaseQuery());
 	benchSync("querySet toJoinedQuery", () => representative.toJoinedQuery());
 	benchSync("querySet toCountQuery then compile", () => representative.toCountQuery().compile());
 	benchSync("querySet toExistsQuery then compile", () => representative.toExistsQuery().compile());
 });
 
-////////////////////////////////////////////////////////////
-// Write query sets.
-////////////////////////////////////////////////////////////
+function verifyWorkloads(): void {
+	for (const [name, [qs, { joins, has = [], lacks }]] of compileEntries) {
+		const { sql } = qs.compile();
+		if (joins !== undefined) assert.equal(joinCount(sql), joins, name);
+		for (const pattern of [has].flat()) assert.match(sql, pattern, name);
+		if (lacks) assert.doesNotMatch(sql, lacks, name);
+	}
 
-summary(() => {
-	benchSync("compile insertAs, returningAll", () => insertAll.compile()).baseline(true);
-	benchSync("compile insertAs, returning 3 columns", () => insertColumns.compile());
-	benchSync("compile insertAs with many join", () => insertJoined.compile());
-	benchSync("compile insertAs with many join, limit", () => insertJoinedLimit.compile());
-	benchSync("compile insert on a select base", () => insertOnSelect.compile());
-	benchSync("compile updateAs", () => updateAll.compile());
-	benchSync("compile updateAs with many join", () => updateJoined.compile());
-	benchSync("compile deleteAs", () => deleteAll.compile());
-	benchSync("compile deleteAs with many join", () => deleteJoined.compile());
-});
+	// The depth generator must build the same SQL as the shared users -> posts -> comments.
+	assert.equal(depth(2).compile().sql, usersPostsComments.compile().sql);
 
-////////////////////////////////////////////////////////////
-// The floor: a query set with no joins at all.
-////////////////////////////////////////////////////////////
+	assert.match(representative.compile().sql, wrapped("user"));
+	assert.match(representative.toQuery().compile().sql, /^select /);
+	assert.match(representative.toCountQuery().compile().sql, /count\(\*\)/);
+	assert.match(representative.toExistsQuery().compile().sql, /^select exists /);
+	assert.equal(representative.toOperationNode().kind, "SelectQueryNode");
+	assert.equal(joinCount(representative.toBaseQuery().compile().sql), 0);
+	const joined = representative.toJoinedQuery().compile().sql;
+	assert.equal(joinCount(joined), 2);
+	assert.doesNotMatch(joined, /limit/);
+}
 
-summary(() => {
-	benchSync("compile no joins", () => plain.compile()).baseline(true);
-	benchSync("compile no joins, where", () => plainWhere.compile());
-	benchSync("compile no joins, CTE base", () => plainCte.compile());
-});
-
-////////////////////////////////////////////////////////////
-// Run.
-////////////////////////////////////////////////////////////
-
-await runSuite("query-build");
+await runSuite({ verify: verifyWorkloads });
