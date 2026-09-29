@@ -18,7 +18,9 @@ const accounts = querySet(db)
 	.leftJoinMany(
 		"authoredBlogPostEntries",
 		({ eb, qs }) =>
-			qs(eb.selectFrom("blogPostEntries").select(["id", "userAccountId", "headlineText"])).leftJoinMany(
+			qs(
+				eb.selectFrom("blogPostEntries").select(["id", "userAccountId", "headlineText"]),
+			).leftJoinMany(
 				"blogPostCommentThreads",
 				({ eb, qs }) =>
 					qs(eb.selectFrom("blogPostCommentThreads").select(["id", "blogPostEntryId", "bodyText"])),

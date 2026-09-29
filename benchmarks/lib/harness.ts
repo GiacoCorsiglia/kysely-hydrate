@@ -52,12 +52,6 @@ export function cli() {
 interface BenchOptions {
 	/** The entry the rest of its `summary()` group is compared against. */
 	baseline?: boolean;
-	/**
-	 * Collect garbage before every iteration.  Worth it for benchmarks that
-	 * allocate megabytes per call, where a collection landing in some samples
-	 * but not others splits the distribution in two.
-	 */
-	gcEachIteration?: boolean;
 }
 
 /**
@@ -73,7 +67,6 @@ function declare(name: string, fn: () => unknown, options: BenchOptions) {
 
 	const b = bench(name, fn);
 	if (options.baseline) b.baseline(true);
-	if (options.gcEachIteration) b.gc("inner");
 	return b;
 }
 

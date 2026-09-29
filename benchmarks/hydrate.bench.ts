@@ -32,14 +32,11 @@ const hydrate = ([hydrator, input, options = querySetOptions]: Workload) =>
 	hydrator.hydrate(input as never, options);
 const hydrated = async <T = any[]>(w: Workload) => autoIncluded<T>(await hydrate(w));
 
-/**
- * Declares a `summary()` group, the first entry its baseline.  `gc` suits
- * ms-scale workloads allocating megabytes per call (see the README).
- */
-function group(workloads: Record<string, Workload>, { gc = true } = {}) {
+/** A `summary()` group, the first entry its baseline. */
+function group(workloads: Record<string, Workload>) {
 	summary(() => {
 		Object.entries(workloads).forEach(([name, w], i) =>
-			benchAsync(name, () => hydrate(w), { baseline: i === 0, gcEachIteration: gc }),
+			benchAsync(name, () => hydrate(w), { baseline: i === 0 }),
 		);
 	});
 }
@@ -353,15 +350,12 @@ group({ "100 users, 20 posts": W.single, "100 users, 10 posts x 10 tags": W.sibl
 group(Object.fromEntries(depths.map((w, i) => [`10k rows, depth ${i + 1}`, w])));
 group(Object.fromEntries(widths.map((w, i) => [`2k rows of ${WIDTHS[i]} columns`, w])));
 
-group(
-	{
-		"1 row to 1 entity, no collections": W.one,
-		"20 rows to 1 entity": W.rows20,
-		"20 rows to 1 entity, 2 attaches": W.rows20Attaches,
-		"200 rows to 10 entities": W.rows200,
-		"1k rows to 50 entities": W.rows1k,
-	},
-	{ gc: false },
-);
+group({
+	"1 row to 1 entity, no collections": W.one,
+	"20 rows to 1 entity": W.rows20,
+	"20 rows to 1 entity, 2 attaches": W.rows20Attaches,
+	"200 rows to 10 entities": W.rows200,
+	"1k rows to 50 entities": W.rows1k,
+});
 
 await runSuite({ verify: verifyWorkloads });

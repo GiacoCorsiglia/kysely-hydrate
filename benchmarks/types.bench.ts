@@ -50,7 +50,7 @@ interface Measurement {
 	/** Median check time, in nanoseconds. */
 	time: number;
 	/** Bytes the checker retained, when `--expose-gc` allows measuring it. */
-	heap?: number;
+	heap?: number | undefined;
 }
 
 let oldProgram: ts.Program | undefined;
@@ -61,7 +61,11 @@ let oldProgram: ts.Program | undefined;
  * times the check or weighs what it retained, never both.
  */
 function checkOnce(file: string, weigh: boolean) {
-	const program = ts.createProgram({ rootNames: [file], options, oldProgram });
+	const program = ts.createProgram({
+		rootNames: [file],
+		options,
+		...(oldProgram && { oldProgram }),
+	});
 	oldProgram = program;
 	program.getTypeChecker();
 	const source = program.getSourceFile(file)!;
@@ -130,7 +134,11 @@ const results = new Map<string, Measurement>(
 		const m = measure(name);
 		return [
 			name,
-			{ ...m, instantiations: m.instantiations - empty.instantiations, types: m.types - empty.types },
+			{
+				...m,
+				instantiations: m.instantiations - empty.instantiations,
+				types: m.types - empty.types,
+			},
 		];
 	}),
 );
@@ -158,7 +166,8 @@ const after: Baseline = {
 	),
 };
 
-const kb = (bytes: number | undefined) => (bytes === undefined ? "-" : `${(bytes / 1024).toFixed(0)} kb`);
+const kb = (bytes: number | undefined) =>
+	bytes === undefined ? "-" : `${(bytes / 1024).toFixed(0)} kb`;
 const entryOf = (b: Baseline | undefined, name: string) =>
 	b?.benchmarks[name] as { p50: number; count?: number } | undefined;
 
@@ -170,7 +179,8 @@ const rows = [...results].map(([name, m]) => {
 	if (then?.count === undefined) return [...row, "new", "new"];
 	const count = delta(then.count, m.instantiations, countThreshold);
 	regressed ||= count.regressed;
-	return [...row, count.label, delta(then.p50, m.time).label];
+	// An infinite threshold labels every time change as noise: it never gates.
+	return [...row, count.label, delta(then.p50, m.time, Infinity).label];
 });
 if (before && filter === undefined) {
 	for (const name of Object.keys(before.benchmarks)) {

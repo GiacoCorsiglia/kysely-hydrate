@@ -25,8 +25,6 @@ import { benchAsync, cli, runSuite } from "./lib/harness.ts";
 import { queries } from "./lib/queries.ts";
 import { autoIncluded } from "./lib/rows.ts";
 
-const heavy = { gcEachIteration: true };
-
 function workloads(db: k.Kysely<DB>) {
 	const { users, posts, comments, usersPostsComments } = queries(db);
 	const all = usersPostsComments.orderBy("id");
@@ -195,14 +193,11 @@ function declareDialect(dialect: string, w: ReturnType<typeof workloads>) {
 		benchAsync(
 			`${dialect} kysely execute, 10k rows, no hydration`,
 			() => w.all.toQuery().execute(),
-			{
-				baseline: true,
-				...heavy,
-			},
+			{ baseline: true },
 		);
-		benchAsync(`${dialect} execute, 10k rows -> 500 entities`, () => w.all.execute(), heavy);
-		benchAsync(`${dialect} execute via attachMany, 2 queries`, () => w.attached.execute(), heavy);
-		benchAsync(`${dialect} executeTakeFirst`, () => w.all.executeTakeFirst(), heavy);
+		benchAsync(`${dialect} execute, 10k rows -> 500 entities`, () => w.all.execute());
+		benchAsync(`${dialect} execute via attachMany, 2 queries`, () => w.attached.execute());
+		benchAsync(`${dialect} executeTakeFirst`, () => w.all.executeTakeFirst());
 		benchAsync(`${dialect} executeCount`, () => w.all.executeCount(Number));
 		benchAsync(`${dialect} executeExists`, () => w.all.executeExists());
 	});
@@ -212,10 +207,7 @@ function declareDialect(dialect: string, w: ReturnType<typeof workloads>) {
 	// pays for them.  Postgres flattens it, so its limit 1 is the fixed cost.
 	summary(() => {
 		for (const [n, qs] of w.limits) {
-			benchAsync(`${dialect} execute, limit ${n}`, () => qs.execute(), {
-				baseline: n === 1,
-				...heavy,
-			});
+			benchAsync(`${dialect} execute, limit ${n}`, () => qs.execute(), { baseline: n === 1 });
 		}
 	});
 }
@@ -228,15 +220,10 @@ if (pgWork) {
 	// Aliases that all fit: `fixLongAliases` still walks every query node and
 	// inspects 10,000 result rows.
 	summary(() => {
-		benchAsync("postgres execute, no plugins", () => pgWork.all.execute(), {
-			baseline: true,
-			...heavy,
-		});
-		benchAsync("postgres execute, fixLongAliases", () => pgWork.fixed.execute(), heavy);
-		benchAsync(
-			"postgres execute, fixLongAliases with CamelCasePlugin",
-			() => pgWork.camel.execute(),
-			heavy,
+		benchAsync("postgres execute, no plugins", () => pgWork.all.execute(), { baseline: true });
+		benchAsync("postgres execute, fixLongAliases", () => pgWork.fixed.execute());
+		benchAsync("postgres execute, fixLongAliases with CamelCasePlugin", () =>
+			pgWork.camel.execute(),
 		);
 	});
 

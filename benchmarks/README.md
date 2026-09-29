@@ -70,9 +70,10 @@ where the mean drifted 1.19x), but it fails in two ways:
 Over six runs of 130 benchmarks, every false positive came from allocation and
 none from time.
 
-**Allocation-heavy benchmarks collect garbage every iteration**
-(`gcEachIteration`). Without it, a collection landing in some samples but not
-others splits the distribution in two.
+**No benchmark forces a collection every iteration.** mitata's `.gc("inner")`
+was tried on the 10k-row hydrations: it doubled their median (every iteration
+then starts on a heap `gc()` just shrank) and cut the sample count, without
+narrowing p99 / p50.
 
 ## Type-checking
 
