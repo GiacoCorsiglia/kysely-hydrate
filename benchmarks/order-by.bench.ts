@@ -127,9 +127,10 @@ const date = (i: number) => new Date(Date.UTC(2024, 0, 1) + i * DAY_MS);
 
 /** Each ascending in `i`, over `n` values. */
 const builders = {
+	// The baseline: `typeRankOf`'s first case, and two relational operators.
+	numbers: (i: number) => i * 3,
 	// Two distinct values, so `sqlCompare`'s `a === b` fast path answers most comparisons.
 	booleans: (i: number, n: number) => i >= n / 2,
-	numbers: (i: number) => i * 3,
 	bigints: (i: number) => BigInt(i) * 3n,
 	decimals: (i: number) => new DecimalStub(i * 3),
 	Dates: date,
