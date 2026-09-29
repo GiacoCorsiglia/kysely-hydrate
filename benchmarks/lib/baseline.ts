@@ -26,8 +26,11 @@ export interface Baseline {
 	benchmarks: Record<string, BaselineEntry>;
 }
 
+/** A run's results, before the harness names and labels them. */
+export type Measured = Pick<Baseline, "runtime" | "cpu" | "benchmarks">;
+
 /** The subset of mitata's `run()` result this module reads. */
-export interface Trials {
+interface Trials {
 	context: { runtime: string | null; cpu: { name: string | null } };
 	benchmarks: readonly {
 		alias: string;
@@ -36,10 +39,10 @@ export interface Trials {
 }
 
 /** A relative change below this is machine noise, not a change in the code. */
-export const noiseThreshold = 0.2;
+const noiseThreshold = 0.2;
 
 /** A deterministic count only moves when the code does, so its band is tight. */
-export const countThreshold = 0.02;
+const countThreshold = 0.02;
 
 /**
  * Allocation per iteration below which a heap reading isn't compared.  It sits
@@ -48,19 +51,15 @@ export const countThreshold = 0.02;
  */
 const heapFloor = 64 * 1024;
 
-export function fromTrials(suite: string, trials: Trials, label: string): Baseline {
+export function fromTrials(trials: Trials): Measured {
 	const benchmarks: Record<string, BaselineEntry> = {};
+	// Every benchmark here is static, so it has exactly one run.
 	for (const { alias, runs } of trials.benchmarks) {
-		// `run({ throw: true })` means a failing benchmark never gets this far.
-		// Static benchmarks have exactly one run.
 		const stats = runs[0]?.stats;
 		if (!stats) throw new Error(`Benchmark "${alias}" produced no stats`);
 		benchmarks[alias] = { p50: stats.p50, ...(stats.heap && { heap: stats.heap.avg }) };
 	}
 	return {
-		version: 2,
-		suite,
-		label,
 		runtime: trials.context.runtime ?? "unknown",
 		cpu: trials.context.cpu.name ?? "unknown",
 		benchmarks,
@@ -94,28 +93,21 @@ export function writeBaseline(path: string, baseline: Baseline): void {
  * twice, in ABBA order, so that drift over the session cancels out rather than
  * favouring whichever side ran second.
  */
-export function mergeBaselines(runs: readonly Baseline[]): Baseline {
-	const [first] = runs;
-	if (!first) throw new Error("No runs to merge");
-
-	const mean = (values: (number | undefined)[]) =>
-		values.some((v) => v === undefined)
-			? undefined
-			: (values as number[]).reduce((a, b) => a + b, 0) / values.length;
-
+export function mergeBaselines(runs: readonly [Baseline, ...Baseline[]]): Baseline {
 	const benchmarks: Record<string, BaselineEntry> = {};
-	for (const name of Object.keys(first.benchmarks)) {
+	for (const name of Object.keys(runs[0].benchmarks)) {
 		const entries = runs.map((r) => r.benchmarks[name]);
 		if (entries.some((e) => e === undefined)) continue;
-		const heap = mean(entries.map((e) => e!.heap));
-		const count = mean(entries.map((e) => e!.count));
-		benchmarks[name] = {
-			p50: mean(entries.map((e) => e!.p50))!,
-			...(heap !== undefined && { heap }),
-			...(count !== undefined && { count }),
-		};
+		const merged: Partial<BaselineEntry> = {};
+		for (const key of ["p50", "heap", "count"] as const) {
+			const values = entries.map((e) => e![key]);
+			if (values.every((v) => v !== undefined)) {
+				merged[key] = values.reduce((a, b) => a + b, 0) / values.length;
+			}
+		}
+		benchmarks[name] = merged as BaselineEntry;
 	}
-	return { ...first, benchmarks };
+	return { ...runs[0], benchmarks };
 }
 
 ////////////////////////////////////////////////////////////
@@ -128,15 +120,10 @@ export function formatTime(ns: number): string {
 	return `${ns.toFixed(2)} ns`;
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
 	if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(2)} mb`;
 	if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} kb`;
 	return `${bytes.toFixed(0)} b`;
-}
-
-export interface Delta {
-	label: string;
-	regressed: boolean;
 }
 
 /**
@@ -144,7 +131,7 @@ export interface Delta {
  * +20% flags but its inverse, -16.7%, does not, which is the right bias for a
  * regression gate.
  */
-export function delta(before: number, after: number, threshold = noiseThreshold): Delta {
+function delta(before: number, after: number, threshold = noiseThreshold) {
 	const ratio = after / before - 1;
 	if (!Number.isFinite(ratio)) return { label: "n/a", regressed: false };
 

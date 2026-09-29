@@ -4,9 +4,8 @@
  *
  * `--ref <git-ref>` checks the ref out into a scratch worktree, copies this
  * checkout's `benchmarks/` over it so both sides run identical benchmark code,
- * then runs each suite in ABBA order (ref, HEAD, HEAD, ref) and compares the
- * averages.  Running both sides back to back beats a baseline recorded hours
- * earlier, and the ABBA order cancels out drift over the session.
+ * then runs each suite in ABBA order (ref, working tree, working tree, ref)
+ * and compares the averages, so drift over the session cancels out.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
@@ -36,10 +35,9 @@ if (suites.length === 0) {
 	process.exit(1);
 }
 
-if (values.ref !== undefined && (values.save || values.compare || values["baselines-dir"])) {
-	console.error(
-		"--ref records and compares its own runs; drop --save, --compare and --baselines-dir",
-	);
+const ownedByRef = ["save", "compare", "baselines-dir", "label", "verify-only"] as const;
+if (values.ref !== undefined && ownedByRef.some((flag) => values[flag] !== undefined)) {
+	console.error(`--ref records and compares its own runs; drop --${ownedByRef.join(", --")}`);
 	process.exit(1);
 }
 
@@ -74,44 +72,44 @@ if (values.ref === undefined) {
 	const scratch = mkdtempSync(join(tmpdir(), "kysely-hydrate-bench-"));
 	const worktree = join(scratch, "ref");
 	const git = (...a: string[]) => execFileSync("git", a, { cwd: root, stdio: "inherit" });
+	const sides = [
+		[ref, worktree],
+		["working tree", root],
+		["working tree", root],
+		[ref, worktree],
+	] as const;
 
-	git("worktree", "add", "--detach", worktree, ref);
 	try {
-		rmSync(join(worktree, "benchmarks"), { recursive: true, force: true });
-		cpSync(benchmarksDir, join(worktree, "benchmarks"), {
-			recursive: true,
-			filter: (src) => !src.includes(join("benchmarks", "baselines")),
-		});
-		symlinkSync(join(root, "node_modules"), join(worktree, "node_modules"), "dir");
-
-		for (const suite of suites) {
-			const sides = [
-				[ref, worktree],
-				["HEAD", root],
-				["HEAD", root],
-				[ref, worktree],
-			] as const;
-			const recorded = sides.map(([label, cwd], i) => {
-				banner(`${suite}: ${label} (${i + 1} of 4)`);
-				const dir = join(scratch, String(i));
-				return runSuite(suite, cwd, ["--save", "--baselines-dir", dir, "--label", label])
-					? readBaseline(join(dir, `${suite}.json`), suite)
-					: undefined;
+		git("worktree", "add", "--detach", worktree, ref);
+		try {
+			rmSync(join(worktree, "benchmarks"), { recursive: true, force: true });
+			cpSync(benchmarksDir, join(worktree, "benchmarks"), {
+				recursive: true,
+				filter: (src) => !src.includes(join("benchmarks", "baselines")),
 			});
-			if (recorded.some((r) => r === undefined)) {
-				failed++;
-				continue;
+			symlinkSync(join(root, "node_modules"), join(worktree, "node_modules"), "dir");
+
+			for (const suite of suites) {
+				const [a1, b1, b2, a2] = sides.map(([label, cwd], i) => {
+					banner(`${suite}: ${label} (${i + 1} of 4)`);
+					const dir = join(scratch, String(i));
+					return runSuite(suite, cwd, ["--save", "--baselines-dir", dir, "--label", label])
+						? readBaseline(join(dir, `${suite}.json`), suite)
+						: undefined;
+				});
+				banner(`${suite}: ${ref} against the working tree`);
+				const ok =
+					a1 && b1 && b2 && a2
+						? compareBaselines(mergeBaselines([a1, a2]), mergeBaselines([b1, b2]), {
+								reportMissing: values.filter === undefined,
+							})
+						: false;
+				if (!ok) failed++;
 			}
-
-			banner(`${suite}: ${ref} against HEAD`);
-			const [a1, b1, b2, a2] = recorded as NonNullable<(typeof recorded)[number]>[];
-			const ok = compareBaselines(mergeBaselines([a1!, a2!]), mergeBaselines([b1!, b2!]), {
-				reportMissing: values.filter === undefined,
-			});
-			if (!ok) failed++;
+		} finally {
+			git("worktree", "remove", "--force", worktree);
 		}
 	} finally {
-		git("worktree", "remove", "--force", worktree);
 		rmSync(scratch, { recursive: true, force: true });
 	}
 }

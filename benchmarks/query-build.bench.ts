@@ -5,12 +5,11 @@
  */
 import assert from "node:assert/strict";
 
-import { summary } from "mitata";
-
 import { querySet } from "../src/query-set.ts";
 import { emptyDb } from "./lib/db.ts";
-import { benchSync, runSuite } from "./lib/harness.ts";
+import { group, runSuite } from "./lib/harness.ts";
 import { queries } from "./lib/queries.ts";
+import { range } from "./lib/rows.ts";
 
 const db = emptyDb();
 const { users, posts, comments, usersPostsComments } = queries(db);
@@ -19,7 +18,7 @@ interface Compilable {
 	compile(): { sql: string };
 }
 
-/** What `verifyWorkloads` asserts about an entry's compiled SQL. */
+/** What an entry's compiled SQL must look like. */
 interface Shape {
 	joins?: number;
 	has?: RegExp | RegExp[];
@@ -28,18 +27,25 @@ interface Shape {
 
 type Entry = [qs: Compilable, shape: Shape];
 
-const compileEntries: (readonly [name: string, Entry])[] = [];
-
-/** A `summary()` group timing `compile()` on each entry; the first is the baseline. */
-function compileGroup(entries: Record<string, Entry>) {
-	const named = Object.entries(entries).map(([name, entry]) => [`compile ${name}`, entry] as const);
-	compileEntries.push(...named);
-	summary(() => {
-		named.forEach(([name, [qs]], i) => benchSync(name, () => qs.compile(), { baseline: i === 0 }));
-	});
-}
-
 const joinCount = (sql: string) => (sql.match(/ join /g) ?? []).length;
+
+const assertShape = (sql: string, { joins, has = [], lacks }: Shape) => {
+	if (joins !== undefined) assert.equal(joinCount(sql), joins);
+	for (const pattern of [has].flat()) assert.match(sql, pattern);
+	if (lacks) assert.doesNotMatch(sql, lacks);
+};
+
+/** A group timing `compile()` on each entry. */
+const compileGroup = (entries: Record<string, Entry>) =>
+	group(
+		Object.fromEntries(
+			Object.entries(entries).map(([name, [qs, shape]]) => [
+				name,
+				{ run: () => qs.compile(), check: ({ sql }: { sql: string }) => assertShape(sql, shape) },
+			]),
+		),
+		"compile ",
+	);
 
 /** The pagination landed inside a derived table aliased as the base: the wrapped shape. */
 const wrapped = (alias: string) => new RegExp(`(limit|offset) \\?\\) as "${alias}"`);
@@ -53,11 +59,12 @@ const joinSql = (method: string) =>
 		`${method.startsWith("left") ? "left" : "inner"} join ${method.includes("Lateral") ? "lateral " : ""}\\(`,
 	);
 
-const byMethod = (qsByMethod: Record<string, Compilable>) =>
+/** One entry per join method, each built by `join`. */
+const byMethod = (methods: string[], join: (method: string) => Compilable) =>
 	Object.fromEntries(
-		Object.entries(qsByMethod).map(([method, qs]): [string, Entry] => [
+		methods.map((method): [string, Entry] => [
 			method,
-			[qs, { joins: 1, has: joinSql(method) }],
+			[join(method), { joins: 1, has: joinSql(method) }],
 		]),
 	);
 
@@ -67,8 +74,8 @@ const byMethod = (qsByMethod: Record<string, Compilable>) =>
 const untyped = (qs: unknown) => qs as any;
 
 const siblings = (n: number) =>
-	Array.from({ length: n }, (_, i) => `p${i + 1}`).reduce(
-		(qs, key) => qs.leftJoinMany(key, posts, `${key}.user_id`, "user.id"),
+	range(n, 1).reduce(
+		(qs, i) => qs.leftJoinMany(`p${i}`, posts, `p${i}.user_id`, "user.id"),
 		untyped(users),
 	);
 
@@ -150,33 +157,22 @@ compileGroup(
 );
 
 compileGroup(
-	byMethod({
-		leftJoinMany: manyJoin,
-		leftJoinOne: oneJoin,
-		innerJoinOne: users.innerJoinOne("posts", posts, "posts.user_id", "user.id"),
-		innerJoinMany: users.innerJoinMany("posts", posts, "posts.user_id", "user.id"),
-	}),
-);
-
-compileGroup(
-	byMethod(
-		Object.fromEntries(
-			["leftJoinLateralMany", "innerJoinLateralMany", "leftJoinLateralOne"].map((m) => [
-				m,
-				lateral(m),
-			]),
-		),
+	byMethod(["leftJoinMany", "leftJoinOne", "innerJoinOne", "innerJoinMany"], (method) =>
+		untyped(users)[method]("posts", posts, "posts.user_id", "user.id"),
 	),
+);
+compileGroup(
+	byMethod(["leftJoinLateralMany", "innerJoinLateralMany", "leftJoinLateralOne"], lateral),
 );
 
 // Pagination over a many-join can't limit the exploded rows, so it wraps a
 // paginated cardinality-one query in a derived table; over a one-join the limit
 // lands on the joined query.  The unpaginated rows are the reference points.
 compileGroup({
-	"many join, no pagination": [manyJoin, { lacks: /limit|offset/ }],
+	"many join, no pagination": [manyJoin, { joins: 1, lacks: /limit|offset/ }],
 	"many join, limit": [manyJoin.limit(50), { has: wrapped("user") }],
 	"many join, offset": [manyJoin.offset(50), { has: wrapped("user") }],
-	"one join, no pagination": [oneJoin, { lacks: /limit|offset/ }],
+	"one join, no pagination": [oneJoin, { joins: 1, lacks: /limit|offset/ }],
 	"one join, limit": [oneJoin.limit(50), { has: /limit \?$/, lacks: wrapped("user") }],
 	"one join, offset": [oneJoin.offset(50), { has: /offset \?$/, lacks: wrapped("user") }],
 });
@@ -206,7 +202,7 @@ compileGroup({
 });
 
 compileGroup({
-	"no joins": [users, { joins: 0 }],
+	"no joins": [users, { joins: 0, has: /from "users"/ }],
 	"no joins, where": [users.where("username", "=", "name"), { has: /where "username" = \?/ }],
 	"no joins, CTE base": [
 		querySet(db).selectAs(
@@ -227,43 +223,47 @@ compileGroup({
 
 // Terminals over one query set: depth 2, ordered, and limited, so the wrap is in play.
 const representative = usersPostsComments.orderBy("id").limit(500);
+const compiled = (check: (sql: string) => unknown) => (q: Compilable) => check(q.compile().sql);
 
-summary(() => {
+group({
 	// The one benchmark that constructs inside the measured call: it builds
 	// `representative` from scratch, so each terminal reads as what it adds.
-	benchSync("querySet build", () => queries(db).usersPostsComments.orderBy("id").limit(500), {
-		baseline: true,
-	});
-	benchSync("querySet toQuery", () => representative.toQuery());
-	benchSync("querySet compile", () => representative.compile());
-	benchSync("querySet toOperationNode", () => representative.toOperationNode());
+	"querySet build": {
+		run: () => queries(db).usersPostsComments.orderBy("id").limit(500),
+		check: compiled((sql) => assert.equal(sql, representative.compile().sql)),
+	},
+	"querySet toQuery": {
+		run: () => representative.toQuery(),
+		check: compiled((sql) => assert.match(sql, /^select /)),
+	},
+	"querySet compile": {
+		run: () => representative.compile(),
+		check: ({ sql }) => assert.match(sql, wrapped("user")),
+	},
+	"querySet toOperationNode": {
+		run: () => representative.toOperationNode(),
+		check: (node) => assert.equal(node.kind, "SelectQueryNode"),
+	},
 	// Returns the stored base query untouched: the floor, not a ratio to read.
-	benchSync("querySet toBaseQuery", () => representative.toBaseQuery());
-	benchSync("querySet toJoinedQuery", () => representative.toJoinedQuery());
-	benchSync("querySet toCountQuery then compile", () => representative.toCountQuery().compile());
-	benchSync("querySet toExistsQuery then compile", () => representative.toExistsQuery().compile());
+	"querySet toBaseQuery": {
+		run: () => representative.toBaseQuery(),
+		check: compiled((sql) => assert.equal(joinCount(sql), 0)),
+	},
+	"querySet toJoinedQuery": {
+		run: () => representative.toJoinedQuery(),
+		check: compiled((sql) => assertShape(sql, { joins: 2, lacks: /limit/ })),
+	},
+	"querySet toCountQuery then compile": {
+		run: () => representative.toCountQuery().compile(),
+		check: ({ sql }) => assert.match(sql, /count\(\*\)/),
+	},
+	"querySet toExistsQuery then compile": {
+		run: () => representative.toExistsQuery().compile(),
+		check: ({ sql }) => assert.match(sql, /^select exists /),
+	},
 });
 
-function verifyWorkloads(): void {
-	for (const [name, [qs, { joins, has = [], lacks }]] of compileEntries) {
-		const { sql } = qs.compile();
-		if (joins !== undefined) assert.equal(joinCount(sql), joins, name);
-		for (const pattern of [has].flat()) assert.match(sql, pattern, name);
-		if (lacks) assert.doesNotMatch(sql, lacks, name);
-	}
-
-	// The depth generator must build the same SQL as the shared users -> posts -> comments.
-	assert.equal(depth(2).compile().sql, usersPostsComments.compile().sql);
-
-	assert.match(representative.compile().sql, wrapped("user"));
-	assert.match(representative.toQuery().compile().sql, /^select /);
-	assert.match(representative.toCountQuery().compile().sql, /count\(\*\)/);
-	assert.match(representative.toExistsQuery().compile().sql, /^select exists /);
-	assert.equal(representative.toOperationNode().kind, "SelectQueryNode");
-	assert.equal(joinCount(representative.toBaseQuery().compile().sql), 0);
-	const joined = representative.toJoinedQuery().compile().sql;
-	assert.equal(joinCount(joined), 2);
-	assert.doesNotMatch(joined, /limit/);
-}
-
-await runSuite({ verify: verifyWorkloads });
+// The depth generator must build the same SQL as the shared users -> posts -> comments.
+await runSuite({
+	verify: () => assert.equal(depth(2).compile().sql, usersPostsComments.compile().sql),
+});

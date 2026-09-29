@@ -10,22 +10,8 @@ import { join } from "node:path";
 
 import ts from "typescript";
 
-import {
-	type Baseline,
-	compareBaselines,
-	formatTime,
-	printTable,
-	readBaseline,
-	writeBaseline,
-} from "./lib/baseline.ts";
-import { baselinePath, benchmarksDir, cli } from "./lib/harness.ts";
-
-const repeats = 5;
-
-const { save, compare, filter, label, ...flags } = cli();
-const verifyOnly = flags["verify-only"] ?? false;
-const path = baselinePath("types");
-const before = compare ? readBaseline(path, "types") : undefined;
+import { formatBytes, formatTime, printTable } from "./lib/baseline.ts";
+import { benchmarksDir, cli, runSuite } from "./lib/harness.ts";
 
 const fixturesDir = join(benchmarksDir, "types");
 const { options } = ts.getParsedCommandLineOfConfigFile(
@@ -39,23 +25,26 @@ const { options } = ts.getParsedCommandLineOfConfigFile(
 	},
 )!;
 
-interface Measurement {
-	instantiations: number;
-	types: number;
-	/** Median check time, in nanoseconds. */
-	time: number;
-	/** Bytes the checker retained, when `--expose-gc` allows measuring it. */
-	heap?: number | undefined;
-}
+const { filter } = cli();
+const pattern = filter === undefined ? undefined : new RegExp(filter);
+const names = readdirSync(fixturesDir)
+	.filter((f) => f.endsWith(".ts") && f !== "schema.ts")
+	.map((f) => f.slice(0, -".ts".length))
+	.filter((n) => !pattern || pattern.test(n))
+	.sort();
+if (names.length === 0) throw new Error(`No types fixture matches --filter ${filter}`);
 
 let oldProgram: ts.Program | undefined;
 
 /**
  * Checks one fixture in a fresh program, reusing parsed files from the last
- * one.  Collecting garbage around the check slows it down, so a run either
- * times the check or weighs what it retained, never both.
+ * one.  The counts are taken around the fixture's own check, so loading the
+ * library and the schema stays out of them.  Collecting garbage around the
+ * check slows it down, so a call either times the check or weighs what it
+ * retained, never both.
  */
-function checkOnce(file: string, weigh: boolean) {
+function checkOnce(name: string, weigh = false) {
+	const file = join(fixturesDir, `${name}.ts`);
 	const program = ts.createProgram({
 		rootNames: [file],
 		options,
@@ -83,107 +72,70 @@ function checkOnce(file: string, weigh: boolean) {
 }
 
 /**
- * Checks a fixture `repeats` times, failing on any error.  Every fixture but
- * `empty` must assert its result with expect-type, which rejects `any`, so a
- * fixture whose types collapse fails rather than reading as a speedup.
+ * Every fixture must type-check and assert its result with expect-type, which
+ * rejects `any`, so one whose types collapse fails rather than reading as a
+ * speedup.
  */
-function measure(name: string): Measurement {
+function verify(name: string): void {
 	const file = join(fixturesDir, `${name}.ts`);
-	if (name !== "empty" && !readFileSync(file, "utf8").includes(".toEqualTypeOf<")) {
+	if (!readFileSync(file, "utf8").includes(".toEqualTypeOf<")) {
 		throw new Error(`types/${name}.ts asserts nothing with expectTypeOf(...).toEqualTypeOf<...>()`);
 	}
-	const runs = Array.from({ length: verifyOnly ? 1 : repeats }, () => checkOnce(file, false));
-	const [first] = runs;
-	if (first!.diagnostics.length > 0) {
+	const { diagnostics } = checkOnce(name);
+	if (diagnostics.length > 0) {
+		const host = {
+			getCanonicalFileName: (f: string) => f,
+			getCurrentDirectory: () => fixturesDir,
+			getNewLine: () => "\n",
+		};
 		throw new Error(
-			`types/${name}.ts does not type-check:\n${ts.formatDiagnostics(first!.diagnostics, {
-				getCanonicalFileName: (f) => f,
-				getCurrentDirectory: () => fixturesDir,
-				getNewLine: () => "\n",
-			})}`,
+			`types/${name}.ts does not type-check:\n${ts.formatDiagnostics(diagnostics, host)}`,
 		);
 	}
-	if (runs.some((r) => r.instantiations !== first!.instantiations)) {
+}
+
+/** The median of 5 checks; instantiations must not vary between them. */
+function measure(name: string) {
+	const runs = Array.from({ length: 5 }, () => checkOnce(name));
+	const [{ instantiations, types }] = runs as [(typeof runs)[number]];
+	if (runs.some((r) => r.instantiations !== instantiations)) {
 		throw new Error(`types/${name}.ts instantiated a different number of types on each run`);
 	}
-	const median = (xs: number[]) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-	return {
-		instantiations: first!.instantiations,
-		types: first!.types,
-		time: median(runs.map((r) => r.time)),
-	};
+	const time = runs.map((r) => r.time).sort((a, b) => a - b)[2]!;
+	return { instantiations, types, time };
 }
 
-const pattern = filter === undefined ? undefined : new RegExp(filter);
-const names = readdirSync(fixturesDir)
-	.filter((f) => f.endsWith(".ts") && f !== "schema.ts" && f !== "empty.ts")
-	.map((f) => f.slice(0, -".ts".length))
-	.filter((n) => !pattern || pattern.test(n))
-	.sort();
-if (names.length === 0) throw new Error(`No types fixture matches --filter ${filter}`);
+await runSuite({
+	verify: () => names.forEach(verify),
+	measure: () => {
+		const results = names.map((name) => ({ name, ...measure(name) }));
+		// Weighed after every fixture is timed, so the collections don't slow the timings.
+		const heaps = results.map(({ name }) => checkOnce(name, true).heap);
 
-// `empty` loads the library and the schema; the rest are reported net of it.
-const empty = measure("empty");
-const results = new Map<string, Measurement>(
-	names.map((name) => {
-		const m = measure(name);
-		return [
-			name,
-			{
-				...m,
-				instantiations: m.instantiations - empty.instantiations,
-				types: m.types - empty.types,
-			},
-		];
-	}),
-);
-if (verifyOnly) {
-	console.log(`types: ${names.length} fixtures verified.`);
-	process.exit();
-}
-// Weighed after every fixture is timed, so the collections don't slow the timings.
-if (globalThis.gc) {
-	for (const [name, m] of results) m.heap = checkOnce(join(fixturesDir, `${name}.ts`), true).heap;
-}
-
-/** `p50` is check time and `count` net instantiations, so time is never misread. */
-const after: Baseline = {
-	version: 2,
-	suite: "types",
-	label: label ?? new Date().toISOString(),
-	runtime: `typescript ${ts.version}, node ${process.version}`,
-	cpu: cpus()[0]?.model ?? "unknown",
-	benchmarks: Object.fromEntries(
-		[...results].map(([name, m]) => [
-			name,
-			{ p50: m.time, count: m.instantiations, ...(m.heap !== undefined && { heap: m.heap }) },
-		]),
-	),
-};
-
-if (before) {
-	if (!compareBaselines(before, after, { reportMissing: filter === undefined })) {
-		process.exitCode = 1;
-	}
-} else {
-	const kb = (bytes: number | undefined) =>
-		bytes === undefined ? "-" : `${(bytes / 1024).toFixed(0)} kb`;
-	printTable(
-		["fixture", "instantiations", "types", "check", "retained"],
-		[...results].map(([name, m]) => [
-			name,
-			String(m.instantiations),
-			String(m.types),
-			formatTime(m.time),
-			kb(m.heap),
-		]),
-	);
-}
-console.log(
-	`\nNet of the empty fixture (${empty.instantiations} instantiations, ${formatTime(empty.time)}).`,
-);
-
-if (save) {
-	writeBaseline(path, after);
-	console.log(`\nSaved baseline to ${path}`);
-}
+		printTable(
+			["fixture", "instantiations", "types", "check", "retained"],
+			results.map((m, i) => [
+				m.name,
+				String(m.instantiations),
+				String(m.types),
+				formatTime(m.time),
+				heaps[i] === undefined ? "-" : formatBytes(heaps[i]),
+			]),
+		);
+		// `p50` is check time and `count` instantiations, which gates instead of time.
+		return {
+			runtime: `typescript ${ts.version}, node ${process.version}`,
+			cpu: cpus()[0]?.model ?? "unknown",
+			benchmarks: Object.fromEntries(
+				results.map((m, i) => [
+					m.name,
+					{
+						p50: m.time,
+						count: m.instantiations,
+						...(heaps[i] !== undefined && { heap: heaps[i] }),
+					},
+				]),
+			),
+		};
+	},
+});

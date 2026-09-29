@@ -30,16 +30,22 @@ nothing answers on `--postgres-url` (default: `$POSTGRES_URL`, then the port
 
 - **Each suite runs in its own process**, so it only pays for the fixtures it
   imports, and its call sites aren't made megamorphic by other suites.
-- **Every workload is verified before anything is timed.** Each suite passes a
-  `verify` function to `runSuite`, which runs every workload once and asserts
-  its output. A change that makes a workload skip its work (returning nothing,
-  dropping a join, skipping a sort) would otherwise read as a large speedup
-  instead of a failure. CI runs `--verify-only` so the fixtures can't quietly
-  break.
+- **Benchmarks are declared with `group()`** from `lib/harness.ts`: a mitata
+  `summary()` of named workloads, the first the baseline the rest are read
+  against. Each suite ends with `await runSuite()`.
+- **Every workload is verified before anything is timed.** A workload is a
+  `run` function plus either the `expected` result or a `check` that asserts
+  on it; `runSuite` runs each once and asserts before timing starts. A change
+  that makes a workload skip its work (returning nothing, dropping a join,
+  skipping a sort) would otherwise read as a large speedup instead of a
+  failure. CI runs `--verify-only`, which stops there. The few workloads whose
+  first call changes shared state (the `plugins` scaling group) check their own
+  first result instead, which mitata discards as warmup.
 - **Every result goes through `do_not_optimize`**, so the JIT can't discard work
   whose result is thrown away.
 - **Fixtures are built once, outside the measured call**, and are
   deterministic: shuffles are seeded, so every run sorts the same permutation.
+  The one exception is `query-build`'s `querySet build`, whose job is building.
 - **Benchmark names are `--filter` patterns**, so the harness rejects a name
   that doesn't match itself as a regex.
 
@@ -53,9 +59,11 @@ most of the differences here.
 **Across runs, compare medians, with a ±20% noise band.** Three runs of the same
 code on one machine drifted by up to 17% in median time. `--compare` fails only
 on a time regression beyond the band. `--ref` is the better check: it runs both
-sides back to back in ABBA order (ref, HEAD, HEAD, ref) and averages each side,
-so drift over the session cancels out. It copies the current `benchmarks/` into
-the ref's checkout, so a benchmark for a feature the ref lacks fails there.
+sides back to back in ABBA order (ref, working tree, working tree, ref) and
+averages each side, so drift over the session cancels out. It copies the
+current `benchmarks/` into a scratch checkout of the ref, sharing this
+checkout's `node_modules`, so a benchmark for a feature the ref lacks fails
+there.
 
 **Allocation is shown, never gated.** mitata's mean heap per iteration is the
 most stable allocation figure it reports (`heapMin` drifted 566x across runs,
@@ -79,8 +87,12 @@ narrowing p99 / p50.
 
 The `types` suite type-checks each fixture under `benchmarks/types/` with the
 TypeScript compiler API, checking only the fixture itself, not the library's
-source, much as a user of the published types would. It reports instantiations
-and types net of an `empty` fixture that only imports the library. The count is
+source, much as a user of the published types would. The fixtures query their
+own `types/schema.ts`, with the column counts, enums and `Generated` columns of
+real tables, rather than the runtime suites' minimal `lib/db.ts` schema.
+Verifying checks every fixture once; measuring checks each five times and
+reports the median time, and the instantiations and types the fixture's own
+check created, which leaves out loading the library. The count is
 deterministic, so unlike time it's compared tightly: growth beyond 2% fails.
 Check time and retained memory are reported for reading only. Every fixture
 must type-check and assert its result with `expectTypeOf(...).toEqualTypeOf<...>()`,

@@ -6,7 +6,7 @@ import SQLite from "better-sqlite3";
 import * as k from "kysely";
 import pg from "pg";
 
-import { makeRows, times } from "./rows.ts";
+import { makeRows, range } from "./rows.ts";
 
 export interface DB {
 	users: { id: number; username: string; email: string };
@@ -44,30 +44,27 @@ const schema = `
 `;
 
 /** An empty database with the schema in place: enough to build and compile queries. */
-export function emptyDb(plugins: k.KyselyPlugin[] = []): k.Kysely<DB> {
+export function emptyDb(): k.Kysely<DB> {
 	const database = new SQLite(":memory:");
 	database.exec(schema);
-	return new k.Kysely<DB>({ dialect: new k.SqliteDialect({ database }), plugins });
+	return new k.Kysely<DB>({ dialect: new k.SqliteDialect({ database }) });
 }
-
-/**
- * The users -> posts -> comments join over the seeded database returns exactly
- * these rows, so hydrating them can be compared against it.
- */
-export const seedRows = () => makeRows(500, 5, 4);
 
 export const ORGS = 20;
 export const DEPARTMENTS_PER_ORG = 3;
 export const EMPLOYEES_PER_DEPARTMENT = 5;
 
-/** Each table's rows, taken from `seedRows()` so the two can't drift apart. */
+/**
+ * Each table's rows, taken from the same join rows the `hydrate` suite
+ * hydrates, so the users -> posts -> comments join returns exactly those.
+ */
 function tableRows(): { [T in keyof DB]: DB[T][] } {
 	const byId = <T extends { id: number }>(rows: T[]) => [
 		...new Map(rows.map((r) => [r.id, r])).values(),
 	];
-	const rows = seedRows();
+	// A full cartesian product, so no join column is null.
+	const rows = makeRows(500, 5, 4);
 	const departments = ORGS * DEPARTMENTS_PER_ORG;
-	// `seedRows()` is a full cartesian product, so no join column is null.
 	return {
 		users: byId(rows.map((r) => ({ id: r.id, username: r.username, email: r.email }))),
 		posts: byId(
@@ -86,13 +83,13 @@ function tableRows(): { [T in keyof DB]: DB[T][] } {
 				content: r.posts$$comments$$content!,
 			})),
 		),
-		organizations: times(ORGS, (id) => ({ id, organization_name: `Organization ${id}` })),
-		organizational_departments: times(departments, (id) => ({
+		organizations: range(ORGS, 1).map((id) => ({ id, organization_name: `Organization ${id}` })),
+		organizational_departments: range(departments, 1).map((id) => ({
 			id,
 			organization_id: Math.ceil(id / DEPARTMENTS_PER_ORG),
 			department_name: `Department ${id}`,
 		})),
-		departmental_employee_records: times(departments * EMPLOYEES_PER_DEPARTMENT, (id) => ({
+		departmental_employee_records: range(departments * EMPLOYEES_PER_DEPARTMENT, 1).map((id) => ({
 			id,
 			organizational_department_id: Math.ceil(id / EMPLOYEES_PER_DEPARTMENT),
 			employee_preferred_full_display_name: `Employee ${id}`,
