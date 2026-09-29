@@ -36,3 +36,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # AI stuff
 plan.md
 plan*.md
+
+# benchmark baselines (machine-specific)
+benchmarks/baselines/

@@ -38,3 +38,6 @@ jobs:
       - run: npm run test:all
         env:
           POSTGRES_URL: postgres://postgres:postgres@localhost:5432/kysely_hydrate_test
+      - run: npm run bench -- --verify-only
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/kysely_hydrate_test

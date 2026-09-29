@@ -28,6 +28,6 @@
 
 		"types": []
 	},
-	"include": ["src"],
+	"include": ["src", "benchmarks"],
 	"exclude": ["src/experimental"]
 }
