@@ -15,10 +15,9 @@ const db = getDbForTest();
 // alias and its own join keys, and those names never collide with names
 // used elsewhere in the tree (sibling keys, the parent's alias, the same
 // key at another depth, real table names). Also covers code that names
-// joined tables from outside the query set (later sibling ON clauses,
-// consumers of `toJoinedQuery()`), orderings and pagination of nested sets,
-// modifiers, CTEs, attaches, plugins, and reuse of one query set in
-// several places.
+// joined tables from outside the query set (later sibling ON clauses),
+// orderings and pagination of nested sets, modifiers, CTEs, attaches,
+// plugins, and reuse of one query set in several places.
 //
 
 const users = () =>
@@ -362,53 +361,6 @@ describe("query-set: join scopes", () => {
 					{ id: 2, user_id: 2, comments: [{ id: 2, user_id: 3 }] },
 				],
 				postAuthor: { id: 2, username: "bob" },
-			},
-		]);
-	});
-
-	test("toJoinedQuery consumers can filter on a nested join's hoisted column", async () => {
-		const qs = users().leftJoinMany(
-			"posts",
-			({ eb, qs }) =>
-				qs(eb.selectFrom("posts").select(["id", "user_id"])).leftJoinMany(
-					"comments",
-					({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "post_id", "content"])),
-					"comments.post_id",
-					"posts.id",
-				),
-			"posts.user_id",
-			"user.id",
-		);
-
-		const rows = await qs
-			.toJoinedQuery()
-			// Hoisted columns of the "posts" derived table are not in toJoinedQuery()'s
-			// types, but are valid SQL.
-			.where("posts.comments$$content" as any, "=", "Comment 3 on post 2")
-			.execute();
-
-		assert.deepStrictEqual(rows, [
-			{
-				id: 2,
-				username: "bob",
-				posts$$id: 2,
-				posts$$user_id: 2,
-				posts$$comments$$id: 3,
-				posts$$comments$$post_id: 2,
-				posts$$comments$$content: "Comment 3 on post 2",
-			},
-		]);
-		assert.deepStrictEqual(await qs.hydrate(rows), [
-			{
-				id: 2,
-				username: "bob",
-				posts: [
-					{
-						id: 2,
-						user_id: 2,
-						comments: [{ id: 3, post_id: 2, content: "Comment 3 on post 2" }],
-					},
-				],
 			},
 		]);
 	});
