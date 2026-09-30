@@ -455,7 +455,10 @@ subquery in its ON, a lateral join, an inner or cross join under a left join, a
 left join whose ON doesn't reject a missing parent, or one whose hoisted columns
 the outer query names) stays in the nested query set's derived table without
 affecting its siblings. A nested query set with `.limit()`, `.offset()`,
-`.modifyFront()` or `.modifyEnd()` keeps its own derived table.
+`.modifyFront()` or `.modifyEnd()` keeps its own derived table, and nothing is
+hoisted into a query whose ON clauses or modifiers have an unqualified column
+(raw SQL counts unless every name in it is qualified), since a hoisted table
+could make it ambiguous.
 
 ##### Solving "row explosion" with pagination
 

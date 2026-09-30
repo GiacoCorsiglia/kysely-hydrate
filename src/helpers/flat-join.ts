@@ -46,14 +46,17 @@ export function joinOn(on: k.OperationNode): (join: k.JoinBuilder<any, any>) => 
 }
 
 /**
- * The places, in some SQL scope, that reference hoisted (`$$`) columns of the relations joined in
- * it.  A relation `key` whose column `child$$…` is referenced must keep its join `child` inside
- * its derived table, which is the only place that column exists.
+ * What the clauses of some SQL scope reference that constrains hoisting joins into it: the
+ * hoisted (`$$`) columns of the relations joined in it, and unqualified names.
+ *
+ * A relation `key` whose column `child$$…` is referenced must keep its join `child` inside its
+ * derived table, the only place that column exists.  An unqualified name could become ambiguous
+ * with any table hoisted into the scope, so it rules out hoisting anything.
  */
 export class HoistedReferences {
 	/** For each relation, the joins it must keep, or `true` for all of them. */
 	readonly #byTable = new Map<string, Set<string> | true>();
-	/** Set when a `$$` shows up where it can't be attributed: every relation keeps all its joins. */
+	/** Set when nothing may be hoisted into the scope. */
 	#all = false;
 
 	/** Whether `table` must keep its join `child` in its derived table. */
@@ -65,7 +68,7 @@ export class HoistedReferences {
 		return children === true || (children?.has(child) ?? false);
 	}
 
-	/** Records a reference to the hoisted column `column` of `table`. */
+	/** Records a reference to the column `column` of `table`, if it's a hoisted one. */
 	addColumn(table: string, column: string): void {
 		const sep = column.indexOf(SEP);
 		if (sep === -1) {
@@ -82,20 +85,15 @@ export class HoistedReferences {
 	}
 
 	/**
-	 * Records every hoisted-column reference in `node`.  A qualified column reference is attributed
-	 * to its table.  Any other `$$` (in raw SQL, or an unqualified name) can't be attributed; it's
-	 * charged to `unattributed` when given, else to every relation.  String values are data, not
-	 * references, so they're ignored.
+	 * Records the references in `node`.  A table-qualified column is attributed to its table.  A
+	 * `$$` anywhere else (in raw SQL, or in an unqualified name) can't be; it's charged to all the
+	 * joins of `unattributed` when given, else to every relation.  An unqualified column, or raw
+	 * SQL that may contain one (see {@link hasUnqualifiedName}), rules out hoisting altogether.
+	 * String values are data, not names, so they're ignored.
 	 */
 	scan(node: unknown, unattributed?: string): this {
 		if (typeof node === "string") {
-			if (node.includes(SEP)) {
-				if (unattributed === undefined) {
-					this.#all = true;
-				} else {
-					this.#byTable.set(unattributed, true);
-				}
-			}
+			this.#scanName(node, unattributed);
 		} else if (Array.isArray(node)) {
 			for (const item of node) {
 				this.scan(item, unattributed);
@@ -105,15 +103,21 @@ export class HoistedReferences {
 			if (k.ValueNode.is(n) || k.PrimitiveValueListNode.is(n)) {
 				return this;
 			}
-			if (
-				k.ReferenceNode.is(n) &&
-				n.table &&
-				!n.table.table.schema &&
-				k.ColumnNode.is(n.column) &&
-				!n.table.table.identifier.name.includes(SEP)
-			) {
-				this.addColumn(n.table.table.identifier.name, n.column.column.name);
+			if (k.ColumnNode.is(n) || (k.ReferenceNode.is(n) && !n.table)) {
+				this.#all = true;
 				return this;
+			}
+			if (k.ReferenceNode.is(n) && k.ColumnNode.is(n.column) && !n.table!.table.schema) {
+				this.#scanName(n.table!.table.identifier.name, unattributed);
+				this.addColumn(n.table!.table.identifier.name, n.column.column.name);
+				return this;
+			}
+			if (k.RawNode.is(n)) {
+				for (const fragment of n.sqlFragments) {
+					this.#scanName(fragment, unattributed);
+					this.#all ||= hasUnqualifiedName(fragment);
+				}
+				return this.scan(n.parameters, unattributed);
 			}
 			for (const key in n) {
 				this.scan((n as unknown as Record<string, unknown>)[key], unattributed);
@@ -121,6 +125,52 @@ export class HoistedReferences {
 		}
 		return this;
 	}
+
+	#scanName(name: string, unattributed: string | undefined): void {
+		if (!name.includes(SEP)) {
+			return;
+		}
+		if (unattributed === undefined) {
+			this.#all = true;
+		} else {
+			this.#byTable.set(unattributed, true);
+		}
+	}
+}
+
+/** Words raw SQL may contain besides names; any other bare word is taken for a column. */
+const SQL_WORDS = new Set(
+	(
+		"all and any as asc between by case collate desc distinct else end escape exists false first " +
+		"for from glob ilike in is last like limit locked not nowait null nulls of offset on or " +
+		"order regexp share similar skip some then to true unknown update when"
+	).split(" "),
+);
+
+/**
+ * Whether raw SQL text may name an unqualified column: it has a bare word (outside string
+ * literals, not next to a `.`, not a function name before `(`) that isn't one of a few SQL words.
+ * Ers toward yes.
+ */
+export function hasUnqualifiedName(text: string): boolean {
+	const words = /'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|[A-Za-z_][\w$]*|\d[\w.]*/g;
+	for (let match; (match = words.exec(text)); ) {
+		const word = match[0];
+		if (word[0] === "'" || /^\d/.test(word)) {
+			continue;
+		}
+		const before = text.slice(0, match.index).trimEnd().at(-1);
+		const after = text.slice(match.index + word.length).trimStart()[0];
+		if (before === "." || after === ".") {
+			continue;
+		}
+		const isQuoted = /^["`[]/.test(word);
+		if (!isQuoted && (after === "(" || SQL_WORDS.has(word.toLowerCase()))) {
+			continue;
+		}
+		return true;
+	}
+	return false;
 }
 
 /**

@@ -324,9 +324,10 @@ describe("query-set: join scopes", () => {
 	});
 
 	test("a later sibling's ON clause with an unqualified column", async () => {
-		// "user_id" is unambiguous here: the only table in scope with a column
-		// of that name is the posts join (its comments' user_id is hoisted as
-		// "comments$$user_id").
+		// "post_id" is unambiguous here: the only table in scope with a column of
+		// that name is the "userComments" join (the posts' comments' post_id is
+		// hoisted as "comments$$post_id").  The typed API offers unqualified
+		// columns of the joined table.
 		const qs = users()
 			.where("users.id", "in", [1, 2])
 			.leftJoinMany(
@@ -336,31 +337,30 @@ describe("query-set: join scopes", () => {
 						eb.selectFrom("posts").select(["id", "user_id"]).where("id", "in", [1, 2]),
 					).leftJoinMany(
 						"comments",
-						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "user_id"])),
-						// Joined by id only to keep the rows few.
-						"comments.id",
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "post_id"])),
+						"comments.post_id",
 						"posts.id",
 					),
 				"posts.user_id",
 				"user.id",
 			)
-			.leftJoinOne(
-				"postAuthor",
-				({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
-				// Not a name the typed API offers, but valid SQL at the top level.
-				(join) => join.onRef("postAuthor.id", "=", "user_id" as any),
+			.leftJoinMany(
+				"userComments",
+				({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "post_id"])),
+				// Comments on the post whose id is the user's.
+				(join) => join.onRef("post_id", "=", "user.id"),
 			);
 
 		assert.deepStrictEqual(await qs.execute(), [
-			{ id: 1, username: "alice", posts: [], postAuthor: null },
+			{ id: 1, username: "alice", posts: [], userComments: [comment(1), comment(2)] },
 			{
 				id: 2,
 				username: "bob",
 				posts: [
-					{ id: 1, user_id: 2, comments: [{ id: 1, user_id: 2 }] },
-					{ id: 2, user_id: 2, comments: [{ id: 2, user_id: 3 }] },
+					{ id: 1, user_id: 2, comments: [comment(1), comment(2)] },
+					{ id: 2, user_id: 2, comments: [comment(3)] },
 				],
-				postAuthor: { id: 2, username: "bob" },
+				userComments: [comment(3)],
 			},
 		]);
 	});

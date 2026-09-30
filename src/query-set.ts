@@ -1852,7 +1852,9 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * a lateral join, an inner or cross join under a left join, a left join whose ON doesn't reject
 	 * a missing parent, or one whose hoisted columns the outer query names) stays in the derived
 	 * table without affecting its siblings.  A nested query set with `.limit()`, `.offset()`,
-	 * `.modifyFront()` or `.modifyEnd()` keeps its own derived table.
+	 * `.modifyFront()` or `.modifyEnd()` keeps its own derived table, and nothing is hoisted into a
+	 * query whose ON clauses or modifiers have an unqualified column (raw SQL counts unless every
+	 * name in it is qualified).
 	 *
 	 * @param key - The key name for the nested array in the output.
 	 * @param querySet - A nested query set or factory function.
@@ -2684,8 +2686,19 @@ function addJoin(
 /** Selections hoisting a joined relation's columns into the query it's joined in. */
 type HoistedSelections = PrefixedAliasedExpression<any, any, any>[];
 
-/** Nothing referenced: for scopes that can't reference any hoisted column. */
-const noHoistedReferences = new HoistedReferences();
+/**
+ * The scope of a query that joins are added to, as far as hoisting joins into it goes (see
+ * {@link QuerySetImpl#joinAs}).
+ */
+interface JoinScope {
+	/** The conditions of the scope's joins that were built, by key; the rest are added from args. */
+	readonly ons: ReadonlyMap<string, k.OperationNode | null>;
+	/** The hoisted columns the scope refers to, and whether an unqualified name rules out hoisting. */
+	readonly references: HoistedReferences;
+}
+
+/** A scope nothing is hoisted into, because none of its joins can be opened. */
+const emptyScope: JoinScope = { ons: new Map(), references: new HoistedReferences() };
 
 interface JoinCollection {
 	readonly type: "join";
@@ -2881,7 +2894,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * @param qb - The query builder to add the join to.
 	 * @param key - The key of the join.
 	 * @param collection - The collection to add the join to.
-	 * @param references - The hoisted columns the rest of `qb`'s scope refers to.
+	 * @param scope - The scope of `qb` (see {@link #joinScope}).
 	 * @param nestedQuery - The query to join as a derived table; defaults to the collection's full
 	 *   query set, emitted as flat as it can be (see {@link #joinAs}).
 	 */
@@ -2889,48 +2902,97 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		qb: AnySelectQueryBuilder,
 		key: string,
 		collection: JoinCollection,
-		references: HoistedReferences = noHoistedReferences,
+		scope: JoinScope,
 		nestedQuery?: AnySelectQueryBuilder,
 	): AnySelectQueryBuilder {
 		if (nestedQuery !== undefined) {
 			const from = aliasQuery(nestedQuery, key);
 			return applyHoistedPrefixedSelections(
 				makePrefix("", key),
-				addJoin(qb, collection.method, from.aliased, collection.args),
+				addJoin(qb, collection.method, from.aliased, scope.ons.get(key) ?? collection.args),
 				from,
 			);
 		}
-		const [joined, selections] = this.#joinCollection(qb, key, collection, references);
+		const [joined, selections] = this.#joinCollection(qb, key, collection, scope);
 		return joined.select(selections);
 	}
 
-	/**
-	 * Joins a collection of this query set into `qb` as `key` (see {@link #joinAs}).
-	 *
-	 * @param references - The hoisted columns the rest of `qb`'s scope refers to.
-	 * @param on - The join's condition, if it's already built.
-	 */
+	/** Joins a collection of this query set into `qb`, whose scope is `scope`, as `key`. */
 	#joinCollection(
 		qb: AnySelectQueryBuilder,
 		key: string,
 		collection: JoinCollection,
-		references: HoistedReferences,
-		on?: k.OperationNode | null,
+		scope: JoinScope,
 	): [AnySelectQueryBuilder, HoistedSelections] {
-		const nested = collection.querySet;
-		let condition: JoinCondition = on === undefined ? collection.args : on;
-		let isReferenced = (child: string) => references.isReferenced(key, child);
-		// Only a query set that can be opened needs its condition analyzed; otherwise the join
-		// method builds it from the arguments as usual.
-		if (nested.#canOpen()) {
-			condition = on === undefined ? buildJoinOn(collection.args) : on;
-			if (condition !== null) {
-				const own = new HoistedReferences().scan(condition, key);
-				isReferenced = (child) =>
-					references.isReferenced(key, child) || own.isReferenced(key, child);
+		const on = scope.ons.get(key);
+		return collection.querySet.#joinAs(
+			qb,
+			key,
+			collection.method,
+			on === undefined ? collection.args : on,
+			(child) => scope.references.isReferenced(key, child),
+		);
+	}
+
+	/**
+	 * The {@link JoinScope} of a query that adds `joins` (with their conditions, if already built),
+	 * whose other clauses `addReferences` records the references of.  Where a join's query set can
+	 * be opened, every condition is built (once: it's then added from the built node), so that the
+	 * hoisted columns and unqualified names they mention are known.
+	 */
+	#joinScope(
+		joins: Iterable<readonly [string, JoinCollection, (k.OperationNode | null | undefined)?]>,
+		addReferences?: (references: HoistedReferences) => void,
+	): JoinScope {
+		const entries = [...joins];
+		const ons = new Map<string, k.OperationNode | null>();
+		if (!entries.some(([, collection]) => collection.querySet.#canOpen())) {
+			for (const [key, , on] of entries) {
+				if (on !== undefined) {
+					ons.set(key, on);
+				}
+			}
+			return ons.size ? { ons, references: emptyScope.references } : emptyScope;
+		}
+		const references = new HoistedReferences();
+		addReferences?.(references);
+		for (const [key, collection, built] of entries) {
+			const on = built === undefined ? buildJoinOn(collection.args) : built;
+			ons.set(key, on);
+			if (on !== null) {
+				references.scan(on, key);
 			}
 		}
-		return nested.#joinAs(qb, key, collection.method, condition, isReferenced);
+		return { ons, references };
+	}
+
+	/**
+	 * The {@link JoinScope} of a query of this query set's: the joins it adds (those `includes`),
+	 * its ordering if `ordered` (an `.orderBy("key$$child$$column")` orders by
+	 * `key.child$$column`), and its modifiers if `modified`.
+	 */
+	#ownJoinScope(
+		ordered: boolean,
+		modified: boolean,
+		includes: (key: string, collection: JoinCollection) => boolean = () => true,
+	): JoinScope {
+		const { joinCollections, orderBy, frontModifiers, endModifiers } = this.#props;
+		const joins = [...joinCollections].filter(([key, collection]) => includes(key, collection));
+		return this.#joinScope(joins, (references) => {
+			if (ordered) {
+				for (const { expr } of orderBy) {
+					const sep = expr.indexOf(SEP);
+					if (sep !== -1) {
+						references.addColumn(expr.slice(0, sep), expr.slice(sep + SEP.length));
+					}
+				}
+			}
+			if (modified) {
+				for (const modifier of [...frontModifiers, ...endModifiers]) {
+					references.scan(modifier.toOperationNode());
+				}
+			}
+		});
 	}
 
 	/**
@@ -2972,8 +3034,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 *   `(A ⟕ B) ⟕q C` only then);
 	 * - it's an inner or cross join under a left join (`A ⟕ (B ⋈ C)` has no flat form), or a
 	 *   lateral join;
-	 * - the scope it would be hoisted into refers to its columns through the derived table (e.g. an
-	 *   `.orderBy()` or modifier naming `alias.key$$column`).
+	 * - the scope it would be hoisted into refers to its columns through the derived table (an ON,
+	 *   `.orderBy()` or modifier naming `alias.key$$column`), or has an unqualified column (or raw
+	 *   SQL that may name one) in any ON or modifier, which a hoisted table could make ambiguous.
 	 *
 	 * The whole query set keeps its derived table when it can't be opened (see {@link #canOpen}).
 	 *
@@ -3036,16 +3099,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		if (!kept.length) {
 			core = aliasQuery(baseQuery, alias);
 		} else {
+			const coreScope = this.#joinScope(
+				kept.map(({ key, collection, on }) => [key, collection, on] as const),
+			);
 			let coreQuery = this.#getSelectFromBase(true, true);
-			for (const { key, collection, on } of kept) {
+			for (const { key, collection } of kept) {
 				let selections;
-				[coreQuery, selections] = this.#joinCollection(
-					coreQuery,
-					key,
-					collection,
-					noHoistedReferences,
-					on,
-				);
+				[coreQuery, selections] = this.#joinCollection(coreQuery, key, collection, coreScope);
 				coreQuery = coreQuery.select(selections);
 				keptSelections.set(key, []);
 			}
@@ -3066,7 +3126,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				selections.push(...keptSelections.get(key)!);
 				continue;
 			}
-			const own = on ? new HoistedReferences().scan(on, key) : noHoistedReferences;
+			const own = on ? new HoistedReferences().scan(on, key) : emptyScope.references;
 			let hoisted;
 			[qb, hoisted] = collection.querySet.#joinAs(
 				qb,
@@ -3079,32 +3139,6 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		return [qb, selections];
-	}
-
-	/**
-	 * The hoisted columns this query set's own query refers to, through the relations joined in it:
-	 * by its ordering, if `ordered` (an `.orderBy("key$$child$$column")` orders by
-	 * `key.child$$column`), and by its modifiers, if `modified`.
-	 */
-	#hoistedReferences(ordered: boolean, modified: boolean): HoistedReferences {
-		const { orderBy, frontModifiers, endModifiers } = this.#props;
-		let references = noHoistedReferences;
-		const get = () =>
-			references === noHoistedReferences ? (references = new HoistedReferences()) : references;
-		if (ordered) {
-			for (const { expr } of orderBy) {
-				const sep = expr.indexOf(SEP);
-				if (sep !== -1 && expr.includes(SEP, sep + SEP.length)) {
-					get().addColumn(expr.slice(0, sep), expr.slice(sep + SEP.length));
-				}
-			}
-		}
-		if (modified) {
-			for (const modifier of [...frontModifiers, ...endModifiers]) {
-				get().scan(modifier.toOperationNode());
-			}
-		}
-		return references;
 	}
 
 	#applyLimitAndOffset(qb: AnySelectQueryBuilder): AnySelectQueryBuilder {
@@ -3199,7 +3233,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isOrdered: boolean = false,
 	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
-		const references = this.#hoistedReferences(isOrdered, false);
+		// The joins added to this query itself (filtering many-joins get an EXISTS subquery each).
+		const scope = this.#ownJoinScope(
+			isOrdered,
+			false,
+			(key, collection) =>
+				this.#isCollectionCardinalityOne(collection) ||
+				this.#isReducedJoin(key, collection, isReduced),
+		);
 
 		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
 
@@ -3213,14 +3254,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 			if (this.#isCollectionCardinalityOne(collection)) {
 				// All cardinality-one joins are safe to include directly (no row explosion)
-				qb = this.#addCollectionAsJoin(qb, key, collection, references);
+				qb = this.#addCollectionAsJoin(qb, key, collection, scope);
 			} else if (this.#isReducedJoin(key, collection, isReduced)) {
 				// (For inner joins, the reduced join filters exactly like the WHERE EXISTS below would.)
 				qb = this.#addCollectionAsJoin(
 					qb,
 					key,
 					collection,
-					references,
+					scope,
 					collection.querySet.#toPaginatedCardinalityOneQuery(true, true, () => true),
 				);
 			} else if (isFilteringJoin(collection)) {
@@ -3230,7 +3271,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 					exists(
 						selectFrom(k.sql`(SELECT 1)`.as("__"))
 							.select(lit(1).as("_"))
-							.$call((qb) => this.#addCollectionAsJoin(qb, key, collection)),
+							.$call((qb) =>
+								this.#addCollectionAsJoin(
+									qb,
+									key,
+									collection,
+									this.#joinScope([[key, collection]]),
+								),
+							),
 					),
 				);
 
@@ -3279,12 +3327,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// subqueries is ignored (well, "not guaranteed") unless you also have a
 		// LIMIT or OFFSET.
 		const isSubquery = isNested || isLocalSubquery;
-		const references = this.#hoistedReferences(isOrdered || !isSubquery, isModified);
+		const scope = this.#ownJoinScope(isOrdered || !isSubquery, isModified);
 
 		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
 
 		for (const [key, collection] of joinCollections) {
-			qb = this.#addCollectionAsJoin(qb, key, collection, references);
+			qb = this.#addCollectionAsJoin(qb, key, collection, scope);
 		}
 
 		// NOTE: Limit and offset cannot be applied here because of row explosion.
@@ -3400,10 +3448,14 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		// Add any cardinality-many joins.  (The wrapper's ordering refers to hoisted columns of the
 		// paginated subquery, not of these joins.)
-		const references = this.#hoistedReferences(false, true);
+		const scope = this.#ownJoinScope(
+			false,
+			true,
+			(_, collection) => !this.#isCollectionCardinalityOne(collection),
+		);
 		for (const [key, collection] of joinCollections) {
 			if (!this.#isCollectionCardinalityOne(collection)) {
-				qb = this.#addCollectionAsJoin(qb, key, collection, references);
+				qb = this.#addCollectionAsJoin(qb, key, collection, scope);
 			}
 		}
 

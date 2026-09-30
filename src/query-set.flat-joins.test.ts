@@ -308,6 +308,70 @@ describe("query-set: flat join chains", () => {
 			]);
 		});
 
+		test("an unqualified column in any ON at a level stops hoisting into that level only", () => {
+			// Hoisted tables would make `post_id` ambiguous in the top-level scope.
+			const query = users()
+				.leftJoinMany("posts", postsWithComments(), "posts.user_id", "user.id")
+				.leftJoinMany("userComments", comments(), (join) => join.onRef("post_id", "=", "user.id"));
+			assert.deepStrictEqual(relations(query), [
+				"user",
+				"post",
+				"comments",
+				"posts",
+				"userComments",
+			]);
+
+			// Inside the posts' derived table (kept by the author's raw ON), the same goes for its own
+			// scope, and only it: the comments' replies stay in their derived table.
+			const deep = users().leftJoinMany(
+				"posts",
+				posts()
+					.leftJoinMany(
+						"comments",
+						comments().leftJoinMany("replies", replies(), "replies.comment_id", "comment.id"),
+						(join) => join.on(sql`${sql.ref("comments.post_id")} = ${sql.ref("post.id")}`),
+					)
+					.leftJoinMany("mine", comments(), (join) =>
+						join.onRef("mine.post_id", "=", "post.id").on("content", "is not", null),
+					),
+				"posts.user_id",
+				"user.id",
+			);
+			assert.deepStrictEqual(relations(deep), [
+				"user",
+				"post",
+				"comment",
+				"replies",
+				"comments",
+				"mine",
+				"posts",
+			]);
+		});
+
+		test("raw SQL is taken to name an unqualified column unless every name in it is qualified", () => {
+			const withOn = (on: (join: any) => any) =>
+				users().leftJoinMany("posts", postsWithComments(), on);
+			assert.deepStrictEqual(relations(withOn((join) => join.on(sql`posts.user_id = "user".id`))), [
+				"user",
+				"posts",
+				"posts$$comments",
+			]);
+			assert.deepStrictEqual(relations(withOn((join) => join.on(sql`user_id = "user".id`))), [
+				"user",
+				"post",
+				"comments",
+				"posts",
+			]);
+			const base = () =>
+				users().leftJoinMany("posts", postsWithComments(), "posts.user_id", "user.id");
+			assert.deepStrictEqual(relations(base().modifyEnd(sql`order by username`)), [
+				"user",
+				"post",
+				"comments",
+				"posts",
+			]);
+		});
+
 		test("modifiers on a nested set keep its derived table", () => {
 			const query = users().leftJoinMany(
 				"posts",
@@ -471,6 +535,37 @@ describe("query-set: flat join chains", () => {
 			assert.strictEqual(calls, 2);
 			query.toQuery().compile();
 			assert.strictEqual(calls, 4);
+		});
+
+		test("an ON callback runs once per compile in paginated, count and exists queries", () => {
+			const calls = { profile: 0, posts: 0, comments: 0 };
+			const counted = (key: keyof typeof calls, k1: string, k2: string) => (join: any) => {
+				calls[key]++;
+				return join.onRef(k1, "=", k2);
+			};
+			const query = users()
+				.innerJoinOne(
+					"profile",
+					profiles().leftJoinOne("owner", users(), "owner.id", "profile.user_id"),
+					counted("profile", "profile.user_id", "user.id"),
+				)
+				.innerJoinMany(
+					"posts",
+					postsWithComments(counted("comments", "comments.post_id", "post.id")),
+					counted("posts", "posts.user_id", "user.id"),
+				)
+				.limit(2);
+			// As many times as the join is in the SQL: the paginated query has the posts both in the
+			// EXISTS that filters the page and in the outer query.
+			for (const [compile, times] of [
+				[() => query.toQuery().compile(), 2],
+				[() => query.toCountQuery().compile(), 1],
+				[() => query.toExistsQuery().compile(), 1],
+			] as const) {
+				Object.assign(calls, { profile: 0, posts: 0, comments: 0 });
+				compile();
+				assert.deepStrictEqual(calls, { profile: 1, posts: times, comments: times });
+			}
 		});
 
 		test("an ON callback's current condition is used on every compile", () => {
