@@ -851,6 +851,27 @@ interface LevelPlan {
 		| undefined;
 	readonly mapFns: readonly ((value: any) => any)[] | undefined;
 	readonly orderings: readonly OrderBy<any>[];
+	/**
+	 * Keeps this plan's entities in fast mode (see {@link warmShape}); built
+	 * from the first entity, and reset when the auto fields change.
+	 */
+	shape: object | undefined;
+	/** The auto fields {@link shape} was built with. */
+	shapeAutoFields: readonly AutoField[] | undefined;
+}
+
+/**
+ * Builds an object with `keys`, in order, so that V8 keeps objects later given
+ * the same keys in fast mode.
+ *
+ * Entities are built from `{}` one keyed store at a time.  Past about 20 keys,
+ * a keyed store that must create a new hidden-class transition moves the object
+ * to dictionary mode instead, which is slow to build and to read; one that
+ * follows an existing transition does not.  `Object.fromEntries` creates the
+ * transitions without that limit, and they live as long as the returned object.
+ */
+function warmShape(keys: readonly string[]): object {
+	return Object.fromEntries(keys.map((key) => [key, undefined]));
 }
 
 function prefixKeyBy(
@@ -1124,6 +1145,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					? ordering
 					: { ...ordering, key: applyPrefix(prefix, ordering.key as string) },
 			),
+			shape: undefined,
+			shapeAutoFields: undefined,
 		};
 	}
 
@@ -1231,6 +1254,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		const autoFields: AutoField[] = [];
+		// Whether these are the auto fields the plan's shape was built with.
+		const previous = plan.shapeAutoFields;
+		let same = previous !== undefined;
 		for (const inputKey of Object.keys(input)) {
 			// Exclude if its from a parent (not this prefix).
 			if (!hasPrefix(prefix, inputKey)) {
@@ -1249,7 +1275,14 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			}
 
 			// The output gets the unprefixed key.
+			same &&= previous![autoFields.length]?.key === unprefixedKey;
 			autoFields.push({ key: unprefixedKey, inputKey });
+		}
+
+		// Auto fields are every entity's first keys, so new ones need a new shape.
+		if (!same || previous!.length !== autoFields.length) {
+			plan.shape = undefined;
+			plan.shapeAutoFields = autoFields;
 		}
 
 		// Cache and return the auto-include fields
@@ -1329,6 +1362,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 				entity[key] = applyGroupedCollectionMode(attached, collection.mode, key);
 			}
+		}
+
+		if (plan.shape === undefined) {
+			plan.shape = warmShape(Object.keys(entity));
 		}
 
 		// Apply map functions if present
