@@ -231,6 +231,59 @@ describe("query-set: camel-case", () => {
 		]);
 	});
 
+	test("nested left joins with camelCase keys, emitted as a flat chain", async () => {
+		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
+			users: { id: number; username: string };
+			posts: { id: number; title: string; userId: number };
+			comments: { id: number; postId: number };
+		}>();
+
+		const query = querySet(camelDb)
+			.selectAs("user", camelDb.selectFrom("users").select(["id", "username"]))
+			.where("users.id", "<=", 2)
+			.leftJoinMany(
+				"userPosts",
+				({ eb, qs }) =>
+					qs(
+						eb.selectFrom("posts").select(["id", "title", "userId"]).where("id", "<=", 2),
+					).leftJoinMany(
+						"postComments",
+						({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "postId"])),
+						(join) =>
+							join.onRef("postComments.postId", "=", "userPosts.id").on("postComments.id", "<", 3),
+					),
+				"userPosts.userId",
+				"user.id",
+			);
+
+		// The plugin snake_cases the nested join's alias along with every reference to it.
+		const { sql } = query.toQuery().compile();
+		assert.match(
+			sql,
+			/\) as "user_posts\$\$post_comments" on "user_posts\$\$post_comments"\."post_id" = "user_posts"\."id"/,
+		);
+
+		assert.deepStrictEqual(await query.execute(), [
+			{ id: 1, username: "alice", userPosts: [] },
+			{
+				id: 2,
+				username: "bob",
+				userPosts: [
+					{
+						id: 1,
+						title: "Post 1",
+						userId: 2,
+						postComments: [
+							{ id: 1, postId: 1 },
+							{ id: 2, postId: 1 },
+						],
+					},
+					{ id: 2, title: "Post 2", userId: 2, postComments: [] },
+				],
+			},
+		]);
+	});
+
 	//
 	// toJoinedQuery
 	//

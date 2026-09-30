@@ -134,6 +134,7 @@ type Result = Array<{
       - [Supported join types](#supported-join-types)
       - [How it works (SQL generation)](#how-it-works-sql-generation)
         - [Isolation and prefixing](#isolation-and-prefixing)
+        - [Nested joins as a flat join chain](#nested-joins-as-a-flat-join-chain)
         - [Solving "row explosion" with pagination](#solving-row-explosion-with-pagination)
           - [Generated SQL strategy:](#generated-sql-strategy)
         - [Lateral joins](#lateral-joins)
@@ -412,6 +413,49 @@ INNER JOIN (
 
 The hydration layer receives rows like `{ id: 1, posts$$title: "..." }` and
 un-flattens them into `{ id: 1, posts: [{ title: "..." }] }`.
+
+##### Nested joins as a flat join chain
+
+A nested query set that has joins of its own would be a derived table
+containing a join, which SQLite materializes in full when it's on the right of
+a `LEFT JOIN`. So where it's an identity, its joins are hoisted into the parent
+query instead, aliased by their path; the output columns are the same.
+
+```ts
+querySet(db)
+	.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+	.leftJoinMany(
+		"posts",
+		({ eb, qs }) =>
+			qs(eb.selectFrom("posts").select(["id", "title", "userId"])).leftJoinMany(
+				"comments",
+				({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "postId"])),
+				"comments.postId",
+				"posts.id",
+			),
+		"posts.userId",
+		"user.id",
+	);
+```
+
+```sql
+SELECT
+  "user"."id", "user"."username",
+  "posts"."id" as "posts$$id", "posts"."title" as "posts$$title", ...,
+  "posts$$comments"."id" as "posts$$comments$$id", ...
+FROM (SELECT "id", "username" FROM "users") as "user"
+LEFT JOIN (SELECT "id", "title", "userId" FROM "posts") as "posts"
+  ON "posts"."userId" = "user"."id"
+LEFT JOIN (SELECT "id", "postId" FROM "comments") as "posts$$comments"
+  ON "posts$$comments"."postId" = "posts"."id"
+```
+
+The choice is made join by join: a join that can't be hoisted (raw SQL or a
+subquery in its ON, a lateral join, an inner or cross join under a left join, a
+left join whose ON doesn't reject a missing parent, or one whose hoisted columns
+the outer query names) stays in the nested query set's derived table without
+affecting its siblings. A nested query set with `.limit()`, `.offset()`,
+`.modifyFront()` or `.modifyEnd()` keeps its own derived table.
 
 ##### Solving "row explosion" with pagination
 
