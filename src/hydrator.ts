@@ -803,9 +803,15 @@ interface HydrationContext {
 
 	/**
 	 * Cache for auto-include fields keyed by prefix.
-	 * Maps: prefix -> [key, prefixed input key][]
+	 * Maps: prefix -> AutoField[]
 	 */
-	readonly autoFieldsCache: Map<string, (readonly [key: string, inputKey: string])[]>;
+	readonly autoFieldsCache: Map<string, readonly AutoField[]>;
+}
+
+/** An output key and the prefixed input key it is read from. */
+interface AutoField {
+	readonly key: string;
+	readonly inputKey: string;
 }
 
 /**
@@ -817,12 +823,15 @@ interface LevelPlan {
 	readonly prefix: string;
 	readonly keyBy: string | readonly string[];
 	/** Omitted fields are dropped. */
-	readonly fields: readonly (readonly [
-		key: string,
-		inputKey: string,
-		field: true | ((value: any) => unknown),
-	])[];
-	readonly extras: readonly (readonly [key: string, extra: (input: any) => unknown])[] | undefined;
+	readonly fields: readonly {
+		readonly key: string;
+		readonly inputKey: string;
+		/** Null includes the value as-is. */
+		readonly transform: ((value: any) => unknown) | null;
+	}[];
+	readonly extras:
+		| readonly { readonly key: string; readonly extra: (input: any) => unknown }[]
+		| undefined;
 	readonly extenders: ExtendersArray | undefined;
 	readonly collections:
 		| readonly {
@@ -1080,7 +1089,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		const plannedFields: LevelPlan["fields"][number][] = [];
 		for (const [key, field] of fields ?? []) {
 			if (field !== false) {
-				plannedFields.push([key, applyPrefix(prefix, key), field]);
+				plannedFields.push({
+					key,
+					inputKey: applyPrefix(prefix, key),
+					transform: field === true ? null : field,
+				});
 			}
 		}
 
@@ -1088,7 +1101,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			prefix,
 			keyBy: prefixKeyBy(prefix, keyBy),
 			fields: plannedFields,
-			extras: extras?.size ? Array.from(extras) : undefined,
+			extras: extras?.size ? Array.from(extras, ([key, extra]) => ({ key, extra })) : undefined,
 			extenders: extenders?.length ? extenders : undefined,
 			collections: collections?.size
 				? Array.from(collections, ([key, collection]) => ({
@@ -1192,11 +1205,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * parent, and not to any nested collection.  Does this once per hydration
 	 * (assumes all inputs have the same keys).
 	 */
-	#getAutoFields(
-		ctx: HydrationContext,
-		plan: LevelPlan,
-		input: unknown,
-	): (readonly [key: string, inputKey: string])[] {
+	#getAutoFields(ctx: HydrationContext, plan: LevelPlan, input: unknown): readonly AutoField[] {
 		const { prefix } = plan;
 
 		// Have we done this already?
@@ -1221,7 +1230,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			}
 		}
 
-		const autoFields: (readonly [key: string, inputKey: string])[] = [];
+		const autoFields: AutoField[] = [];
 		for (const inputKey of Object.keys(input)) {
 			// Exclude if its from a parent (not this prefix).
 			if (!hasPrefix(prefix, inputKey)) {
@@ -1240,7 +1249,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			}
 
 			// The output gets the unprefixed key.
-			autoFields.push([unprefixedKey, inputKey]);
+			autoFields.push({ key: unprefixedKey, inputKey });
 		}
 
 		// Cache and return the auto-include fields
@@ -1268,16 +1277,16 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		if (ctx.autoIncludeFields) {
 			const autoFields = this.#getAutoFields(ctx, plan, input);
 			for (let i = 0; i < autoFields.length; i++) {
-				const [key, inputKey] = autoFields[i]!;
+				const { key, inputKey } = autoFields[i]!;
 				entity[key] = row[inputKey];
 			}
 		}
 
 		// Indexed loops here and below: for-of allocates per entity.
 		for (let i = 0; i < fields.length; i++) {
-			const [key, inputKey, field] = fields[i]!;
+			const { key, inputKey, transform } = fields[i]!;
 			const value = row[inputKey];
-			entity[key] = field === true ? value : field(value);
+			entity[key] = transform === null ? value : transform(value);
 		}
 
 		if (extras || extenders) {
@@ -1285,7 +1294,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 			if (extras) {
 				for (let i = 0; i < extras.length; i++) {
-					const [key, extra] = extras[i]!;
+					const { key, extra } = extras[i]!;
 					entity[key] = extra(accessor as Input);
 				}
 			}
