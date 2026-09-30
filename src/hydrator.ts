@@ -852,12 +852,14 @@ interface LevelPlan {
 	readonly mapFns: readonly ((value: any) => any)[] | undefined;
 	readonly orderings: readonly OrderBy<any>[];
 	/**
-	 * Keeps this plan's entities in fast mode (see {@link warmShape}); built
-	 * from the first entity, and reset when the auto fields change.
+	 * Never read: holding it keeps alive the hidden-class transitions that this
+	 * plan's later entities follow, which keeps them in V8's fast mode (see
+	 * {@link warmShape}; `hydrator.fast-properties.test.ts` checks it works).
+	 * Built from the first entity; reset when the auto fields change.
 	 */
-	shape: object | undefined;
-	/** The auto fields {@link shape} was built with. */
-	shapeAutoFields: readonly AutoField[] | undefined;
+	shapeAnchor: object | undefined;
+	/** The auto fields {@link shapeAnchor} was built with. */
+	shapeAnchorAutoFields: readonly AutoField[] | undefined;
 }
 
 /**
@@ -1145,8 +1147,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					? ordering
 					: { ...ordering, key: applyPrefix(prefix, ordering.key as string) },
 			),
-			shape: undefined,
-			shapeAutoFields: undefined,
+			shapeAnchor: undefined,
+			shapeAnchorAutoFields: undefined,
 		};
 	}
 
@@ -1254,8 +1256,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		const autoFields: AutoField[] = [];
-		// Whether these are the auto fields the plan's shape was built with.
-		const previous = plan.shapeAutoFields;
+		// Whether these are the auto fields the plan's shape anchor was built with.
+		const previous = plan.shapeAnchorAutoFields;
 		let same = previous !== undefined;
 		for (const inputKey of Object.keys(input)) {
 			// Exclude if its from a parent (not this prefix).
@@ -1279,10 +1281,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			autoFields.push({ key: unprefixedKey, inputKey });
 		}
 
-		// Auto fields are every entity's first keys, so new ones need a new shape.
+		// Auto fields are every entity's first keys, so new ones need a new anchor.
 		if (!same || previous!.length !== autoFields.length) {
-			plan.shape = undefined;
-			plan.shapeAutoFields = autoFields;
+			plan.shapeAnchor = undefined;
+			plan.shapeAnchorAutoFields = autoFields;
 		}
 
 		// Cache and return the auto-include fields
@@ -1364,8 +1366,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			}
 		}
 
-		if (plan.shape === undefined) {
-			plan.shape = warmShape(Object.keys(entity));
+		if (plan.shapeAnchor === undefined) {
+			plan.shapeAnchor = warmShape(Object.keys(entity));
 		}
 
 		// Apply map functions if present
