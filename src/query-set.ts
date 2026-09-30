@@ -3038,13 +3038,13 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// Strict null checks: an explicit limit/offset of 0 must still be applied.
 		const hasPagination = limit !== null || offset !== null;
 
-		// If we have no joins (no row explosion) and no ordering (therefore nothing referencing the
-		// baseAlias) we can do less nesting.  Write query sets are excluded: their CTEs live on the
+		// If we have no joins (no row explosion) and no emitted ordering (therefore nothing
+		// referencing the baseAlias) we can do less nesting.  Write query sets are excluded: their CTEs live on the
 		// writeQueryCreator (not the base query), so the base query cannot be returned directly.
 		if (
 			!joinCollections.size &&
-			!orderBy.length &&
-			!orderByKeys &&
+			// Unpaginated subqueries never emit their ordering (see #toJoinedQuery).
+			((!orderBy.length && !orderByKeys) || ((isNested || isLocalSubquery) && !hasPagination)) &&
 			!this.#props.writeQueryCreator
 		) {
 			// No limit and offset and no joins means we can return as is for any type of query builder.
