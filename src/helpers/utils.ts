@@ -149,3 +149,33 @@ export function byteLength(input: string): number {
 	}
 	return bytes;
 }
+
+/**
+ * Calls `visit` on every operation node within `node` (a node, an array of nodes, or anything
+ * else, which is ignored), depth first, without descending into the data of value nodes.  Stops as
+ * soon as `visit` returns true, and returns whether it did.
+ */
+export function someOperationNode(
+	node: unknown,
+	visit: (node: k.OperationNode) => boolean | void,
+): boolean {
+	if (Array.isArray(node)) {
+		return node.some((item) => someOperationNode(item, visit));
+	}
+	if (typeof node !== "object" || node === null || !("kind" in node)) {
+		return false;
+	}
+	const n = node as k.OperationNode;
+	if (visit(n)) {
+		return true;
+	}
+	if (k.ValueNode.is(n) || k.PrimitiveValueListNode.is(n)) {
+		return false;
+	}
+	for (const key in n) {
+		if (someOperationNode((n as unknown as Record<string, unknown>)[key], visit)) {
+			return true;
+		}
+	}
+	return false;
+}
