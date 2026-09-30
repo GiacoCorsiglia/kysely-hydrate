@@ -777,6 +777,71 @@ interface Comment {
 }
 
 ////////////////////////////////////////////////////////////
+// Section 13b: Join Methods - adjacent joins are independent
+////////////////////////////////////////////////////////////
+
+// A join's ON clause (and a lateral join's body) sees only the base query and
+// the query set being joined, never an adjacent join: count, exists and
+// paginated queries drop or rewrite many-joins, so a reference to one would
+// break them.  Nest the join instead.
+
+{
+	const users = querySet(db).selectAs("user", db.selectFrom("users").select(["id"]));
+	const posts = querySet(db).selectAs("posts", db.selectFrom("posts").select(["id", "user_id"]));
+	const profile = querySet(db).selectAs(
+		"profile",
+		db.selectFrom("profiles").select(["id", "user_id"]),
+	);
+	const comments = querySet(db).selectAs(
+		"comments",
+		db.selectFrom("comments").select(["id", "post_id"]),
+	);
+	const withPosts = users.leftJoinMany("posts", posts, "posts.user_id", "user.id");
+
+	// Invalid: a one-join referencing an adjacent many-join
+	// @ts-expect-error - "posts" is not in scope
+	withPosts.leftJoinOne("profile", profile, "profile.user_id", "posts.user_id");
+
+	// Invalid: the same with a callback
+	withPosts.leftJoinOne("profile", profile, (j) =>
+		// @ts-expect-error - "posts" is not in scope
+		j.onRef("profile.user_id", "=", "posts.user_id"),
+	);
+
+	// Invalid: a filtering many-join referencing an adjacent many-join
+	// @ts-expect-error - "posts" is not in scope
+	withPosts.innerJoinMany("comments", comments, "comments.post_id", "posts.id");
+
+	// Invalid: a join referencing an adjacent one-join
+	users
+		.leftJoinOne("profile", profile, "profile.user_id", "user.id")
+		// @ts-expect-error - "profile" is not in scope
+		.leftJoinMany("posts", posts, "posts.user_id", "profile.user_id");
+
+	// Invalid: a lateral join's body referencing an adjacent many-join
+	withPosts.leftJoinLateralMany(
+		"comments",
+		({ eb, qs }) =>
+			qs(
+				eb
+					.selectFrom("comments")
+					.select(["id", "post_id"])
+					// @ts-expect-error - "posts" is not in scope
+					.whereRef("comments.post_id", "=", "posts.id"),
+			),
+		(j) => j.onTrue(),
+	);
+
+	// Valid: nesting the join instead
+	users.leftJoinMany(
+		"posts",
+		posts.innerJoinMany("comments", comments, "comments.post_id", "posts.id"),
+		"posts.user_id",
+		"user.id",
+	);
+}
+
+////////////////////////////////////////////////////////////
 // Section 14: Attach Methods - attachMany
 ////////////////////////////////////////////////////////////
 
