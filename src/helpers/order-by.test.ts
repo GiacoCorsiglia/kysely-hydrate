@@ -572,6 +572,58 @@ describe("sortBy", () => {
 	});
 });
 
+describe("sortBy agrees with sqlCompare", () => {
+	interface Row {
+		readonly value: unknown;
+		readonly tie: number;
+		readonly i: number;
+	}
+
+	/** Written independently of `sortBy`: `Array#sort` is stable. */
+	function referenceSort<T>(rows: readonly T[], orderings: readonly OrderBy<T>[]): T[] {
+		const compareBy = ({ key, direction, nulls }: OrderBy<T>, x: T, y: T) => {
+			const a = typeof key === "function" ? key(x) : x[key];
+			const b = typeof key === "function" ? key(y) : y[key];
+			const aNull = a === null || a === undefined;
+			const bNull = b === null || b === undefined;
+			if (aNull || bNull) {
+				const nullsFirst = (nulls ?? (direction === "asc" ? "last" : "first")) === "first";
+				return aNull === bNull ? 0 : aNull === nullsFirst ? -1 : 1;
+			}
+			return direction === "asc" ? sqlCompare(a, b) : sqlCompare(b, a);
+		};
+		return rows.slice().sort((x, y) => orderings.reduce((cmp, o) => cmp || compareBy(o, x, y), 0));
+	}
+
+	// Strings and numbers, with and without nulls, take the direct comparison.
+	const columns: Record<string, readonly unknown[]> = {
+		strings: ["b", "a", "", "B", "\u{1F600}", "\uE000", "ab", "a"],
+		"strings with nulls": ["b", null, "a", undefined, "", "a", null],
+		numbers: [3, -0, 0, Infinity, -Infinity, 1.5, -2, 3, Number.MAX_VALUE],
+		"numbers with nulls": [2, null, 1, undefined, -0, 0, 1],
+		"numbers with NaN": [2, NaN, 1, NaN, -1],
+		"numbers and bigints": [2, 1n, 3, 2n, 0],
+		"numbers and strings": [1, "1", 0, "a", 2],
+		"only nulls": [null, undefined, null],
+	};
+
+	for (const [name, values] of Object.entries(columns)) {
+		for (const direction of ["asc", "desc"] as const) {
+			for (const nulls of [undefined, "first", "last"] as const) {
+				it(`${name}, ${direction}, nulls ${nulls ?? "default"}`, () => {
+					// `i` tells equal rows apart, so the comparison checks stability.
+					const rows: Row[] = values.map((value, i) => ({ value, tie: i % 2, i }));
+					const byValue: OrderBy<Row> = { key: "value", direction, nulls };
+					const byTie: OrderBy<Row> = { key: "tie", direction: "desc" };
+					for (const orderings of [[byValue], [byValue, byTie]]) {
+						assert.deepEqual(sortBy(rows, orderings), referenceSort(rows, orderings));
+					}
+				});
+			}
+		}
+	}
+});
+
 describe("sortBy key extraction", () => {
 	interface Row {
 		readonly id: number;
@@ -647,6 +699,8 @@ describe("sortBy key extraction", () => {
 		const sorted = sortBy(rows, [{ key: "score", direction: "desc" }]);
 		assert.deepEqual(rows, original);
 		assert.notEqual(sorted, rows);
+		// Nor return it when it is already in order.
+		assert.notEqual(sortBy(rows, [{ key: "id", direction: "asc" }]), rows);
 	});
 
 	it("should handle empty orderings and trivial inputs", () => {

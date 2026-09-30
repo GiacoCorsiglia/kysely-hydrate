@@ -335,6 +335,54 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 	return sqlCompare(a, b) * plan.direction;
 }
 
+type IndexCompare = (x: number, y: number) => number;
+
+/**
+ * Compares rows by index into an extracted column.  Columns whose non-null
+ * values are all strings, or all non-NaN numbers, compare with `<` and `>`
+ * directly, as `sqlCompare` would after ranking their types.
+ */
+function columnComparator(column: readonly unknown[], plan: ColumnPlan): IndexCompare {
+	let allStrings = true;
+	let allNumbers = true;
+	let hasNulls = false;
+	for (let i = 0; i < column.length && (allStrings || allNumbers); i++) {
+		const value = column[i];
+		if (isNil(value)) {
+			hasNulls = true;
+		} else {
+			allStrings &&= typeof value === "string";
+			allNumbers &&= typeof value === "number" && value === value;
+		}
+	}
+	if (!allStrings && !allNumbers) {
+		return (x, y) => compareColumn(column[x], column[y], plan);
+	}
+
+	const values = column as readonly (string | number | null | undefined)[];
+	const { direction } = plan;
+	// Separate from the nullable variant below, which measured slower without nulls.
+	if (!hasNulls) {
+		return (x, y) => {
+			const a = values[x]!;
+			const b = values[y]!;
+			return a < b ? -direction : a > b ? direction : 0;
+		};
+	}
+	const nulls = plan.nullsFirst ? -1 : 1;
+	return (x, y) => {
+		const a = values[x];
+		const b = values[y];
+		if (isNil(a)) {
+			return isNil(b) ? 0 : nulls;
+		}
+		if (isNil(b)) {
+			return -nulls;
+		}
+		return a < b ? -direction : a > b ? direction : 0;
+	};
+}
+
 /**
  * Sorts rows by the given orderings into a new array. Keys are extracted once
  * per row rather than on every comparison; for function keys the hydrator
@@ -355,30 +403,46 @@ export function sortBy<T>(
 	// One key array per ordering. Plain loops: the hydrator calls this per
 	// parent group of 10-100 rows, where map/Array.from closures measured
 	// ~1.5x the whole sort. Per-row key arrays measured 1.5-2x slower.
-	const columns: unknown[][] = new Array(orderings.length);
+	const compares: IndexCompare[] = new Array(orderings.length);
 	for (let c = 0; c < orderings.length; c++) {
 		const key = orderings[c]!.key;
 		const column = new Array<unknown>(n);
 		for (let i = 0; i < n; i++) {
 			column[i] = getValue(rows[i]!, key);
 		}
-		columns[c] = column;
+		compares[c] = columnComparator(column, plans[c]!);
+	}
+
+	const [first] = compares;
+	// A single ordering skips the loop.
+	const compare: IndexCompare =
+		compares.length === 1
+			? (x, y) => first!(x, y) || x - y
+			: (x, y) => {
+					for (let i = 0; i < compares.length; i++) {
+						const cmp = compares[i]!(x, y);
+						if (cmp !== 0) {
+							return cmp;
+						}
+					}
+					// Keep equal rows in input order.
+					return x - y;
+				};
+
+	// Rows often arrive in order already; then skip the sort and permutation.
+	let inOrder = 1;
+	while (inOrder < n && compare(inOrder - 1, inOrder) <= 0) {
+		inOrder++;
+	}
+	if (inOrder === n) {
+		return rows.slice();
 	}
 
 	const indices = new Array<number>(n);
 	for (let i = 0; i < n; i++) {
 		indices[i] = i;
 	}
-	indices.sort((x, y) => {
-		for (let i = 0; i < columns.length; i++) {
-			const cmp = compareColumn(columns[i]![x], columns[i]![y], plans[i]!);
-			if (cmp !== 0) {
-				return cmp;
-			}
-		}
-		// Keep equal rows in input order.
-		return x - y;
-	});
+	indices.sort(compare);
 
 	const sorted = new Array<T>(n);
 	for (let i = 0; i < n; i++) {
