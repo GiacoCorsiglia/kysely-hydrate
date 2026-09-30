@@ -337,24 +337,23 @@ function compareColumn(a: unknown, b: unknown, plan: ColumnPlan): number {
 
 type IndexCompare = (x: number, y: number) => number;
 
+/** What a column's values turned out to be, gathered as `sortBy` extracts them. */
+interface ColumnTypes {
+	readonly allStrings: boolean;
+	readonly allNumbers: boolean;
+	readonly hasNulls: boolean;
+}
+
 /**
  * Compares rows by index into an extracted column.  Columns whose non-null
  * values are all strings, or all non-NaN numbers, compare with `<` and `>`
  * directly, as `sqlCompare` would after ranking their types.
  */
-function columnComparator(column: readonly unknown[], plan: ColumnPlan): IndexCompare {
-	let allStrings = true;
-	let allNumbers = true;
-	let hasNulls = false;
-	for (let i = 0; i < column.length && (allStrings || allNumbers); i++) {
-		const value = column[i];
-		if (isNil(value)) {
-			hasNulls = true;
-		} else {
-			allStrings &&= typeof value === "string";
-			allNumbers &&= typeof value === "number" && value === value;
-		}
-	}
+function columnComparator(
+	column: readonly unknown[],
+	plan: ColumnPlan,
+	{ allStrings, allNumbers, hasNulls }: ColumnTypes,
+): IndexCompare {
 	if (!allStrings && !allNumbers) {
 		return (x, y) => compareColumn(column[x], column[y], plan);
 	}
@@ -407,10 +406,21 @@ export function sortBy<T>(
 	for (let c = 0; c < orderings.length; c++) {
 		const key = orderings[c]!.key;
 		const column = new Array<unknown>(n);
+		// Classified while extracting, rather than in a second pass.
+		let allStrings = true;
+		let allNumbers = true;
+		let hasNulls = false;
 		for (let i = 0; i < n; i++) {
-			column[i] = getValue(rows[i]!, key);
+			const value = getValue(rows[i]!, key);
+			column[i] = value;
+			if (isNil(value)) {
+				hasNulls = true;
+			} else {
+				allStrings &&= typeof value === "string";
+				allNumbers &&= typeof value === "number" && value === value;
+			}
 		}
-		compares[c] = columnComparator(column, plans[c]!);
+		compares[c] = columnComparator(column, plans[c]!, { allStrings, allNumbers, hasNulls });
 	}
 
 	const [first] = compares;
@@ -430,6 +440,8 @@ export function sortBy<T>(
 				};
 
 	// Rows often arrive in order already; then skip the sort and permutation.
+	// Rows in order but the last pay for this scan and TimSort's own, which
+	// measured no slower than before the check existed.
 	let inOrder = 1;
 	while (inOrder < n && compare(inOrder - 1, inOrder) <= 0) {
 		inOrder++;

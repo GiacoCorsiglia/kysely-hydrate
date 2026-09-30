@@ -60,6 +60,9 @@ function sorting(rows: Row[], orderings: OrderBy<Row>[], getValue?: GetValue): W
 const rows100 = makeRows(100);
 const rows1k = makeRows(1000);
 const rows1kSorted = rows1k.slice().sort((a, b) => a.k0 - b.k0);
+// In order but for the smallest row, moved last: a check for ordered input
+// scans all the way before finding out, then the sort scans again.
+const lastOutOfPlace = (sorted: Row[]) => [...sorted.slice(1), sorted[0]!];
 
 const asc = (key: keyof Row): OrderBy<Row> => ({ key, direction: "asc" });
 const byK0 = [asc("k0")];
@@ -99,6 +102,7 @@ group({
 group({
 	"sortBy 1k random rows, 1 ordering": sorting(rows1k, byK0),
 	"sortBy 1k rows already in order": sorting(rows1kSorted, byK0),
+	"sortBy 1k rows in order but the last": sorting(lastOutOfPlace(rows1kSorted), byK0),
 	"sortBy 1k rows in reverse order": sorting(rows1kSorted.slice().reverse(), byK0),
 	"sortBy 1k rows with equal keys": sorting(
 		rows1k.map((row) => ({ ...row, k0: 0 })),
@@ -113,6 +117,15 @@ group({
 			[`sortBy 1k rows, ${n} orderings decided by the last`, sorting(rows1k, decidedByLast(n))],
 		]),
 	),
+});
+
+// The same at a typical parent group's size, where the scan is a larger share.
+const rows20 = makeRows(20);
+const rows20Sorted = rows20.slice().sort((a, b) => a.k0 - b.k0);
+group({
+	"sortBy 20 random rows": sorting(rows20, byK0),
+	"sortBy 20 rows already in order": sorting(rows20Sorted, byK0),
+	"sortBy 20 rows in order but the last": sorting(lastOutOfPlace(rows20Sorted), byK0),
 });
 
 /**
