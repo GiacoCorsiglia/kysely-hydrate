@@ -3233,13 +3233,15 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isOrdered: boolean = false,
 	): AnySelectQueryBuilder {
 		const { joinCollections } = this.#props;
-		// The joins added to this query itself (filtering many-joins get an EXISTS subquery each).
+		// Every join this query emits.  (A filtering many-join's EXISTS subquery is a scope of its own,
+		// but an unqualified name in it may resolve in this one.)
 		const scope = this.#ownJoinScope(
 			isOrdered,
 			false,
 			(key, collection) =>
 				this.#isCollectionCardinalityOne(collection) ||
-				this.#isReducedJoin(key, collection, isReduced),
+				this.#isReducedJoin(key, collection, isReduced) ||
+				isFilteringJoin(collection),
 		);
 
 		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
@@ -3276,7 +3278,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 									qb,
 									key,
 									collection,
-									this.#joinScope([[key, collection]]),
+									this.#joinScope([[key, collection, scope.ons.get(key)]]),
 								),
 							),
 					),

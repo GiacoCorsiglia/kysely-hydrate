@@ -348,6 +348,22 @@ describe("query-set: flat join chains", () => {
 			]);
 		});
 
+		test("an unqualified column in an EXISTS subquery's ON stops hoisting into the count query", () => {
+			const profileWithOwner = () =>
+				profiles().innerJoinOne("owner", users(), "owner.id", "profile.user_id");
+			const count = (on: (join: any) => any) =>
+				users()
+					.innerJoinOne("profile", profileWithOwner(), "profile.user_id", "user.id")
+					.innerJoinMany("posts", posts(), on)
+					.toCountQuery()
+					.compile().sql;
+			const flat = count((join) => join.onRef("posts.user_id", "=", "user.id"));
+			assert.match(flat, /\) as "profile\$\$owner"/);
+			const nested = count((join) => join.onRef("title", "=", "user.username"));
+			assert.doesNotMatch(nested, /\) as "profile\$\$owner"/);
+			assert.match(nested, /\) as "owner"/);
+		});
+
 		test("raw SQL is taken to name an unqualified column unless every name in it is qualified", () => {
 			const withOn = (on: (join: any) => any) =>
 				users().leftJoinMany("posts", postsWithComments(), on);
@@ -364,6 +380,11 @@ describe("query-set: flat join chains", () => {
 			]);
 			const base = () =>
 				users().leftJoinMany("posts", postsWithComments(), "posts.user_id", "user.id");
+			assert.deepStrictEqual(relations(base().modifyEnd(sql`for no key update skip locked`)), [
+				"user",
+				"posts",
+				"posts$$comments",
+			]);
 			assert.deepStrictEqual(relations(base().modifyEnd(sql`order by username`)), [
 				"user",
 				"post",

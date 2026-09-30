@@ -141,9 +141,10 @@ export class HoistedReferences {
 /** Words raw SQL may contain besides names; any other bare word is taken for a column. */
 const SQL_WORDS = new Set(
 	(
-		"all and any as asc between by case collate desc distinct else end escape exists false first " +
-		"for from glob ilike in is last like limit locked not nowait null nulls of offset on or " +
-		"order regexp share similar skip some then to true unknown update when"
+		"all and any as asc between by case collate desc distinct else end escape exists false fetch " +
+		"first for from glob ilike in is key last like limit locked next no not nowait null nulls of " +
+		"offset on only or order regexp row rows share similar skip some then ties to true unknown " +
+		"update when with"
 	).split(" "),
 );
 
