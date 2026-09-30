@@ -4,9 +4,7 @@ import { UnexpectedComplexAliasError, UnexpectedSelectAllError } from "./errors.
 import { type ApplyPrefix, applyPrefix } from "./prefixes.ts";
 import { type AnyQueryBuilder, type AnySelectQueryBuilder, assertNever } from "./utils.ts";
 
-function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefined {
-	const node = qb.toOperationNode();
-
+function getSelections(node: AliasedQuery["node"]): readonly k.SelectionNode[] | undefined {
 	switch (node.kind) {
 		case "SelectQueryNode":
 			return node.selections;
@@ -19,21 +17,31 @@ function getSelections(qb: AnyQueryBuilder): readonly k.SelectionNode[] | undefi
 	}
 }
 
+export type AliasedQuery = ReturnType<typeof aliasQuery>;
+
+/**
+ * Converts a query to its node once, so joining it and hoisting its selections
+ * don't each re-run its plugins.
+ */
+export function aliasQuery(qb: AnyQueryBuilder, alias: string) {
+	const node = qb.toOperationNode();
+	const aliased = new k.AliasedExpressionWrapper<any, string>(new k.ExpressionWrapper(node), alias);
+	return { node, alias, aliased };
+}
+
 export function applyHoistedSelections(
 	toQb: AnySelectQueryBuilder,
-	fromQb: AnyQueryBuilder,
-	alias: string,
+	from: AliasedQuery,
 ): AnySelectQueryBuilder {
-	return applyHoistedPrefixedSelections("", toQb, fromQb, alias);
+	return applyHoistedPrefixedSelections("", toQb, from);
 }
 
 export function applyHoistedPrefixedSelections(
 	prefix: string,
 	toQb: AnySelectQueryBuilder,
-	fromQb: AnyQueryBuilder,
-	alias: string,
+	from: AliasedQuery,
 ) {
-	const hoistedSelections = hoistAndPrefixSelections(prefix, fromQb, alias);
+	const hoistedSelections = hoistAndPrefixSelections(prefix, from);
 	return toQb.select(hoistedSelections);
 }
 
@@ -41,18 +49,21 @@ export function applyHoistedPrefixedSelections(
  * Produces selections for a parent query to select everything selected in a
  * subquery, but aliased with the given prefix.
  */
-export function hoistAndPrefixSelections(prefix: string, qb: AnyQueryBuilder, alias: string) {
-	const selections = getSelections(qb);
+export function hoistAndPrefixSelections(prefix: string, { node, alias }: AliasedQuery) {
+	const selections = getSelections(node);
 	if (!selections) {
 		return [];
 	}
 
-	const eb = k.expressionBuilder<any, any>();
+	// Built directly: parsing `"alias.name"` is slow and misreads a dotted name.
+	const table = k.TableNode.create(alias);
 
 	return selections.map((selectionNode) => {
 		const name = extractSelectionName(selectionNode);
 
-		const referenceExpression = eb.ref(`${alias}.${name}`);
+		const referenceExpression = new k.ExpressionWrapper(
+			k.ReferenceNode.create(k.ColumnNode.create(name), table),
+		);
 
 		return new PrefixedAliasedExpression(referenceExpression, prefix, name);
 	});

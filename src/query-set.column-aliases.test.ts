@@ -37,6 +37,27 @@ describe("query-set: column-aliases", () => {
 		]);
 	});
 
+	test("execute: aliases containing dots are not read as schema.table.column", async () => {
+		const users = await querySet(db)
+			.selectAs(
+				"user",
+				db.selectFrom("users").select(["id", "username as a.b"]).where("id", "=", 2),
+			)
+			.innerJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "user_id", "title as t.x"])),
+				"posts.user_id",
+				"user.id",
+			)
+			// Pagination re-hoists the base selections through a wrapper.
+			.limit(1)
+			.execute();
+
+		assert.strictEqual(users[0]!["a.b"], "bob");
+		assert.ok(users[0]!.posts.length > 0);
+		assert.ok(users[0]!.posts.every((post) => typeof post["t.x"] === "string"));
+	});
+
 	test("execute: innerJoinMany with column aliases hydrates correctly", async () => {
 		const users = await querySet(db)
 			.selectAs(
