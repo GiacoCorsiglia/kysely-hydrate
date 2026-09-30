@@ -1851,9 +1851,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * a lateral join, an inner or cross join under a left join, a left join whose ON doesn't reject
 	 * a missing parent, or one whose hoisted columns the outer query names) stays in the derived
 	 * table without affecting its siblings, except those it may name, which stay with it.  A nested
-	 * query set with `.limit()`, `.offset()`, `.modifyFront()` or `.modifyEnd()` keeps its own
-	 * derived table, and nothing is hoisted into a query whose ON clauses or modifiers have an
-	 * unqualified column (raw SQL counts unless every name in it is qualified).
+	 * query set with `.limit()`, `.offset()`, `.modifyFront()` or `.modifyEnd()`, or built on a
+	 * Kysely instance with other plugins than its parent's, keeps its own derived table, and
+	 * nothing is hoisted into a query whose ON clauses or modifiers have an unqualified column (raw
+	 * SQL counts unless every name in it is qualified).
 	 *
 	 * @param key - The key name for the nested array in the output.
 	 * @param querySet - A nested query set or factory function.
@@ -2665,6 +2666,10 @@ type JoinCondition = AnyJoinArgsTail | k.OperationNode | null;
  */
 const isLateral = (method: JoinMethod): boolean => method.endsWith("Lateral");
 
+/** The lateral variant of a join method. */
+const toLateral = (method: JoinMethod): JoinMethod =>
+	isLateral(method) ? method : (`${method}Lateral` as JoinMethod);
+
 /** Adds a join of `from` to `qb` with the given method and condition. */
 function addJoin(
 	qb: AnySelectQueryBuilder,
@@ -2918,7 +2923,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		const condition = scope.ons.get(key) ?? collection.args;
 		const [joined, selections] = nestedQuery
 			? joinDerived(qb, key, collection.method, condition, nestedQuery)
-			: collection.querySet.#joinAs(qb, key, collection.method, condition, (child) =>
+			: collection.querySet.#joinAs(this, qb, key, collection.method, condition, (child) =>
 					scope.references.isReferenced(key, child),
 				);
 		return joined.select(selections);
@@ -3008,6 +3013,17 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
+	 * Whether this query set's queries run the same plugins as `parent`'s.  In its derived table,
+	 * this query set's own clauses (its joins' ON) are transformed by its plugins; hoisted into
+	 * `parent`'s query, they'd only be transformed by `parent`'s.
+	 */
+	#runsPluginsOf(parent: QuerySetImpl): boolean {
+		const own = this.#props.db.getExecutor().plugins;
+		const theirs = parent.#props.db.getExecutor().plugins;
+		return own.length === theirs.length && own.every((plugin, i) => plugin === theirs[i]);
+	}
+
+	/**
 	 * Joins this query set into `qb` as the relation `alias`, with `method` and `condition`.
 	 * Returns the query and the selections hoisting this query set's columns under the prefix
 	 * `alias$$`, in the order its own query would select them; the caller adds them.
@@ -3016,7 +3032,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * `A ⋈p (B ⋈q C)` becomes `A ⋈p B ⋈q' C`, with the base B joined as `alias`, its join C as
 	 * `alias$$key`, and q' the condition q with its tables renamed to match.  SQLite never flattens
 	 * a derived table that is a join on the right of a LEFT JOIN, so it would otherwise materialize
-	 * it in full.  Output column names are the same either way, so hydration is unaffected.
+	 * it in full.  Output column names are the same either way, so hydration is unaffected.  Under a
+	 * lateral join, the hoisted joins are lateral too: their queries may name the relations before it,
+	 * as they could from inside its derived table.
 	 *
 	 * The choice is made per join: a join that can't be hoisted stays with the base in a derived
 	 * table aliased `alias` (inside which its own joins are again emitted as flat as they can be),
@@ -3034,19 +3052,22 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * - a later join that stays in the derived table may name it: its ON names it (or anything,
 	 *   through raw SQL or an unqualified column), or it's a lateral join.
 	 *
-	 * The whole query set keeps its derived table when it can't be opened (see {@link #canOpen}).
+	 * The whole query set keeps its derived table when it can't be opened (see {@link #canOpen}), or
+	 * doesn't run the same plugins as `parent`.
 	 *
+	 * @param parent - The query set whose query `qb` is (or which is hoisted into it).
 	 * @param isReferenced - Whether the scope refers to a hoisted column of this query set's join
 	 *   `key` through `alias` (as `alias.key$$…`), so that join must stay in the derived table.
 	 */
 	#joinAs(
+		parent: QuerySetImpl,
 		qb: AnySelectQueryBuilder,
 		alias: string,
 		method: JoinMethod,
 		condition: JoinCondition,
 		isReferenced: (key: string) => boolean,
 	): [AnySelectQueryBuilder, HoistedSelections] {
-		if (!this.#canOpen()) {
+		if (!this.#canOpen() || !this.#runsPluginsOf(parent)) {
 			return joinDerived(qb, alias, method, condition, this.#toQuery(true, true));
 		}
 
@@ -3125,9 +3146,12 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			const own = new HoistedReferences().scan(on, key);
 			let hoisted;
 			[qb, hoisted] = collection.querySet.#joinAs(
+				this,
 				qb,
 				prefix + key,
-				collection.method,
+				// Under a lateral join, the join's query may name the relations before it, as it could
+				// from inside this query set's lateral derived table.
+				isLateral(method) ? toLateral(collection.method) : collection.method,
 				hoistedOn,
 				(child) => own.isReferenced(key, child),
 			);

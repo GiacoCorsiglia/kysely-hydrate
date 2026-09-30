@@ -284,6 +284,48 @@ describe("query-set: camel-case", () => {
 		]);
 	});
 
+	test("a nested query set with other plugins than its parent keeps its derived table", async () => {
+		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
+			posts: { id: number; userId: number };
+			comments: { id: number; postId: number };
+		}>();
+
+		// Only the nested query set snake_cases, so its own join's ON must stay in its query.
+		const posts = querySet(camelDb)
+			.selectAs("post", camelDb.selectFrom("posts").select(["id", "userId"]))
+			.leftJoinMany(
+				"comments",
+				({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "postId"])),
+				"comments.postId",
+				"post.id",
+			);
+		const query = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id"]))
+			.where("users.id", "in", [1, 2])
+			.leftJoinMany("posts", posts, "posts.user_id" as any, "user.id");
+
+		assert.doesNotMatch(query.toQuery().compile().sql, /\) as "posts\$\$comments"/);
+		assert.deepStrictEqual(await query.execute(), [
+			{ id: 1, posts: [] },
+			{
+				id: 2,
+				posts: [
+					{
+						id: 1,
+						user_id: 2,
+						comments: [
+							{ id: 1, post_id: 1 },
+							{ id: 2, post_id: 1 },
+						],
+					},
+					{ id: 2, user_id: 2, comments: [{ id: 3, post_id: 2 }] },
+					{ id: 5, user_id: 2, comments: [{ id: 5, post_id: 5 }] },
+					{ id: 12, user_id: 2, comments: [] },
+				],
+			},
+		]);
+	});
+
 	//
 	// toJoinedQuery
 	//

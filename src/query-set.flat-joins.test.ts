@@ -380,17 +380,45 @@ describe("query-set: flat join chains", () => {
 			]);
 			const base = () =>
 				users().leftJoinMany("posts", postsWithComments(), "posts.user_id", "user.id");
-			assert.deepStrictEqual(relations(base().modifyEnd(sql`for no key update skip locked`)), [
+			assert.deepStrictEqual(relations(base().modifyEnd(sql`limit 10 /* it's */ -- '`)), [
 				"user",
 				"posts",
 				"posts$$comments",
 			]);
-			assert.deepStrictEqual(relations(base().modifyEnd(sql`order by username`)), [
-				"user",
-				"post",
-				"comments",
-				"posts",
-			]);
+			const nested = ["user", "post", "comments", "posts"];
+			assert.deepStrictEqual(relations(base().modifyEnd(sql`order by username`)), nested);
+			// `key`, `first`, `update` and the like can name a column in SQLite or Postgres.
+			assert.deepStrictEqual(
+				relations(base().modifyEnd(sql`for no key update skip locked`)),
+				nested,
+			);
+			// A quote in a comment doesn't hide what follows it.
+			for (const text of [`/* ' */ = username /* ' */`, `/* /* */ ' */ = username /* ' */`]) {
+				assert.deepStrictEqual(
+					relations(withOn((join) => join.on(sql`${sql.ref("posts.user_id")} ${sql.raw(text)}`))),
+					nested,
+				);
+			}
+		});
+
+		test("raw SQL naming a column that's also a SQL word keeps the count query's joins", async () => {
+			// In the EXISTS subquery, `key` isn't a column of `posts`, so it names the user's; SQLite
+			// lets an ON clause name any table of the FROM clause, so a hoisted `posts$$comments.key`
+			// would silently win.
+			const query = qs
+				.selectAs("user", db.selectFrom("users").select(["id", "id as key"]))
+				.innerJoinMany(
+					"posts",
+					posts().leftJoinMany(
+						"comments",
+						qs.selectAs("comment", db.selectFrom("comments").select(["id", "post_id as key"])),
+						"comments.key",
+						"post.id",
+					),
+					(join) => join.on(sql`${sql.ref("posts.user_id")} = key`),
+				);
+			assert.strictEqual(await query.executeCount(Number), 9);
+			assert.strictEqual((await query.execute()).length, 9);
 		});
 
 		test("modifiers on a nested set keep its derived table", () => {
@@ -1132,6 +1160,48 @@ describe("query-set: flat join chains", () => {
 								),
 							(join) => join.onTrue(),
 						),
+			},
+			"lateral(L) whose join names the top level": {
+				// The comments are hoisted as a lateral join, so they can still name `user`.
+				flat: true,
+				pgOnly: true,
+				build: (n) =>
+					users()
+						.where("users.id", "<=", 6)
+						.leftJoinLateralMany(
+							"posts",
+							({ eb, qs }) =>
+								n(
+									qs(
+										eb
+											.selectFrom("posts")
+											.select(["id", "title", "user_id"])
+											.whereRef("posts.user_id", "=", "user.id"),
+									).leftJoinMany(
+										"comments",
+										comments().where(
+											sql<boolean>`${sql.ref("comments.user_id")} <> ${sql.ref("user.id")}`,
+										),
+										"comments.post_id",
+										"posts.id",
+									),
+								),
+							(join) => join.onTrue(),
+						),
+			},
+			"L(L) on = all(empty)": {
+				// Postgres's `NULL = ALL('{}')` is TRUE: this ON doesn't reject a missing post.
+				flat: false,
+				pgOnly: true,
+				build: (n) =>
+					top(
+						"leftJoinMany",
+						pc(n, (j) =>
+							j.on((eb: any) =>
+								eb.and([eb("post.id", "=", eb.fn("all", [eb.val([])])), eb("comments.id", "=", 1)]),
+							),
+						),
+					),
 			},
 		};
 

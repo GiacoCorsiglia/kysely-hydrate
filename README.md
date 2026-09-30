@@ -456,10 +456,11 @@ left join whose ON doesn't reject a missing parent, or one whose hoisted columns
 the outer query names) stays in the nested query set's derived table without
 affecting its siblings, except the ones it may name (in its ON, or anywhere if
 it's lateral), which stay with it. A nested query set with `.limit()`, `.offset()`,
-`.modifyFront()` or `.modifyEnd()` keeps its own derived table, and nothing is
-hoisted into a query whose ON clauses or modifiers have an unqualified column
-(raw SQL counts unless every name in it is qualified), since a hoisted table
-could make it ambiguous.
+`.modifyFront()` or `.modifyEnd()`, or built on a Kysely instance with other
+plugins than its parent's, keeps its own derived table, and nothing is hoisted
+into a query whose ON clauses or modifiers have an unqualified column (raw SQL
+counts unless every name in it is qualified), since a hoisted table could make
+it ambiguous. Under a lateral join, the hoisted joins are lateral too.
 
 ##### Solving "row explosion" with pagination
 

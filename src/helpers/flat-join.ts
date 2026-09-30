@@ -128,8 +128,10 @@ export class HoistedReferences {
 				for (const fragment of n.sqlFragments) {
 					this.#scanName(fragment, unattributed);
 					this.#hasRawNames ||= hasWord(fragment);
-					this.#all ||= hasUnqualifiedName(fragment);
 				}
+				// Scanned whole, since a comment or a string may span parameters; a parameter is never a
+				// bare word, so a number stands in for each.
+				this.#all ||= hasUnqualifiedName(n.sqlFragments.join(" 0 "));
 				// `sql.id("column")` is an unqualified name too.
 				this.#all ||= n.parameters.some((parameter) => k.IdentifierNode.is(parameter));
 				return this.scan(n.parameters, unattributed);
@@ -162,28 +164,34 @@ const isTrue = (text: string): boolean => text.trim().toLowerCase() === "true";
 const isTextFree = (node: k.RawNode): boolean =>
 	node.sqlFragments.every((fragment) => fragment.trim() === "");
 
-/** Words raw SQL may contain besides names; any other bare word is taken for a column. */
+/**
+ * Words raw SQL may contain besides names; any other bare word is taken for a column.  Only words
+ * that neither SQLite nor Postgres accepts as a bare column name: `key`, `first`, `like`, `end`
+ * and the like can name a column in one or the other.
+ */
 const SQL_WORDS = new Set(
 	(
-		"all and any as asc between by case collate desc distinct else end escape exists false fetch " +
-		"first for from glob ilike in is key last like limit locked next no not nowait null nulls of " +
-		"offset on only or order regexp row rows share similar skip some then ties to true unknown " +
-		"update when with"
+		"all and as case collate distinct else false from in is limit not null on or order then to " +
+		"true when"
 	).split(" "),
 );
 
 /**
  * Whether raw SQL text may name an unqualified column: it has a bare word (outside string
- * literals, not next to a `.`, not a function name before `(`) that isn't one of a few SQL words.
- * Errs toward yes.
+ * literals and comments, not next to a `.`, not a function name before `(`) that isn't one of a
+ * few SQL words.  Errs toward yes, also on what it can't tokenize: a nested or unterminated block
+ * comment, or a `$` (a dollar-quoted string, say), which may hide a quote.
  */
 function hasUnqualifiedName(text: string): boolean {
 	const words =
-		/'(?:[^']|'')*'|("(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\])|([\p{L}_][\p{L}\p{N}_$]*)|\d[\w.]*/gu;
+		/'(?:[^']|'')*'|--[^\n]*|\/\*(?:(?!\/\*)[\s\S])*?\*\/|(\/\*|\*\/|\$)|("(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\])|([\p{L}_][\p{L}\p{N}_$]*)|\d[\w.]*/gu;
 	for (const match of text.matchAll(words)) {
-		const [word, quoted, bare] = match;
+		const [word, untokenizable, quoted, bare] = match;
+		if (untokenizable) {
+			return true;
+		}
 		if (!quoted && !bare) {
-			// A string or a number.
+			// A string, a comment or a number.
 			continue;
 		}
 		const before = text.slice(0, match.index).trimEnd().at(-1);
@@ -306,7 +314,7 @@ const STRICT_OPERATORS = new Set([
 /**
  * Whether an ON clause is never TRUE when every column of `table` is NULL: it's a conjunction one
  * of whose terms is (or a disjunction all of whose terms are) a strict comparison with a column of
- * `table` as an operand.
+ * `table` as an operand (and no `ALL` quantifier as the other).
  */
 export function isNullRejecting(node: k.OperationNode, table: string): boolean {
 	if (k.ParensNode.is(node)) {
@@ -319,14 +327,22 @@ export function isNullRejecting(node: k.OperationNode, table: string): boolean {
 		return isNullRejecting(node.left, table) && isNullRejecting(node.right, table);
 	}
 	if (k.BinaryOperationNode.is(node)) {
+		const { leftOperand, rightOperand, operator } = node;
 		return (
-			k.OperatorNode.is(node.operator) &&
-			STRICT_OPERATORS.has(node.operator.operator) &&
-			(isColumnOf(node.leftOperand, table) || isColumnOf(node.rightOperand, table))
+			k.OperatorNode.is(operator) &&
+			STRICT_OPERATORS.has(operator.operator) &&
+			// Postgres's `NULL = ALL('{}')` is TRUE.
+			!isAll(leftOperand) &&
+			!isAll(rightOperand) &&
+			(isColumnOf(leftOperand, table) || isColumnOf(rightOperand, table))
 		);
 	}
 	return false;
 }
+
+/** Whether a node is a call to `all()`, which quantifies a comparison over an array. */
+const isAll = (node: k.OperationNode): boolean =>
+	k.FunctionNode.is(node) && node.func.toLowerCase() === "all";
 
 function isColumnOf(node: k.OperationNode, table: string): boolean {
 	if (k.RawNode.is(node)) {
