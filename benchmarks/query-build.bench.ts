@@ -271,6 +271,25 @@ group({
 	},
 });
 
+// The compile groups above reuse a prebuilt query set.  A request builds its
+// own, from scratch or derived from shared ones, and then compiles it.
+const filtered = usersPostsComments.where("users.id", "=", 1).limit(500);
+const same = (expected: Compilable) => (actual: unknown) =>
+	assertDeepEqual(actual, expected.compile());
+group(
+	{
+		"fresh build": {
+			run: () => queries(db).usersPostsComments.orderBy("id").limit(500).compile(),
+			check: same(representative),
+		},
+		"shared nested sets, fresh parent": {
+			run: () => usersPostsComments.where("users.id", "=", 1).limit(500).compile(),
+			check: same(filtered),
+		},
+	},
+	"per request compile, ",
+);
+
 // The depth generator must build the same SQL as the shared users -> posts -> comments.
 await runSuite({
 	verify: () => assert.equal(depth(2).compile().sql, usersPostsComments.compile().sql),
