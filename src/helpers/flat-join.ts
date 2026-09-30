@@ -96,8 +96,9 @@ export class HoistedReferences {
 
 	/**
 	 * Records the references in `node`.  A table-qualified column is attributed to its table.  A
-	 * `$$` anywhere else (in raw SQL, or in an unqualified name) can't be; it's charged to all the
-	 * joins of `unattributed` when given, else to every relation.  An unqualified column, or raw
+	 * `$$` in an unqualified name can't be; it's charged to all the joins of `unattributed` when
+	 * given, else to every relation.  A `$$` in raw SQL may name any relation's hoisted column, so
+	 * it's charged to every relation.  An unqualified column, or raw
 	 * SQL that may contain one (see {@link hasUnqualifiedName}), rules out hoisting altogether.
 	 * String values are data, not names, so they're ignored.
 	 */
@@ -126,7 +127,7 @@ export class HoistedReferences {
 			}
 			if (k.RawNode.is(n)) {
 				for (const fragment of n.sqlFragments) {
-					this.#scanName(fragment, unattributed);
+					this.#scanName(fragment, undefined);
 					this.#hasRawNames ||= hasWord(fragment);
 				}
 				// Scanned whole, since a comment or a string may span parameters; a parameter is never a

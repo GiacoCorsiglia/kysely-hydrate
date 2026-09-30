@@ -401,6 +401,16 @@ describe("query-set: flat join chains", () => {
 			}
 		});
 
+		test("a hoisted column named in a sibling's raw ON keeps its join in the derived table", async () => {
+			const query = users()
+				.leftJoinMany("posts", postsWithComments(), "posts.user_id", "user.id")
+				.leftJoinOne("profile", profiles(), (join) =>
+					join.on(sql`${sql.ref("profile.id")} = "posts"."comments$$id"`),
+				);
+			assert.deepStrictEqual(relations(query), ["user", "post", "comments", "posts", "profile"]);
+			assert.ok((await query.toJoinedQuery().execute()).length > 0);
+		});
+
 		test("raw SQL naming a column that's also a SQL word keeps the count query's joins", async () => {
 			// In the EXISTS subquery, `key` isn't a column of `posts`, so it names the user's; SQLite
 			// lets an ON clause name any table of the FROM clause, so a hoisted `posts$$comments.key`
