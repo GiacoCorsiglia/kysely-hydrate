@@ -227,6 +227,43 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
+		test("flat join chains: over-long table aliases that share their first 63 bytes", async () => {
+			// Nested joins are hoisted into the top-level query as `key$$nestedKey`, so the tables'
+			// aliases are long too: these two only differ after byte 63.
+			const key = "organizationalDepartmentsOfTheCorporation";
+			const [first, second] = ["employeeRecordsRosterNumberOne", "employeeRecordsRosterNumberTwo"];
+			assert.strictEqual(`${key}$$${first}`.slice(0, 63), `${key}$$${second}`.slice(0, 63));
+			assertBytes(`${key}$$${first}`, 73);
+
+			const query = acmeOnly.leftJoinMany(
+				key,
+				departments
+					.leftJoinMany(first, employees, `${first}.organizational_department_id`, "department.id")
+					.leftJoinMany(
+						second,
+						employees,
+						`${second}.organizational_department_id`,
+						"department.id",
+					),
+				`${key}.organization_id`,
+				"org.id",
+			);
+			// Both are flat, under distinct shortened aliases.
+			const tables = [
+				...query
+					.toQuery()
+					.compile()
+					.sql.matchAll(/\) as "([^"]+)"/g),
+			].map((match) => match[1]!);
+			assert.strictEqual(tables.length, 4);
+			assert.strictEqual(new Set(tables).size, 4);
+			assert.strictEqual(tables.filter((table) => table.includes("~")).length, 2);
+
+			assert.deepStrictEqual(await query.execute(), [
+				{ ...acme, [key]: [{ ...engineering, [first]: [alice, bob], [second]: [alice, bob] }] },
+			]);
+		});
+
 		// The two employee aliases under this key share their first 63 bytes.
 		const verbose = "departmentalEmployeeRecordsWithVerboseNamingConventions";
 		const verboseEmployees = engineeringOnly.innerJoinMany(

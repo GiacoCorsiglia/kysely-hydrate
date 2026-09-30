@@ -69,7 +69,7 @@ export function hoistAndPrefixSelections(prefix: string, { node, alias }: Aliase
 	});
 }
 
-class PrefixedAliasedExpression<
+export class PrefixedAliasedExpression<
 	T,
 	Prefix extends string,
 	OriginalName extends string,
