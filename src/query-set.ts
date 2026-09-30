@@ -51,6 +51,7 @@ import {
 	assertNever,
 	isSelectQueryBuilder,
 	mapWithDeleted,
+	someOperationNode,
 } from "./helpers/utils.ts";
 import {
 	type AttachedKeysArg,
@@ -2631,6 +2632,29 @@ const filteringJoins = new Set<JoinMethod>([
 const isFilteringJoin = (collection: JoinCollection): boolean =>
 	filteringJoins.has(collection.method);
 
+const isLateralJoin = (collection: JoinCollection): boolean =>
+	collection.method.endsWith("Lateral");
+
+/**
+ * Every table name qualifying a column reference within `node`, plus, since raw SQL
+ * cannot be parsed, every `name.` prefix in its raw fragments (over-collecting is harmless).
+ */
+function collectReferencedTables(node: k.OperationNode): Set<string> {
+	const names = new Set<string>();
+	someOperationNode(node, (n) => {
+		if (k.ReferenceNode.is(n) && n.table) {
+			names.add(n.table.table.identifier.name);
+		} else if (k.RawNode.is(n)) {
+			for (const fragment of n.sqlFragments) {
+				for (const [, name] of fragment.matchAll(/([\w$]+)"?\s*\./g)) {
+					names.add(name!);
+				}
+			}
+		}
+	});
+	return names;
+}
+
 type AnyJoinArgs = [key: string, from: any, callbackOrk1?: any, k2?: any];
 type AnyJoinArgsTail = [callbackOrk1?: any, k2?: any];
 
@@ -2679,6 +2703,8 @@ interface QuerySetProps {
  */
 class QuerySetImpl implements QuerySet<TQuerySet> {
 	#props: QuerySetProps;
+	/** Lazily computed by {@link #getJoinReferences}; safe to cache since props are immutable. */
+	#joinReferences: Map<string, ReadonlySet<string>> | undefined;
 
 	constructor(props: QuerySetProps) {
 		this.#props = props;
@@ -2823,6 +2849,77 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	/**
+	 * Maps each join's key to the keys of the earlier joins its ON clause (or lateral body)
+	 * references.  The types forbid such references (see the "adjacent joins are independent" type
+	 * tests), but they are honored at runtime so that the queries which drop or rewrite joins stay
+	 * valid.  Over-approximated (e.g. a nested query set's own alias may shadow a key), which only
+	 * ever keeps a join around unnecessarily.
+	 */
+	#getJoinReferences(): Map<string, ReadonlySet<string>> {
+		if (this.#joinReferences) {
+			return this.#joinReferences;
+		}
+		const { db, joinCollections } = this.#props;
+		const references = new Map<string, ReadonlySet<string>>();
+		const earlierKeys = new Set<string>();
+		for (const [key, collection] of joinCollections) {
+			// Only a lateral join's body can see the joins before it.
+			const table = isLateralJoin(collection)
+				? collection.querySet.#toQuery(true, true).as(key)
+				: k.sql`(SELECT 1)`.as(key);
+			const joinNode = db
+				.selectFrom(k.sql`(SELECT 1)`.as("__"))
+				[collection.method as "innerJoin"](table, ...collection.args)
+				.toOperationNode()
+				.joins!.at(-1)!;
+			const names = collectReferencedTables(joinNode);
+			references.set(key, new Set([...earlierKeys].filter((earlier) => names.has(earlier))));
+			earlierKeys.add(key);
+		}
+		return (this.#joinReferences = references);
+	}
+
+	/**
+	 * Closes `keys` over the joins they (transitively) reference, among those accepted by
+	 * `include`.  Returns the keys in join order.
+	 */
+	#withJoinDependencies(keys: Iterable<string>, include: (key: string) => boolean): string[] {
+		const closure = new Set(keys);
+		const references = this.#getJoinReferences();
+		const joinKeys = [...this.#props.joinCollections.keys()];
+		// References only point backwards, so a single reverse pass reaches every dependency.
+		for (const key of joinKeys.toReversed()) {
+			if (closure.has(key)) {
+				for (const reference of references.get(key)!) {
+					if (include(reference)) {
+						closure.add(reference);
+					}
+				}
+			}
+		}
+		return joinKeys.filter((key) => closure.has(key));
+	}
+
+	/**
+	 * Keys of the joins that {@link #toCardinalityOneQuery} cannot include as joins: those that
+	 * would cause row explosion, and (transitively) those referencing them.
+	 */
+	#getDetachedJoinKeys(isReduced: (key: string) => boolean): Set<string> {
+		const detached = new Set<string>();
+		for (const [key, collection] of this.#props.joinCollections) {
+			if (
+				(!this.#isCollectionCardinalityOne(collection) &&
+					!this.#isReducedJoin(key, collection, isReduced)) ||
+				(detached.size &&
+					[...this.#getJoinReferences().get(key)!].some((reference) => detached.has(reference)))
+			) {
+				detached.add(key);
+			}
+		}
+		return detached;
+	}
+
+	/**
 	 * Adds a single join to the query.
 	 *
 	 * @param qb - The query builder to add the join to.
@@ -2932,6 +3029,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * - Cardinality-one mode joins whose nested query sets contain many-joins - excluded, unless
 	 *   `isReduced(key)`, in which case they are joined in their own cardinality-one form so that
 	 *   their columns stay referenceable (e.g. by ORDER BY) without row explosion
+	 * - Joins referencing an excluded or converted join - treated the same way, since they cannot be
+	 *   joined without it (see {@link #getDetachedJoinKeys})
 	 */
 	#toCardinalityOneQuery(
 		isNested: boolean,
@@ -2941,34 +3040,36 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		const { joinCollections } = this.#props;
 
 		let qb = this.#getSelectFromBase(isNested, isLocalSubquery);
+		const detached = this.#getDetachedJoinKeys(isReduced);
 
 		for (const [key, collection] of joinCollections) {
-			// For count/exists queries:
-			// - ALL cardinality-one joins (innerJoinOne, leftJoinOne, leftJoinOneOrThrow): included as-is
-			//   because WHERE clauses might reference columns from these joins
-			// - Cardinality-many filtering joins (innerJoinMany, crossJoinMany): converted to WHERE EXISTS
-			//   to avoid row explosion
-			// - Cardinality-many non-filtering joins (leftJoinMany): excluded from count/exists
-
-			if (this.#isCollectionCardinalityOne(collection)) {
-				// All cardinality-one joins are safe to include directly (no row explosion)
-				qb = this.#addCollectionAsJoin(qb, key, collection);
-			} else if (this.#isReducedJoin(key, collection, isReduced)) {
-				// (For inner joins, the reduced join filters exactly like the WHERE EXISTS below would.)
-				qb = this.#addCollectionAsJoin(
-					qb,
-					key,
-					collection,
-					collection.querySet.#toPaginatedCardinalityOneQuery(true, true, () => true),
-				);
+			if (!detached.has(key)) {
+				// Cardinality-one joins are safe to include directly (no row explosion).  Reduced joins
+				// are included in their own cardinality-one form (for inner joins, the reduced join
+				// filters exactly like the WHERE EXISTS below would).
+				qb = this.#isCollectionCardinalityOne(collection)
+					? this.#addCollectionAsJoin(qb, key, collection)
+					: this.#addCollectionAsJoin(
+							qb,
+							key,
+							collection,
+							collection.querySet.#toPaginatedCardinalityOneQuery(true, true, () => true),
+						);
 			} else if (isFilteringJoin(collection)) {
-				// Cardinality-many filtering joins must be converted to WHERE EXISTS
-				// to avoid row explosion in count queries
+				// Detached filtering joins must be converted to WHERE EXISTS to avoid row explosion.  The
+				// subquery also needs the detached joins this one references: an inner join on a left
+				// many-join keeps only the parents with a matching child.
+				const keys = this.#withJoinDependencies([key], (reference) => detached.has(reference));
 				qb = qb.where(({ exists, selectFrom, lit }) =>
 					exists(
 						selectFrom(k.sql`(SELECT 1)`.as("__"))
 							.select(lit(1).as("_"))
-							.$call((qb) => this.#addCollectionAsJoin(qb, key, collection)),
+							.$call((qb) =>
+								keys.reduce(
+									(qb, key) => this.#addCollectionAsJoin(qb, key, joinCollections.get(key)!),
+									qb,
+								),
+							),
 					),
 				);
 
@@ -2980,7 +3081,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				// key))),
 				// );
 			}
-			// Cardinality-many non-filtering joins (leftJoinMany) are intentionally excluded
+			// Detached non-filtering joins (leftJoinMany, and left joins on detached joins) cannot
+			// change the number of parent rows, so they are excluded.
 		}
 
 		return qb;
@@ -3112,24 +3214,32 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			baseAlias,
 		);
 		let qb = this.#getBaseCteCreator().selectFrom(cardinalityOneQuery.aliased);
+		// The joins that are not cardinality-one are (re-)added in full form below, along with the
+		// joins they reference, which the outer query must see as tables.
+		const detached = this.#getDetachedJoinKeys(isReduced);
+		const outerJoinKeys = this.#withJoinDependencies(
+			[...joinCollections]
+				.filter(
+					([key, collection]) => !this.#isCollectionCardinalityOne(collection) || detached.has(key),
+				)
+				.map(([key]) => key),
+			() => true,
+		);
 		// Re-hoist ALL selections from the cardinality one query.  This will include base query
 		// selections, but possibly also others.  We could do `"baseAlias".*` but then this couldn't be
-		// hoisted further by parent queries.  Reduced joins are skipped: they are re-added in full form
-		// below, which re-provides their selections.
-		const reducedPrefixes = [...joinCollections]
-			.filter(([key, collection]) => this.#isReducedJoin(key, collection, isReduced))
-			.map(([key]) => makePrefix("", key));
+		// hoisted further by parent queries.  Re-added joins are skipped: re-adding them re-provides
+		// their selections.
+		const rejoinedPrefixes = outerJoinKeys
+			.filter((key) => !detached.has(key))
+			.map((key) => makePrefix("", key));
 		qb = qb.select(
 			hoistAndPrefixSelections("", cardinalityOneQuery).filter(
-				(s) => !reducedPrefixes.some((prefix) => s.originalName.startsWith(prefix)),
+				(s) => !rejoinedPrefixes.some((prefix) => s.originalName.startsWith(prefix)),
 			),
 		);
 
-		// Add any cardinality-many joins.
-		for (const [key, collection] of joinCollections) {
-			if (!this.#isCollectionCardinalityOne(collection)) {
-				qb = this.#addCollectionAsJoin(qb, key, collection);
-			}
+		for (const key of outerJoinKeys) {
+			qb = this.#addCollectionAsJoin(qb, key, joinCollections.get(key)!);
 		}
 
 		// Re-apply ordering since the order from the subquery is not guaranteed to

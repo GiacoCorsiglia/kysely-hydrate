@@ -252,6 +252,49 @@ describe("query-set: pagination", () => {
 
 	// clearLimit and clearOffset
 
+	test("pagination: joins referencing a many-join and a one-join", async () => {
+		// The types forbid referencing an adjacent join, but at runtime the join
+		// referencing the many-join must move out of the paginated subquery, along
+		// with the one-join it also references.
+		const query = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOne(
+				"profile",
+				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
+				"profile.user_id",
+				"user.id",
+			)
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			)
+			.innerJoinOne(
+				"author",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("profiles").select(["id", "user_id"]).where("user_id", "in", [2, 3, 4])),
+				(join) =>
+					join
+						// @ts-expect-error - "posts" is not in scope
+						.onRef("author.user_id", "=", "posts.user_id")
+						// @ts-expect-error - "profile" is not in scope
+						.onRef("author.id", "=", "profile.id"),
+			)
+			.limit(2)
+			.offset(1);
+
+		const users = await query.execute();
+		const allUsers = await query.clearLimit().clearOffset().execute();
+
+		assert.deepStrictEqual(
+			allUsers.map((user) => user.id),
+			[2, 3, 4],
+		);
+		assert.deepStrictEqual(users, allUsers.slice(1, 3));
+		assert.strictEqual(await query.executeCount(Number), 3);
+	});
+
 	test("pagination: clearLimit removes limit", async () => {
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))

@@ -275,4 +275,53 @@ describe("query-set: execution", () => {
 		assert.strictEqual(users.length, 3); // Verify count matches execute
 		assert.ok(joinedRows.length > users.length); // Row explosion in joined query
 	});
+
+	//
+	// Joins referencing a dropped many-join
+	//
+	// The types forbid referencing an adjacent join, but at runtime the count and
+	// exists queries must keep the many-joins that other joins depend on.
+	//
+
+	const withPosts = () =>
+		querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "user_id"])),
+				"posts.user_id",
+				"user.id",
+			);
+
+	test("executeCount and executeExists: leftJoinOne referencing a leftJoinMany", async () => {
+		const qs = withPosts().leftJoinOne(
+			"author",
+			({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
+			"author.user_id",
+			// @ts-expect-error - "posts" is not in scope
+			"posts.user_id",
+		);
+
+		// A left join on the left many-join can't filter users.
+		assert.strictEqual(await qs.executeCount(Number), 10);
+		assert.strictEqual(await qs.executeExists(), true);
+		assert.strictEqual((await qs.execute()).length, 10);
+	});
+
+	test("executeCount and executeExists: innerJoinOne referencing a leftJoinMany", async () => {
+		const qs = withPosts().innerJoinOne(
+			"author",
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "user_id"]).where("user_id", "in", [1, 2, 3])),
+			// @ts-expect-error - "posts" is not in scope
+			(join) => join.onRef("author.user_id", "=", "posts.user_id"),
+		);
+
+		// Only users with a post whose author matches survive: bob (2) and carol
+		// (3), but not alice (1), who has no posts.
+		assert.strictEqual(await qs.executeCount(Number), 2);
+		assert.strictEqual(await qs.executeExists(), true);
+		assert.strictEqual((await qs.execute()).length, 2);
+		assert.strictEqual(await qs.where("users.id", "=", 1).executeExists(), false);
+	});
 });
