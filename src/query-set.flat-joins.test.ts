@@ -955,6 +955,29 @@ describe("query-set: flat join chains", () => {
 						),
 					),
 			},
+			"one(one) + a later lateral join naming its hoisted column": {
+				flat: false,
+				pgOnly: true,
+				build: (n) =>
+					users()
+						.leftJoinOne(
+							"profile",
+							n(profiles().leftJoinOne("owner", users(), "owner.id", "profile.user_id")),
+							"profile.user_id",
+							"user.id",
+						)
+						.leftJoinLateralMany(
+							"theirPosts",
+							({ eb, qs }: any) =>
+								qs(
+									eb
+										.selectFrom("posts")
+										.select(["id", "user_id"])
+										.whereRef("posts.user_id", "=", "profile.owner$$id"),
+								),
+							(j: any) => j.onTrue(),
+						),
+			},
 			"L(L without ON)": {
 				flat: false,
 				sqliteOnly: true,

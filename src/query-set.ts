@@ -2660,11 +2660,10 @@ type AnyJoinArgsTail = [callbackOrk1?: any, k2?: any];
 type JoinCondition = AnyJoinArgsTail | k.OperationNode | null;
 
 /**
- * Join methods whose joins may be hoisted out of a nested query set's derived table into a flat
- * join chain (see {@link QuerySetImpl#joinAs}).  A lateral join's subquery refers to the nested
- * base by an alias the chain doesn't keep.
+ * Whether a join is lateral: its subquery may name the relations joined before it (so, in a flat
+ * join chain, by aliases the chain doesn't keep; see {@link QuerySetImpl#joinAs}).
  */
-const hoistableJoins = new Set<JoinMethod>(["innerJoin", "leftJoin", "crossJoin"]);
+const isLateral = (method: JoinMethod): boolean => method.endsWith("Lateral");
 
 /** Adds a join of `from` to `qb` with the given method and condition. */
 function addJoin(
@@ -2943,13 +2942,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		if (isOpen) {
 			addReferences?.(references);
 		}
-		for (const [key, collection, built] of entries) {
+		for (const [i, [key, collection, built]] of entries.entries()) {
 			const on = built !== undefined ? built : isOpen ? buildJoinOn(collection.args) : undefined;
 			if (on !== undefined) {
 				ons.set(key, on);
 			}
 			if (isOpen) {
 				references.scan(on, key);
+				// A lateral subquery may name any column of the relations before it.
+				if (isLateral(collection.method)) {
+					for (const [before] of entries.slice(0, i)) {
+						references.addColumn(before, null);
+					}
+				}
 			}
 		}
 		return { ons, references };
@@ -3024,7 +3029,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	 * - it's an inner or cross join under a left join (`A ⟕ (B ⋈ C)` has no flat form), or a
 	 *   lateral join;
 	 * - the scope it would be hoisted into refers to its columns through the derived table (an ON,
-	 *   `.orderBy()` or modifier naming `alias.key$$column`), or has an unqualified column (or raw
+	 *   `.orderBy()`, modifier or later lateral join naming `alias.key$$column`), or has an unqualified column (or raw
 	 *   SQL that may name one) in any ON or modifier, which a hoisted table could make ambiguous;
 	 * - a later join that stays in the derived table may name it: its ON names it (or anything,
 	 *   through raw SQL or an unqualified column), or it's a lateral join.
@@ -3056,7 +3061,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			const on = buildJoinOn(collection.args);
 			let hoistedOn: k.OperationNode | null | undefined;
 			if (
-				hoistableJoins.has(collection.method) &&
+				!isLateral(collection.method) &&
 				(!isUnderLeftJoin || collection.method === "leftJoin") &&
 				key !== baseAlias &&
 				!isReferenced(key)
@@ -3082,7 +3087,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			}
 			if (join.hoistedOn === undefined) {
 				laterKept.scan(join.on);
-				isAfterLateral ||= !hoistableJoins.has(join.collection.method);
+				isAfterLateral ||= isLateral(join.collection.method);
 			}
 		}
 
