@@ -477,6 +477,70 @@ describe("query-set: flat join chains", () => {
 			]);
 		});
 
+		test("a join that stays in the derived table keeps the joins it may name there too", () => {
+			const build = (last: (qs: any) => any) =>
+				users().leftJoinMany(
+					"posts",
+					last(
+						posts()
+							.leftJoinMany("comments", comments(), "comments.post_id", "post.id")
+							.leftJoinOne("author", users(), "author.id", "post.user_id"),
+					),
+					"posts.user_id",
+					"user.id",
+				);
+			// Its ON names the author (a name the typed API doesn't offer, but valid SQL).
+			const naming = build((qs) =>
+				qs.leftJoinMany("authorComments", comments(), (join: any) =>
+					join.onRef("authorComments.user_id", "=", "author.id").on(sql`true`),
+				),
+			);
+			assert.deepStrictEqual(relations(naming), [
+				"user",
+				"post",
+				"author",
+				"authorComments",
+				"posts",
+				"posts$$comments",
+			]);
+			// Raw SQL may name anything before it.
+			const raw = build((qs) =>
+				qs.leftJoinMany("authorComments", comments(), (join: any) =>
+					join.on(sql`"authorComments".user_id = author.id`),
+				),
+			);
+			assert.deepStrictEqual(relations(raw), [
+				"user",
+				"post",
+				"comments",
+				"author",
+				"authorComments",
+				"posts",
+			]);
+			// A join that names neither doesn't keep them.
+			const other = build((qs) =>
+				qs.leftJoinMany("mine", comments(), (join: any) => join.on("mine.user_id", "=", 2)),
+			);
+			assert.deepStrictEqual(relations(other), [
+				"user",
+				"post",
+				"mine",
+				"posts",
+				"posts$$comments",
+				"posts$$author",
+			]);
+		});
+
+		test("a left join without an ON is kept under a left join", () => {
+			const query = users().leftJoinMany(
+				"posts",
+				posts().leftJoinMany("everyone", users(), (join: any) => join),
+				"posts.user_id",
+				"user.id",
+			);
+			assert.deepStrictEqual(relations(query), ["user", "post", "everyone", "posts"]);
+		});
+
 		test("count and exists queries are flat", () => {
 			const query = users().innerJoinMany("posts", postsWithComments(), "posts.user_id", "user.id");
 			for (const compiled of [query.toCountQuery().compile(), query.toExistsQuery().compile()]) {
@@ -694,10 +758,12 @@ describe("query-set: flat join chains", () => {
 				executeCount(cast: (count: string | number | bigint) => number): Promise<number>;
 				executeExists(): Promise<boolean>;
 				toQuery(): { compile(): { sql: string } };
+				toJoinedQuery(): { execute(): Promise<unknown[]> };
 			};
 			/** Whether the query is expected to contain a flat join chain. */
 			flat: boolean;
 			pgOnly?: boolean;
+			sqliteOnly?: boolean;
 		}
 
 		const pc = (nested: Nest, on?: (join: any) => any) => nested(postsWithComments(on));
@@ -851,6 +917,49 @@ describe("query-set: flat join chains", () => {
 						),
 					),
 			},
+			"L(L, L one, L naming it) siblings": {
+				flat: true,
+				build: (n) =>
+					top(
+						"leftJoinMany",
+						n(
+							posts()
+								.leftJoinMany("comments", comments(), "comments.post_id", "post.id")
+								.leftJoinOne("author", users(), "author.id", "post.user_id")
+								.leftJoinMany("authorComments", comments(), (j: any) =>
+									j.onRef("authorComments.user_id", "=", "author.id").on(sql`true`),
+								),
+						),
+					),
+			},
+			"L(L one, lateral naming it) siblings": {
+				flat: false,
+				pgOnly: true,
+				build: (n) =>
+					top(
+						"leftJoinMany",
+						n(
+							posts()
+								.leftJoinOne("author", users(), "author.id", "post.user_id")
+								.leftJoinLateralMany(
+									"authorComments",
+									({ eb, qs }: any) =>
+										qs(
+											eb
+												.selectFrom("comments")
+												.select(["id", "user_id"])
+												.whereRef("comments.user_id", "=", "author.id"),
+										),
+									(j: any) => j.onTrue(),
+								),
+						),
+					),
+			},
+			"L(L without ON)": {
+				flat: false,
+				sqliteOnly: true,
+				build: (n) => top("leftJoinMany", n(posts().leftJoinMany("everyone", users(), (j) => j))),
+			},
 			"L(L) + sibling top-level join": {
 				flat: true,
 				build: (n) =>
@@ -1003,8 +1112,9 @@ describe("query-set: flat join chains", () => {
 			},
 		};
 
-		for (const [name, { build, flat, pgOnly }] of Object.entries(configs)) {
-			test(name, { skip: pgOnly && dialect !== "postgres" }, async () => {
+		for (const [name, { build, flat, pgOnly, sqliteOnly }] of Object.entries(configs)) {
+			const skip = (pgOnly && dialect !== "postgres") || (sqliteOnly && dialect !== "sqlite");
+			test(name, { skip }, async () => {
 				const flatQuery = build((qs) => qs);
 				const nestedQuery = build((qs) => qs.modifyEnd(sql``));
 
@@ -1016,6 +1126,10 @@ describe("query-set: flat join chains", () => {
 				const expected = await nestedQuery.execute();
 				assert.ok(expected.length > 0);
 				assert.deepStrictEqual(await flatQuery.execute(), expected);
+				// The unhydrated rows too, in any order.
+				const rows = async (query: typeof flatQuery) =>
+					(await query.toJoinedQuery().execute()).map((row: unknown) => JSON.stringify(row)).sort();
+				assert.deepStrictEqual(await rows(flatQuery), await rows(nestedQuery));
 				assert.strictEqual(
 					await flatQuery.executeCount(Number),
 					await nestedQuery.executeCount(Number),

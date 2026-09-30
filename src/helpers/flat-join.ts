@@ -58,6 +58,8 @@ export class HoistedReferences {
 	readonly #byTable = new Map<string, Set<string> | true>();
 	/** Set when nothing may be hoisted into the scope. */
 	#all = false;
+	/** Set when raw SQL text that may name a table was seen. */
+	#hasRawNames = false;
 
 	/** Whether `table` must keep its join `child` in its derived table. */
 	isReferenced(table: string, child: string): boolean {
@@ -68,20 +70,28 @@ export class HoistedReferences {
 		return children === true || (children?.has(child) ?? false);
 	}
 
-	/** Records a reference to the column `column` of `table`, if it's a hoisted one. */
-	addColumn(table: string, column: string): void {
-		const sep = column.indexOf(SEP);
-		if (sep === -1) {
-			return;
-		}
+	/** Whether the clauses may name the relation `table`, as a table qualifier or not. */
+	mayName(table: string): boolean {
+		return this.#all || this.#hasRawNames || this.#byTable.has(table);
+	}
+
+	/** Records a reference to the column `column` of `table` (`null` for all of its columns). */
+	addColumn(table: string, column: string | null): void {
 		let children = this.#byTable.get(table);
 		if (children === true) {
+			return;
+		}
+		if (column === null) {
+			this.#byTable.set(table, true);
 			return;
 		}
 		if (children === undefined) {
 			this.#byTable.set(table, (children = new Set()));
 		}
-		children.add(column.slice(0, sep));
+		const sep = column.indexOf(SEP);
+		if (sep !== -1) {
+			children.add(column.slice(0, sep));
+		}
 	}
 
 	/**
@@ -107,16 +117,21 @@ export class HoistedReferences {
 				this.#all = true;
 				return this;
 			}
-			if (k.ReferenceNode.is(n) && k.ColumnNode.is(n.column) && !n.table!.table.schema) {
-				this.#scanName(n.table!.table.identifier.name, unattributed);
-				this.addColumn(n.table!.table.identifier.name, n.column.column.name);
+			if (k.ReferenceNode.is(n) && !n.table!.table.schema) {
+				// `table.column`, or `table.*`: all of its columns.
+				const table = n.table!.table.identifier.name;
+				this.#scanName(table, unattributed);
+				this.addColumn(table, k.ColumnNode.is(n.column) ? n.column.column.name : null);
 				return this;
 			}
 			if (k.RawNode.is(n)) {
 				for (const fragment of n.sqlFragments) {
 					this.#scanName(fragment, unattributed);
+					this.#hasRawNames ||= hasWord(fragment);
 					this.#all ||= hasUnqualifiedName(fragment);
 				}
+				// `sql.id("column")` is an unqualified name too.
+				this.#all ||= n.parameters.some((parameter) => k.IdentifierNode.is(parameter));
 				return this.scan(n.parameters, unattributed);
 			}
 			for (const key in n) {
@@ -138,6 +153,15 @@ export class HoistedReferences {
 	}
 }
 
+/** Whether raw SQL text has a word (a name, a keyword, a string) other than `onTrue()`'s `true`. */
+const hasWord = (text: string): boolean => /[\p{L}_"'`[]/u.test(text) && !isTrue(text);
+
+const isTrue = (text: string): boolean => text.trim().toLowerCase() === "true";
+
+/** Whether a raw node only wraps other nodes, as `sql.ref()`'s does. */
+const isTextFree = (node: k.RawNode): boolean =>
+	node.sqlFragments.every((fragment) => fragment.trim() === "");
+
 /** Words raw SQL may contain besides names; any other bare word is taken for a column. */
 const SQL_WORDS = new Set(
 	(
@@ -151,13 +175,15 @@ const SQL_WORDS = new Set(
 /**
  * Whether raw SQL text may name an unqualified column: it has a bare word (outside string
  * literals, not next to a `.`, not a function name before `(`) that isn't one of a few SQL words.
- * Ers toward yes.
+ * Errs toward yes.
  */
-export function hasUnqualifiedName(text: string): boolean {
-	const words = /'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|[A-Za-z_][\w$]*|\d[\w.]*/g;
-	for (let match; (match = words.exec(text)); ) {
-		const word = match[0];
-		if (word[0] === "'" || /^\d/.test(word)) {
+function hasUnqualifiedName(text: string): boolean {
+	const words =
+		/'(?:[^']|'')*'|("(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\])|([\p{L}_][\p{L}\p{N}_$]*)|\d[\w.]*/gu;
+	for (const match of text.matchAll(words)) {
+		const [word, quoted, bare] = match;
+		if (!quoted && !bare) {
+			// A string or a number.
 			continue;
 		}
 		const before = text.slice(0, match.index).trimEnd().at(-1);
@@ -165,8 +191,7 @@ export function hasUnqualifiedName(text: string): boolean {
 		if (before === "." || after === ".") {
 			continue;
 		}
-		const isQuoted = /^["`[]/.test(word);
-		if (!isQuoted && (after === "(" || SQL_WORDS.has(word.toLowerCase()))) {
+		if (bare && (after === "(" || SQL_WORDS.has(bare.toLowerCase()))) {
 			continue;
 		}
 		return true;
@@ -206,17 +231,15 @@ export function rewriteOn(
 		case "RawNode": {
 			// Raw SQL is opaque, except for `onTrue()`'s `true`, and for text-free raw nodes that only
 			// wrap other nodes, like `sql.ref()`'s.
-			const { sqlFragments, parameters } = node as k.RawNode;
-			if (parameters.length === 0) {
-				return sqlFragments.length === 1 && sqlFragments[0]!.trim().toLowerCase() === "true"
-					? node
-					: null;
+			const raw = node as k.RawNode;
+			if (raw.parameters.length === 0) {
+				return raw.sqlFragments.length === 1 && isTrue(raw.sqlFragments[0]!) ? node : null;
 			}
-			if (sqlFragments.some((fragment) => fragment.trim() !== "")) {
+			if (!isTextFree(raw)) {
 				return null;
 			}
-			const rewritten = rewriteValue(parameters, aliases) as k.OperationNode[] | null;
-			return rewritten && k.RawNode.create(sqlFragments, rewritten);
+			const rewritten = rewriteValue(raw.parameters, aliases) as k.OperationNode[] | null;
+			return rewritten && k.RawNode.create(raw.sqlFragments, rewritten);
 		}
 		case "ReferenceNode": {
 			const { table, column } = node as k.ReferenceNode;
@@ -309,9 +332,7 @@ function isColumnOf(node: k.OperationNode, table: string): boolean {
 	if (k.RawNode.is(node)) {
 		// `sql.ref()`: a reference wrapped in text-free raw SQL.
 		return (
-			node.parameters.length === 1 &&
-			node.sqlFragments.every((fragment) => fragment.trim() === "") &&
-			isColumnOf(node.parameters[0]!, table)
+			node.parameters.length === 1 && isTextFree(node) && isColumnOf(node.parameters[0]!, table)
 		);
 	}
 	return k.ReferenceNode.is(node) && node.table?.table.identifier.name === table;

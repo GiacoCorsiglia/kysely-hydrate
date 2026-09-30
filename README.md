@@ -454,7 +454,8 @@ The choice is made join by join: a join that can't be hoisted (raw SQL or a
 subquery in its ON, a lateral join, an inner or cross join under a left join, a
 left join whose ON doesn't reject a missing parent, or one whose hoisted columns
 the outer query names) stays in the nested query set's derived table without
-affecting its siblings. A nested query set with `.limit()`, `.offset()`,
+affecting its siblings, except the ones it may name (in its ON, or anywhere if
+it's lateral), which stay with it. A nested query set with `.limit()`, `.offset()`,
 `.modifyFront()` or `.modifyEnd()` keeps its own derived table, and nothing is
 hoisted into a query whose ON clauses or modifiers have an unqualified column
 (raw SQL counts unless every name in it is qualified), since a hoisted table
