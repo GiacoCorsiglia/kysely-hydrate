@@ -423,7 +423,7 @@ describe("Hydrator ordering: entities ordered as their sorted rows would be", ()
 	};
 
 	/**
-	 * Rows for up to 6 entities, repeated across children.  With `consistent`,
+	 * Rows for 1 to 6 entities, repeated across children.  With `consistent`,
 	 * an entity's rows agree on `rank` and `name`; otherwise they may not.
 	 */
 	const makeRows = (seed: number, consistent: boolean): Row[] => {
@@ -431,8 +431,10 @@ describe("Hydrator ordering: entities ordered as their sorted rows would be", ()
 		const pick = (n: number) => Math.floor(next() * n);
 		const rankOf = () => (pick(4) === 0 ? null : pick(3));
 		const ranks = [0, 1, 2, 3, 4, 5, 6].map(rankOf);
+		// A lone entity too: its rows still get sorted when they disagree.
+		const entities = 1 + pick(6);
 		return Array.from({ length: 4 + pick(16) }, () => {
-			const id = 1 + pick(6);
+			const id = 1 + pick(entities);
 			return {
 				id,
 				rank: consistent ? ranks[id]! : rankOf(),
@@ -479,13 +481,13 @@ describe("Hydrator ordering: entities ordered as their sorted rows would be", ()
 						`seed ${seed}`,
 					);
 					// Whether some entity's rows disagree, so it takes the other path.
+					const valueOf = (row: Row, key: OrderBy<Row>["key"]) =>
+						typeof key === "function" ? key(row) : row[key];
 					sortedEveryRow ||= rows.some((row) =>
 						rows.some(
 							(other) =>
 								other.id === row.id &&
-								orderings.some(({ key }) =>
-									typeof key === "function" ? key(row) !== key(other) : row[key] !== other[key],
-								),
+								orderings.some(({ key }) => valueOf(row, key) !== valueOf(other, key)),
 						),
 					);
 				}
@@ -508,6 +510,21 @@ describe("Hydrator ordering: entities ordered as their sorted rows would be", ()
 		assert.deepEqual(await hydrator.hydrate(rows, { sort: "all" }), [
 			{ category: "A", price: 1, items: [{ id: 3 }, { id: 1 }] },
 			{ category: "B", price: 3, items: [{ id: 2 }] },
+		]);
+	});
+
+	it("a lone entity whose rows disagree is built from its first sorted row", async () => {
+		const rows = [
+			{ category: "A", price: 5, item$$id: 1 },
+			{ category: "A", price: 1, item$$id: 2 },
+		];
+		const hydrator = createHydrator<(typeof rows)[number]>("category")
+			.fields({ category: true, price: true })
+			.hasMany("items", "item$$", (h) => h("id").fields({ id: true }))
+			.orderBy("price");
+
+		assert.deepEqual(await hydrator.hydrate(rows, { sort: "all" }), [
+			{ category: "A", price: 1, items: [{ id: 2 }, { id: 1 }] },
 		]);
 	});
 });

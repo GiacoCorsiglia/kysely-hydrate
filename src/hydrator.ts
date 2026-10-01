@@ -1407,7 +1407,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// products inherited from an ancestor's sibling many-collections).
 		// groupByKey also skips rows with null keys (non-existent entities).
 		let groups = groupByKey(inputs, keyBy).values();
-		if (groups.length > 1 && orderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix)) {
+		// Even a lone entity needs sortGroups: if its rows disagree on an ordering,
+		// sorting them reorders the rows it and its collections are built from.
+		if (orderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix)) {
 			groups = sortGroups(groups, inputs, plan, this.#makePrefixedGetValue(plan));
 		}
 		for (let i = 0; i < groups.length; i++) {
@@ -1487,13 +1489,15 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * can access unprefixed fields.
 	 */
 	#makePrefixedGetValue({ prefix, accessorKeys }: LevelPlan) {
-		return (obj: Input, key: keyof Input | ((input: Input) => unknown)): unknown => {
+		// Keys are typed loosely because string keys name prefixed columns, which
+		// are not keys of Input.
+		return (obj: Input, key: OrderBy<any>["key"]): unknown => {
 			if (typeof key === "function") {
 				// Create a prefixed accessor so the function can access fields without the prefix
 				const accessor = createdPrefixedAccessor(prefix, obj as object, accessorKeys);
-				return key(accessor as Input);
+				return key(accessor);
 			}
-			return obj[key];
+			return (obj as Record<PropertyKey, unknown>)[key];
 		};
 	}
 
@@ -1947,16 +1951,17 @@ const representative = <T>(group: Grouped<T>): T =>
  * The two agree whenever each group's rows tie on every ordering, which is the
  * rule: orderings read the entity's own columns, which its rows repeat.  The
  * sort is stable, so sorted rows group into the same groups, in the order of
- * their representatives, each with its rows in their original order.  A group
- * whose rows differ (a function key reading a nested column, or a `keyBy` that
- * doesn't determine the ordered column) would order by its first sorted row,
- * which may not be its first row, so then the rows are sorted instead.
+ * their first rows, each with its rows in their original order.  Rows that
+ * don't tie (a function key reading a nested column, or a `keyBy` that doesn't
+ * determine the ordered column) would be reordered within their group, which
+ * changes the row the entity is built from and the rows its collections get,
+ * so then every row is sorted instead.
  */
 function sortGroups<T>(
 	groups: readonly Grouped<T>[],
 	rows: readonly T[],
 	{ keyBy, orderings }: LevelPlan,
-	getValue: (row: T, key: OrderBy<T>["key"]) => unknown,
+	getValue: (row: T, key: OrderBy<any>["key"]) => unknown,
 ): readonly Grouped<T>[] {
 	for (let g = 0; g < groups.length; g++) {
 		const group = groups[g]!;
@@ -1965,18 +1970,19 @@ function sortGroups<T>(
 		}
 		const groupRows = group.rows;
 		for (let o = 0; o < orderings.length; o++) {
-			const { key } = orderings[o] as OrderBy<T>;
+			const { key } = orderings[o]!;
 			const value = getValue(groupRows[0]!, key);
 			for (let r = 1; r < groupRows.length; r++) {
 				if (sqlCompare(value, getValue(groupRows[r]!, key)) !== 0) {
-					return groupByKey(sortBy(rows, orderings as OrderBy<T>[], getValue), keyBy).values();
+					return groupByKey(sortBy(rows, orderings, getValue), keyBy).values();
 				}
 			}
 		}
 	}
-	return sortBy(groups, orderings as OrderBy<Grouped<T>>[], (group, key) =>
-		getValue(representative(group), key as OrderBy<T>["key"]),
-	);
+	if (groups.length < 2) {
+		return groups;
+	}
+	return sortBy(groups, orderings, (group, key) => getValue(representative(group), key));
 }
 
 /**
