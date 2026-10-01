@@ -1299,8 +1299,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		ctx: HydrationContext,
 		plan: LevelPlan,
 		input: Input,
-		// Null means the group consists of just `input`; the array is only
-		// materialized when nested collections actually need it.
+		// Null means the group consists of just `input`, so nested collections
+		// are hydrated from it alone (see #hydrateSingle), with no array at all.
 		inputRows: Input[] | null,
 	): Output {
 		const { prefix, fields, extras, extenders, collections, attachedCollections, mapFns } = plan;
@@ -1428,8 +1428,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates the collection `mode` makes of a single row: what
 	 * {@link applyCollectionMode} would make of `#hydrateMany(ctx, plan, [input])`,
-	 * without grouping (or sorting) one row.  Parents in one-to-one joins, and
-	 * entities whose nested collections match a single row, all come this way.
+	 * without grouping (or sorting) one row.  Every entity hydrated from a
+	 * single row hydrates its nested collections this way: most parents in
+	 * one-to-one joins, and the entity of a top-level `hydrate(row)`.
+	 *
+	 * Skipping the sort is unobservable: {@link sortBy} never extracts sort keys
+	 * (so never calls function keys) for fewer than two rows.
 	 */
 	#hydrateSingle(
 		ctx: HydrationContext,
@@ -1696,12 +1700,14 @@ function keyArity(keyBy: string | readonly string[]): number {
 
 /**
  * Whether an input's key has no nil part, i.e. whether {@link KeyedGroups}
- * would group it rather than skip it.
+ * would group it rather than skip it.  Must agree with {@link keyPart} on what
+ * is nil (exactly `null` and `undefined`), without its canonicalization cost.
  */
 function hasKey(input: unknown, keyBy: string | readonly string[]): boolean {
 	const row = input as Record<string, unknown>;
 	if (typeof keyBy === "string") {
-		return row[keyBy] !== undefined && row[keyBy] !== null;
+		const part = row[keyBy];
+		return part !== undefined && part !== null;
 	}
 	for (let i = 0; i < keyBy.length; i++) {
 		const part = row[keyBy[i]!];

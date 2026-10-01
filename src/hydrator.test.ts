@@ -876,10 +876,11 @@ test("hasOneOrThrow: throws when nested entity is missing", async () => {
 	}, ExpectedOneItemError);
 });
 
-// A parent hydrated from one row hydrates its nested collections from that row
-// alone, without grouping it; from two copies of the row, it groups them.  The
-// two must agree on every mode, on missing children, and on map functions that
-// return undefined (which "one" modes treat as no entity).
+// A parent hydrated from one row (in an array, or as a top-level object)
+// hydrates its nested collections from that row alone, without grouping it;
+// from two copies of the row, it groups them.  All must agree on every mode, on
+// missing children, and on map functions that return undefined (which "one"
+// modes treat as no entity).
 test("nested collections hydrate the same from one row as from duplicated rows", async () => {
 	type Row = { id: number; child$$a: number | null; child$$b: number | null };
 	const present: Row = { id: 1, child$$a: 1, child$$b: 2 };
@@ -895,12 +896,16 @@ test("nested collections hydrate the same from one row as from duplicated rows",
 		const hydrator = createHydrator<Row>("id").has(mode, "child", "child$$", (h) =>
 			h(keyBy).fields({ a: true }).map(map),
 		);
-		const settle = (rows: Row[]) =>
-			hydrate(rows, hydrator).then(
+		const settle = (output: Promise<unknown>) =>
+			output.then(
 				(value) => ({ value }),
 				(error: unknown) => ({ error: (error as Error).constructor }),
 			);
-		return [await settle([row]), await settle([row, { ...row }])] as const;
+		const single = await settle(hydrate([row], hydrator));
+		// The top-level object path must agree with the one-row array path.
+		const object = await settle(hydrate(row, hydrator).then((value) => [value]));
+		assert.deepStrictEqual(object, single, "hydrate(row) vs. hydrate([row])");
+		return [single, await settle(hydrate([row, { ...row }], hydrator))] as const;
 	};
 
 	for (const mode of ["many", "one", "oneOrThrow"] as const) {
