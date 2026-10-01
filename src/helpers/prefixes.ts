@@ -96,7 +96,16 @@ export type SelectAndStripPrefix<P extends string, T> = {
 interface AccessorTarget {
 	readonly prefix: string;
 	readonly input: object;
+	readonly keys: PrefixedKeys;
 }
+
+/**
+ * Keys an accessor has read, each mapped to its prefixed form, for accessors
+ * with the same prefix to share.  Reading a key built per read is slow: the
+ * engine has to look the new string up before it can look the property up.
+ * A key looked up here was built once, so reading it skips that.
+ */
+export type PrefixedKeys = Map<string, string>;
 
 /**
  * Traps for {@link createdPrefixedAccessor}.
@@ -109,10 +118,19 @@ interface AccessorTarget {
  * own keys are configurable, so no invariant constrains these traps.
  */
 const accessorHandler: ProxyHandler<AccessorTarget> = {
-	get({ prefix, input }, key) {
+	get({ prefix, input, keys }, key) {
 		// Inlined rather than getPrefixedValue: this runs on every property read
 		// in a nested callback, and the prefix is never empty here.
-		return (input as Record<string, unknown>)[prefix + (key as string)];
+		if (typeof key !== "string") {
+			// Throws converting the symbol, as reading one always has.
+			return (input as Record<string, unknown>)[prefix + (key as unknown as string)];
+		}
+		let prefixed = keys.get(key);
+		if (prefixed === undefined) {
+			prefixed = prefix + key;
+			keys.set(key, prefixed);
+		}
+		return (input as Record<string, unknown>)[prefixed];
 	},
 
 	set({ prefix, input }, key, value) {
@@ -153,9 +171,14 @@ const accessorHandler: ProxyHandler<AccessorTarget> = {
 	},
 };
 
+/**
+ * @param keys - Shared by accessors with this prefix, so a key each of them
+ *   reads is prefixed only once.
+ */
 export function createdPrefixedAccessor<P extends string, T extends object>(
 	prefix: P,
 	input: T,
+	keys: PrefixedKeys = new Map(),
 ): SelectAndStripPrefix<P, T> {
 	// In this case, we don't need to apply any prefixing.
 	if (prefix === "") {
@@ -164,7 +187,7 @@ export function createdPrefixedAccessor<P extends string, T extends object>(
 
 	// The Proxy presents the row's view of the target, not the target itself.
 	return new Proxy(
-		{ prefix, input } satisfies AccessorTarget,
+		{ prefix, input, keys } satisfies AccessorTarget,
 		accessorHandler,
 	) as unknown as SelectAndStripPrefix<P, T>;
 }

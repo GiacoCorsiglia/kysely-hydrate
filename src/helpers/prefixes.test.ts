@@ -73,6 +73,36 @@ test("createdPrefixedAccessor: get reads through the prefix", () => {
 	assert.strictEqual(accessor.title, "Post 10");
 });
 
+test("createdPrefixedAccessor: accessors sharing prefixed keys read their own rows", () => {
+	const keys = new Map<string, string>();
+	const first = createdPrefixedAccessor("posts$$", { posts$$id: 10, posts$$title: "A" }, keys);
+	const second = createdPrefixedAccessor(
+		"posts$$",
+		{ posts$$id: 20 } as { posts$$id: number; posts$$title?: string },
+		keys,
+	);
+
+	assert.deepStrictEqual(
+		[first.id, first.title, second.id, second.title],
+		[10, "A", 20, undefined],
+	);
+	// Every key read is cached, including ones the row didn't have.
+	assert.deepStrictEqual(
+		[...keys],
+		[
+			["id", "posts$$id"],
+			["title", "posts$$title"],
+		],
+	);
+	assert.strictEqual(second.id, 20);
+});
+
+test("createdPrefixedAccessor: get throws for symbol keys", () => {
+	const accessor = createdPrefixedAccessor("posts$$", { posts$$id: 10 });
+
+	assert.throws(() => (accessor as Record<symbol, unknown>)[Symbol.iterator], TypeError);
+});
+
 test("createdPrefixedAccessor: get returns undefined for keys outside the prefix", () => {
 	const row = { id: 1, posts$$id: 10 };
 	const accessor = createdPrefixedAccessor("posts$$", row) as Record<string, unknown>;
