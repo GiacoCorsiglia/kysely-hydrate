@@ -1342,14 +1342,17 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		if (collections) {
-			const rows = inputRows ?? [input];
-
 			for (let i = 0; i < collections.length; i++) {
 				const { key, collection, plan: childPlan } = collections[i]!;
 				// Hydrate nested collections (all attach collections already fetched)
-				const collectionOutputs = collection.hydrator.#hydrateMany(ctx, childPlan, rows);
-
-				entity[key] = applyCollectionMode(collectionOutputs, collection.mode, key);
+				entity[key] =
+					inputRows === null
+						? collection.hydrator.#hydrateSingle(ctx, childPlan, input, collection.mode, key)
+						: applyCollectionMode(
+								collection.hydrator.#hydrateMany(ctx, childPlan, inputRows),
+								collection.mode,
+								key,
+							);
 			}
 		}
 
@@ -1420,6 +1423,30 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		return result;
+	}
+
+	/**
+	 * Hydrates the collection `mode` makes of a single row: what
+	 * {@link applyCollectionMode} would make of `#hydrateMany(ctx, plan, [input])`,
+	 * without grouping (or sorting) one row.  Parents in one-to-one joins, and
+	 * entities whose nested collections match a single row, all come this way.
+	 */
+	#hydrateSingle(
+		ctx: HydrationContext,
+		plan: LevelPlan,
+		input: Input,
+		mode: CollectionMode,
+		key: string,
+	): Output[] | Output | null {
+		if (!hasKey(input, plan.keyBy)) {
+			return applyCollectionMode(undefined, mode, key);
+		}
+		const output = this.#hydrateOne(ctx, plan, input, null);
+		if (mode === "many") {
+			return [output];
+		}
+		// A map function can return undefined, which counts as no entity.
+		return output !== undefined ? output : applyCollectionMode(undefined, mode, key);
 	}
 
 	#cachedOrderings: readonly OrderBy<Input>[] | undefined;
@@ -1665,6 +1692,24 @@ function applyGroupedCollectionMode<T>(
  */
 function keyArity(keyBy: string | readonly string[]): number {
 	return typeof keyBy === "object" ? keyBy.length : 1;
+}
+
+/**
+ * Whether an input's key has no nil part, i.e. whether {@link KeyedGroups}
+ * would group it rather than skip it.
+ */
+function hasKey(input: unknown, keyBy: string | readonly string[]): boolean {
+	const row = input as Record<string, unknown>;
+	if (typeof keyBy === "string") {
+		return row[keyBy] !== undefined && row[keyBy] !== null;
+	}
+	for (let i = 0; i < keyBy.length; i++) {
+		const part = row[keyBy[i]!];
+		if (part === undefined || part === null) {
+			return false;
+		}
+	}
+	return true;
 }
 
 /**

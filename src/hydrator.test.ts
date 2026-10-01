@@ -876,6 +876,57 @@ test("hasOneOrThrow: throws when nested entity is missing", async () => {
 	}, ExpectedOneItemError);
 });
 
+// A parent hydrated from one row hydrates its nested collections from that row
+// alone, without grouping it; from two copies of the row, it groups them.  The
+// two must agree on every mode, on missing children, and on map functions that
+// return undefined (which "one" modes treat as no entity).
+test("nested collections hydrate the same from one row as from duplicated rows", async () => {
+	type Row = { id: number; child$$a: number | null; child$$b: number | null };
+	const present: Row = { id: 1, child$$a: 1, child$$b: 2 };
+	const missing: Row = { id: 1, child$$a: null, child$$b: null };
+	const partlyMissing: Row = { id: 1, child$$a: 1, child$$b: null };
+
+	const results = async (
+		mode: "many" | "one" | "oneOrThrow",
+		keyBy: "a" | ["a", "b"],
+		row: Row,
+		map: (child: object) => unknown = (child) => child,
+	) => {
+		const hydrator = createHydrator<Row>("id").has(mode, "child", "child$$", (h) =>
+			h(keyBy).fields({ a: true }).map(map),
+		);
+		const settle = (rows: Row[]) =>
+			hydrate(rows, hydrator).then(
+				(value) => ({ value }),
+				(error: unknown) => ({ error: (error as Error).constructor }),
+			);
+		return [await settle([row]), await settle([row, { ...row }])] as const;
+	};
+
+	for (const mode of ["many", "one", "oneOrThrow"] as const) {
+		for (const keyBy of ["a", ["a", "b"]] satisfies ("a" | ["a", "b"])[]) {
+			for (const row of [present, missing, partlyMissing]) {
+				const [single, grouped] = await results(mode, keyBy, row);
+				assert.deepStrictEqual(single, grouped, `${mode} ${String(keyBy)} ${JSON.stringify(row)}`);
+			}
+			const [single, grouped] = await results(mode, keyBy, present, () => undefined);
+			assert.deepStrictEqual(single, grouped, `${mode} ${String(keyBy)} mapped to undefined`);
+		}
+	}
+
+	// Spot-check that the cases above cover what they mean to.
+	assert.deepStrictEqual(await results("many", "a", present, () => undefined), [
+		{ value: [{ child: [undefined] }] },
+		{ value: [{ child: [undefined] }] },
+	]);
+	assert.deepStrictEqual((await results("one", ["a", "b"], partlyMissing))[0], {
+		value: [{ child: null }],
+	});
+	assert.deepStrictEqual((await results("oneOrThrow", "a", missing))[0], {
+		error: ExpectedOneItemError,
+	});
+});
+
 //
 // Attached Collections (attach/attachMany/attachOne/attachOneOrThrow)
 //
