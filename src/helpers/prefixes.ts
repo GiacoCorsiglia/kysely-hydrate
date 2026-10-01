@@ -104,8 +104,16 @@ interface AccessorTarget {
  * with the same prefix to share.  Reading a key built per read is slow: the
  * engine has to look the new string up before it can look the property up.
  * A key looked up here was built once, so reading it skips that.
+ *
+ * Holds at most {@link MAX_PREFIXED_KEYS} keys.  A map lives as long as its
+ * hydrator, often the whole process, and the keys are whatever user callbacks
+ * read, which may come from data (`row[name]`); past the cap, keys are
+ * prefixed per read as they were before caching.
  */
 export type PrefixedKeys = Map<string, string>;
+
+/** The most keys a {@link PrefixedKeys} map caches. */
+export const MAX_PREFIXED_KEYS = 1024;
 
 /**
  * Traps for {@link createdPrefixedAccessor}.
@@ -128,7 +136,9 @@ const accessorHandler: ProxyHandler<AccessorTarget> = {
 		let prefixed = keys.get(key);
 		if (prefixed === undefined) {
 			prefixed = prefix + key;
-			keys.set(key, prefixed);
+			if (keys.size < MAX_PREFIXED_KEYS) {
+				keys.set(key, prefixed);
+			}
 		}
 		return (input as Record<string, unknown>)[prefixed];
 	},
@@ -172,13 +182,14 @@ const accessorHandler: ProxyHandler<AccessorTarget> = {
 };
 
 /**
- * @param keys - Shared by accessors with this prefix, so a key each of them
- *   reads is prefixed only once.
+ * @param keys - Shared by every accessor with this prefix, and only by them:
+ *   it maps keys to this prefix's form.  Required, so that no caller allocates
+ *   a map per accessor and caches nothing.
  */
 export function createdPrefixedAccessor<P extends string, T extends object>(
 	prefix: P,
 	input: T,
-	keys: PrefixedKeys = new Map(),
+	keys: PrefixedKeys,
 ): SelectAndStripPrefix<P, T> {
 	// In this case, we don't need to apply any prefixing.
 	if (prefix === "") {
