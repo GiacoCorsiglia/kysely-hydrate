@@ -573,15 +573,32 @@ interface KeyPartRow {
 }
 
 /**
+ * Hydrators match the first few keys of a grouping by scanning them and the
+ * rest in a trie, so each grouping case runs both ways: as is, and after this
+ * many distinct filler keys.  More than the hydrator's scan limit (8).
+ */
+const FILLER_KEYS = 10;
+
+/**
  * Hydrates one row per `[key1, key2]` pair (each carrying a distinct child)
  * and asserts how the rows grouped: `groups[i]` names the group row `i`
  * belongs to, and groups are expected in the order their keys first appear.
+ * With `filled`, the rows follow {@link FILLER_KEYS} rows with keys of their
+ * own (symbols, which match nothing else).
  */
 async function assertKeyGrouping(
 	keyBy: "key1" | ["key1", "key2"],
-	rows: readonly (readonly [key1: unknown, key2: unknown])[],
-	groups: readonly number[],
+	caseRows: readonly (readonly [key1: unknown, key2: unknown])[],
+	caseGroups: readonly number[],
+	filled = false,
 ) {
+	const fillers = filled ? FILLER_KEYS : 0;
+	const rows = [
+		...Array.from({ length: fillers }, (_, i) => [Symbol(`filler ${i}`), "x"] as const),
+		...caseRows,
+	];
+	const groups = [...Array.from({ length: fillers }, (_, i) => -1 - i), ...caseGroups];
+
 	const hydrator = createHydrator<KeyPartRow>(keyBy)
 		.fields({ key1: true, key2: true })
 		.hasMany("items", "nested$$", (h) => h("id").fields({ id: true }));
@@ -657,6 +674,8 @@ const keyPartCases: GroupingCase<unknown>[] = [
 		[true, "true", stringLikeObject],
 		[0, 1, 1],
 	],
+	// SQL does not distinguish negative zero, and neither do Map keys.
+	["negative zero groups with zero", [0, -0, 1], [0, 0, 1]],
 	// String() throws for null-prototype objects; the fallback must still key.
 	[
 		"values without a primitive conversion group rather than reject",
@@ -668,8 +687,10 @@ const keyPartCases: GroupingCase<unknown>[] = [
 for (const [name, values, groups] of keyPartCases) {
 	test(`keys: ${name}`, async () => {
 		const rows = values.map((key1) => [key1, "x"] as const);
-		await assertKeyGrouping("key1", rows, groups);
-		await assertKeyGrouping(["key1", "key2"], rows, groups);
+		for (const filled of [false, true]) {
+			await assertKeyGrouping("key1", rows, groups, filled);
+			await assertKeyGrouping(["key1", "key2"], rows, groups, filled);
+		}
 	});
 }
 
@@ -722,8 +743,19 @@ const compositeKeyCases: GroupingCase<readonly [unknown, unknown]>[] = [
 for (const [name, rows, groups] of compositeKeyCases) {
 	test(`composite keys: ${name}`, async () => {
 		await assertKeyGrouping(["key1", "key2"], rows, groups);
+		await assertKeyGrouping(["key1", "key2"], rows, groups, true);
 	});
 }
+
+test("keys: rows match keys first seen before the scan limit and after it", async () => {
+	// Each key appears, then appears again out of order once there are more
+	// keys than the scan limit, so later rows must find groups made both ways.
+	const keys = Array.from({ length: 2 * FILLER_KEYS }, (_, i) => i);
+	const order = [...keys, ...keys.toReversed(), ...keys];
+	const rows = order.map((key) => [key, `part ${key}`] as const);
+	await assertKeyGrouping("key1", rows, order);
+	await assertKeyGrouping(["key1", "key2"], rows, order);
+});
 
 //
 // Nested Collections (has/hasMany/hasOne/hasOneOrThrow)

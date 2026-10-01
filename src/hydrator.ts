@@ -1751,17 +1751,40 @@ class RowGroup<T> {
 type KeyTrie = Map<unknown, number | KeyTrie>;
 
 /**
+ * How many groups {@link KeyedGroups} matches by scanning before it builds its
+ * trie.  Nested collections are grouped once per parent, and most parents have
+ * a handful of children, so most groupings never allocate a `Map` at all.
+ */
+const SCAN_LIMIT = 8;
+
+/** Whether two canonical key parts match as `Map` keys would (SameValueZero). */
+function samePart(a: unknown, b: unknown): boolean {
+	return a === b || (a !== a && b !== b);
+}
+
+/**
  * Rows grouped by their entity's key: for each distinct key, the single row,
  * or a {@link RowGroup} for 2+ rows.  Most groups contain exactly one row, so
  * a RowGroup (with its backing array) is only allocated once a second row with
  * the same key shows up.
  *
- * Keys are matched one part at a time in a trie of `Map`s, so parts are
- * compared as `Map` keys: there is no per-row key to build and hash, and no
- * boundary between parts for values to collide across.
+ * Up to {@link SCAN_LIMIT} keys, a key is matched by scanning the parts of
+ * every key so far, most recent first.  Past that, keys are matched one part
+ * at a time in a trie of `Map`s, so parts are compared as `Map` keys: there is
+ * no per-row key to build and hash, and no boundary between parts for values
+ * to collide across.  Both compare parts under SameValueZero, so which one
+ * matched a key never changes its group.
  */
 class KeyedGroups<T> {
-	readonly #root: KeyTrie = new Map();
+	/** Built once there are more than {@link SCAN_LIMIT} keys. */
+	#root: KeyTrie | undefined;
+	/**
+	 * Until the trie is built, each group's key parts, flattened: group `g`'s
+	 * parts are at `g * arity` onward.
+	 */
+	#parts: unknown[] | undefined = [];
+	/** Scratch space for {@link #scanMany}, reused for every row. */
+	#key: unknown[] | undefined;
 	readonly #groups: (T | RowGroup<T>)[] = [];
 	readonly #arity: number;
 
@@ -1831,25 +1854,119 @@ class KeyedGroups<T> {
 	}
 
 	/**
-	 * Matches this input's key part by part, returning its slot: an existing
-	 * one, the next one if `create` is set and the key is new, or NO_SLOT if the
-	 * key has a nil part, has the wrong arity, or is absent and `create` is not
-	 * set.
-	 *
-	 * A key abandoned partway through (a nil part after the first) can leave an
-	 * empty map behind, which is harmless: no slot is allocated for it, so
-	 * nothing can reach it.
+	 * Matches this input's key, returning its slot: an existing one, the next
+	 * one if `create` is set and the key is new, or NO_SLOT if the key has a nil
+	 * part, has the wrong arity, or is absent and `create` is not set.
 	 */
 	#walk(input: unknown, keyBy: string | readonly string[], create: boolean): number {
 		if (keyArity(keyBy) !== this.#arity) {
 			return NO_SLOT;
 		}
+		const parts = this.#parts;
+		if (parts === undefined) {
+			return this.#walkTrie(this.#root!, input, keyBy, create);
+		}
+		return this.#arity === 1
+			? this.#scanOne(parts, input, typeof keyBy === "object" ? keyBy[0]! : keyBy, create)
+			: this.#scanMany(parts, input, keyBy as readonly string[], create);
+	}
 
+	/** {@link #walk} for a single-part key, before the trie is built. */
+	#scanOne(parts: unknown[], input: unknown, partKey: string, create: boolean): number {
+		const part = keyPart(input, partKey);
+		if (part === undefined) {
+			return NO_SLOT;
+		}
+		for (let slot = parts.length - 1; slot >= 0; slot--) {
+			if (samePart(parts[slot], part)) {
+				return slot;
+			}
+		}
+		if (!create) {
+			return NO_SLOT;
+		}
+		parts.push(part);
+		const slot = parts.length - 1;
+		if (slot === SCAN_LIMIT) {
+			this.#buildTrie(parts);
+		}
+		return slot;
+	}
+
+	/** {@link #walk} for a multi-part key, before the trie is built. */
+	#scanMany(parts: unknown[], input: unknown, keyBy: readonly string[], create: boolean): number {
+		const arity = this.#arity;
+		// Read every part before matching, so a nil part rejects the key whole.
+		const key = (this.#key ??= []);
+		for (let i = 0; i < arity; i++) {
+			const part = keyPart(input, keyBy[i]!);
+			if (part === undefined) {
+				return NO_SLOT;
+			}
+			key[i] = part;
+		}
+		for (let start = parts.length - arity; start >= 0; start -= arity) {
+			let i = 0;
+			while (i < arity && samePart(parts[start + i], key[i])) {
+				i++;
+			}
+			if (i === arity) {
+				return start / arity;
+			}
+		}
+		if (!create) {
+			return NO_SLOT;
+		}
+		for (let i = 0; i < arity; i++) {
+			parts.push(key[i]);
+		}
+		const slot = parts.length / arity - 1;
+		if (slot === SCAN_LIMIT) {
+			this.#buildTrie(parts);
+		}
+		return slot;
+	}
+
+	/** Moves the scanned keys, every slot already allocated, into the trie. */
+	#buildTrie(parts: unknown[]): void {
+		const arity = this.#arity;
+		const last = arity - 1;
+		const root: KeyTrie = new Map();
+		for (let start = 0, slot = 0; start < parts.length; start += arity, slot++) {
+			let node = root;
+			for (let i = 0; i < last; i++) {
+				let next = node.get(parts[start + i]) as KeyTrie | undefined;
+				if (next === undefined) {
+					next = new Map();
+					node.set(parts[start + i], next);
+				}
+				node = next;
+			}
+			node.set(parts[start + last], slot);
+		}
+		this.#root = root;
+		this.#parts = undefined;
+		this.#key = undefined;
+	}
+
+	/**
+	 * {@link #walk} once the trie is built: matches the key part by part.
+	 *
+	 * A key abandoned partway through (a nil part after the first) can leave an
+	 * empty map behind, which is harmless: no slot is allocated for it, so
+	 * nothing can reach it.
+	 */
+	#walkTrie(
+		root: KeyTrie,
+		input: unknown,
+		keyBy: string | readonly string[],
+		create: boolean,
+	): number {
 		// Descend one level per part except the last, which is looked up in the
 		// level it lands on.  A single-part key descends nothing, so the root map
 		// holds slots directly.
 		const last = this.#arity - 1;
-		let node = this.#root;
+		let node = root;
 		for (let i = 0; i < last; i++) {
 			const part = keyPart(input, (keyBy as readonly string[])[i]!);
 			if (part === undefined) {
