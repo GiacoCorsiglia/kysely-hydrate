@@ -4,7 +4,7 @@ import {
 	ExpectedOneItemError,
 	KeyByMismatchError,
 } from "./helpers/errors.ts";
-import { type OrderBy, sortBy } from "./helpers/order-by.ts";
+import { type OrderBy, sortBy, sqlCompare } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
@@ -1396,20 +1396,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates many entities. All attach collections are already fetched and provided in attachedDataMap.
 	 */
-	#hydrateMany(ctx: HydrationContext, plan: LevelPlan, inputs: Iterable<Input>): Output[] {
-		const { prefix, keyBy } = plan;
-
-		// Sort inputs before hydration if needed
-		const finalOrderings = plan.orderings;
-		const shouldSort = finalOrderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix);
-
-		let sortedInputs: Iterable<Input> = inputs;
-		if (shouldSort) {
-			// Convert to array for sorting
-			const inputsArray = Array.isArray(inputs) ? inputs : Array.from(inputs);
-
-			sortedInputs = sortBy(inputsArray, finalOrderings, this.#makePrefixedGetValue(plan));
-		}
+	#hydrateMany(ctx: HydrationContext, plan: LevelPlan, inputs: readonly Input[]): Output[] {
+		const { prefix, keyBy, orderings } = plan;
 
 		const result: Output[] = [];
 
@@ -1418,7 +1406,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// contain duplicates (e.g. a base query with repeated keys, or cartesian
 		// products inherited from an ancestor's sibling many-collections).
 		// groupByKey also skips rows with null keys (non-existent entities).
-		const groups = groupByKey(sortedInputs, keyBy).values();
+		let groups = groupByKey(inputs, keyBy).values();
+		if (groups.length > 1 && orderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix)) {
+			groups = sortGroups(groups, inputs, plan, this.#makePrefixedGetValue(plan));
+		}
 		for (let i = 0; i < groups.length; i++) {
 			const group = groups[i]!;
 			// We assume the first row is representative of the group, at least for
@@ -1940,6 +1931,52 @@ class KeyedGroups<T> {
 		node.set(part, allocated);
 		return allocated;
 	}
+}
+
+type Grouped<T> = T | RowGroup<T>;
+
+/** The row that stands for a group: its first. */
+const representative = <T>(group: Grouped<T>): T =>
+	group instanceof RowGroup ? group.rows[0]! : group;
+
+/**
+ * Orders `groups`, grouped from `rows`, by the plan's orderings: exactly as
+ * grouping the rows after sorting them would, but sorting a row per entity
+ * rather than every row.
+ *
+ * The two agree whenever each group's rows tie on every ordering, which is the
+ * rule: orderings read the entity's own columns, which its rows repeat.  The
+ * sort is stable, so sorted rows group into the same groups, in the order of
+ * their representatives, each with its rows in their original order.  A group
+ * whose rows differ (a function key reading a nested column, or a `keyBy` that
+ * doesn't determine the ordered column) would order by its first sorted row,
+ * which may not be its first row, so then the rows are sorted instead.
+ */
+function sortGroups<T>(
+	groups: readonly Grouped<T>[],
+	rows: readonly T[],
+	{ keyBy, orderings }: LevelPlan,
+	getValue: (row: T, key: OrderBy<T>["key"]) => unknown,
+): readonly Grouped<T>[] {
+	for (let g = 0; g < groups.length; g++) {
+		const group = groups[g]!;
+		if (!(group instanceof RowGroup)) {
+			continue;
+		}
+		const groupRows = group.rows;
+		for (let o = 0; o < orderings.length; o++) {
+			const { key } = orderings[o] as OrderBy<T>;
+			const value = getValue(groupRows[0]!, key);
+			for (let r = 1; r < groupRows.length; r++) {
+				if (sqlCompare(value, getValue(groupRows[r]!, key)) !== 0) {
+					return groupByKey(sortBy(rows, orderings as OrderBy<T>[], getValue), keyBy).values();
+				}
+			}
+		}
+	}
+	return sortBy(groups, orderings as OrderBy<Grouped<T>>[], (group, key) =>
+		getValue(representative(group), key as OrderBy<T>["key"]),
+	);
 }
 
 /**
