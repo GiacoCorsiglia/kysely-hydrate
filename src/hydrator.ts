@@ -1886,11 +1886,7 @@ class KeyedGroups<T> {
 			return NO_SLOT;
 		}
 		parts.push(part);
-		const slot = parts.length - 1;
-		if (slot === SCAN_LIMIT) {
-			this.#buildTrie(parts);
-		}
-		return slot;
+		return this.#allocateScanned(parts);
 	}
 
 	/** {@link #walk} for a multi-part key, before the trie is built. */
@@ -1920,7 +1916,17 @@ class KeyedGroups<T> {
 		for (let i = 0; i < arity; i++) {
 			parts.push(key[i]);
 		}
-		const slot = parts.length / arity - 1;
+		return this.#allocateScanned(parts);
+	}
+
+	/**
+	 * Allocates the next slot for a key whose parts were just appended to
+	 * `parts`, building the trie once that key is one more than
+	 * {@link SCAN_LIMIT}.
+	 */
+	#allocateScanned(parts: unknown[]): number {
+		// As in #walkTrie, the next slot is the one add/addFirst push next.
+		const slot = this.#groups.length;
 		if (slot === SCAN_LIMIT) {
 			this.#buildTrie(parts);
 		}
