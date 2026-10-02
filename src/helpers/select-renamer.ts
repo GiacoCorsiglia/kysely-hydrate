@@ -29,23 +29,6 @@ export function aliasQuery(qb: AnyQueryBuilder, alias: string) {
 	return { node, alias, aliased };
 }
 
-export function applyHoistedSelections(
-	toQb: AnySelectQueryBuilder,
-	from: AliasedQuery,
-	owner?: object,
-): AnySelectQueryBuilder {
-	return applyHoistedPrefixedSelections("", toQb, from, owner);
-}
-
-export function applyHoistedPrefixedSelections(
-	prefix: string,
-	toQb: AnySelectQueryBuilder,
-	from: AliasedQuery,
-	owner?: object,
-) {
-	return selectHoisted(toQb, hoistAndPrefixSelections(prefix, from, owner));
-}
-
 /**
  * Adds hoisted selections to a query.  `select()` accepts any operation node
  * source at runtime; only its types insist on Kysely's own expression classes.
@@ -57,8 +40,25 @@ export function selectHoisted(
 	return toQb.select(hoisted as unknown as readonly k.AliasedExpression<unknown, string>[]);
 }
 
-/** Hoisted selections by owner, then by `alias` and `prefix`, then by column name. */
-const hoistedByOwner = new WeakMap<object, Map<string, Map<string, HoistedSelection>>>();
+/**
+ * Hoisted selections by owner, then by alias, then by prefix, then by column
+ * name.  Nested rather than joined into one key: names may contain anything.
+ */
+const hoistedByOwner = new WeakMap<
+	object,
+	Map<string, Map<string, Map<string, HoistedSelection>>>
+>();
+
+function getOrAddMap<K, V extends Map<any, any>>(
+	map: { get(key: K): V | undefined; set(key: K, value: V): unknown },
+	key: K,
+): V {
+	let value = map.get(key);
+	if (value === undefined) {
+		map.set(key, (value = new Map() as V));
+	}
+	return value;
+}
 
 /**
  * Produces selections for a parent query to select everything selected in a
@@ -79,26 +79,17 @@ export function hoistAndPrefixSelections(
 		return [];
 	}
 
-	let cache: Map<string, HoistedSelection> | undefined;
-	if (owner !== undefined) {
-		let byPlace = hoistedByOwner.get(owner);
-		if (byPlace === undefined) {
-			hoistedByOwner.set(owner, (byPlace = new Map()));
-		}
-		const place = `${alias}\0${prefix}`;
-		cache = byPlace.get(place);
-		if (cache === undefined) {
-			byPlace.set(place, (cache = new Map()));
-		}
-	}
-
-	// Built directly: parsing `"alias.name"` is slow and misreads a dotted name.
+	const cache =
+		owner === undefined
+			? undefined
+			: getOrAddMap(getOrAddMap(getOrAddMap(hoistedByOwner, owner), alias), prefix);
 	let table: k.TableNode | undefined;
 
 	return selections.map((selectionNode) => {
 		const name = extractSelectionName(selectionNode);
 		let hoisted = cache?.get(name);
 		if (hoisted === undefined) {
+			// Built directly: parsing `"alias.name"` is slow and misreads a dotted name.
 			table ??= k.TableNode.create(alias);
 			hoisted = new HoistedSelection(
 				k.AliasNode.create(

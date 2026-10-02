@@ -158,6 +158,9 @@ test("hoistAndPrefixSelections: an owner's selections are kept apart by alias an
 	assert.deepStrictEqual(shown("b$$", "u"), ["b$$id", "u"]);
 	assert.deepStrictEqual(shown("a$$", "v"), ["a$$id", "v"]);
 	assert.deepStrictEqual(shown("a$$", "u"), ["a$$id", "u"]);
+	// Names that would collide if alias and prefix were joined into one key.
+	assert.deepStrictEqual(shown("\0b$$", "a"), ["\0b$$id", "a"]);
+	assert.deepStrictEqual(shown("b$$", "a\0"), ["b$$id", "a\0"]);
 });
 
 test("hoistAndPrefixSelections: without an owner, selections are built per call", () => {
