@@ -127,3 +127,17 @@ export class AliasHashCollisionError extends KyselyHydrateError {
 		super(`Aliases "${alias}" and "${otherAlias}" shorten to the same identifier`);
 	}
 }
+
+/**
+ * Error thrown when a column is named `__proto__`.  Assigning that key on a
+ * plain object replaces the object's prototype instead of adding a property,
+ * so hydrated entities (and restored rows) would silently inherit from the
+ * column's value.
+ */
+export class ForbiddenColumnNameError extends KyselyHydrateError {
+	constructor(name: string) {
+		super(
+			`Column name "${name}" is not supported: it would replace the hydrated object's prototype`,
+		);
+	}
+}

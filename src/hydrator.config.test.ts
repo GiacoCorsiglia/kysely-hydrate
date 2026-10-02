@@ -1,8 +1,8 @@
 import assert from "node:assert";
 import { test } from "node:test";
 
-import { KeyByMismatchError } from "./helpers/errors.ts";
-import { createHydrator, hydrate } from "./hydrator.ts";
+import { ForbiddenColumnNameError, KeyByMismatchError } from "./helpers/errors.ts";
+import { createHydrator, EnableAutoInclusion, hydrate } from "./hydrator.ts";
 
 // Test data types
 interface User {
@@ -31,6 +31,30 @@ test("fields: includes specified fields as-is", async () => {
 		{ id: 1, name: "Alice" },
 		{ id: 2, name: "Bob" },
 	]);
+});
+
+// `entity["__proto__"] = value` replaces the prototype, so a column with that
+// name is rejected whether it is included explicitly, as an extra, or
+// automatically.
+test("fields: a __proto__ column is rejected", async () => {
+	const row: { id: number } = { id: 1 };
+	Object.defineProperty(row, "__proto__", { value: { admin: true }, enumerable: true });
+
+	// An object literal's `__proto__` key sets its prototype rather than a
+	// property, so the array form is the way to name the column explicitly.
+	const explicit = createHydrator<any>("id").fields(["__proto__"]);
+	await assert.rejects(hydrate([row], explicit), ForbiddenColumnNameError);
+
+	const extras = createHydrator<any>("id").extras(
+		Object.fromEntries([["__proto__", () => ({ admin: true })]]),
+	);
+	await assert.rejects(hydrate([row], extras), ForbiddenColumnNameError);
+
+	const automatic = createHydrator<any>("id");
+	await assert.rejects(
+		automatic.hydrate([row], { [EnableAutoInclusion]: true }),
+		ForbiddenColumnNameError,
+	);
 });
 
 test("fields: accepts array shorthand for including fields", async () => {
