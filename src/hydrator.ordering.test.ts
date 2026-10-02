@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { type OrderBy, sortBy } from "./helpers/order-by.ts";
 import { createHydrator } from "./hydrator.ts";
 
 describe("Hydrator ordering", () => {
@@ -399,5 +400,131 @@ describe("Hydrator ordering", () => {
 		assert.equal(result[0]!.posts[0]!.title, "Apple");
 		assert.equal(result[0]!.posts[1]!.title, "banana");
 		assert.equal(result[0]!.posts[2]!.title, "zebra");
+	});
+});
+
+// Hydrators group rows before sorting them, sorting one row per entity, and
+// sort every row only when an entity's rows disagree on an ordering.  Either
+// way the result must be what sorting the rows, then grouping them, gives.
+describe("Hydrator ordering: entities ordered as their sorted rows would be", () => {
+	interface Row {
+		id: number;
+		rank: number | null;
+		name: string;
+		child$$id: number;
+	}
+
+	/** A seeded generator (mulberry32), so failures reproduce. */
+	const random = (seed: number) => () => {
+		seed = (seed + 0x6d2b79f5) >>> 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+
+	/**
+	 * Rows for 1 to 6 entities, repeated across children.  With `consistent`,
+	 * an entity's rows agree on `rank` and `name`; otherwise they may not.
+	 */
+	const makeRows = (seed: number, consistent: boolean): Row[] => {
+		const next = random(seed);
+		const pick = (n: number) => Math.floor(next() * n);
+		const rankOf = () => (pick(4) === 0 ? null : pick(3));
+		const ranks = [0, 1, 2, 3, 4, 5, 6].map(rankOf);
+		// A lone entity too: its rows still get sorted when they disagree.
+		const entities = 1 + pick(6);
+		return Array.from({ length: 4 + pick(16) }, () => {
+			const id = 1 + pick(entities);
+			return {
+				id,
+				rank: consistent ? ranks[id]! : rankOf(),
+				name: consistent ? `n${id % 3}` : `n${pick(3)}`,
+				child$$id: 1 + pick(4),
+			};
+		});
+	};
+
+	const keys: OrderBy<Row> = { key: "id", direction: "asc", nulls: "last" };
+	const orderingsCases: [string, OrderBy<Row>[]][] = [
+		["rank asc", [{ key: "rank", direction: "asc" }]],
+		["rank desc, nulls first", [{ key: "rank", direction: "desc", nulls: "first" }]],
+		[
+			"name, then rank desc",
+			[
+				{ key: "name", direction: "asc" },
+				{ key: "rank", direction: "desc" },
+			],
+		],
+		["a function key", [{ key: (row) => (row.rank ?? 0) % 2, direction: "asc" }]],
+		// What orderByKeys() appends.
+		["rank, then keys", [{ key: "rank", direction: "asc" }, keys]],
+	];
+
+	for (const [name, orderings] of orderingsCases) {
+		for (const consistent of [true, false]) {
+			it(`${name}, ${consistent ? "consistent" : "inconsistent"} rows`, async () => {
+				const hydrator = orderings.reduce(
+					(h, { key, direction, nulls }) => h.orderBy(key, direction, nulls),
+					createHydrator<Row>("id")
+						.fields({ id: true, rank: true, name: true })
+						// Children keep their rows' order, so they show which rows each
+						// entity got, in what order, and which row stood for it.
+						.hasMany("children", "child$$", (h) => h("id").fields({ id: true })),
+				);
+				let sortedEveryRow = false;
+				for (let seed = 1; seed <= 200; seed++) {
+					const rows = makeRows(seed, consistent);
+					const sorted = sortBy(rows, orderings);
+					assert.deepEqual(
+						await hydrator.hydrate(rows, { sort: "all" }),
+						await hydrator.hydrate(sorted, { sort: "none" }),
+						`seed ${seed}`,
+					);
+					// Whether some entity's rows disagree, so it takes the other path.
+					const valueOf = (row: Row, key: OrderBy<Row>["key"]) =>
+						typeof key === "function" ? key(row) : row[key];
+					sortedEveryRow ||= rows.some((row) =>
+						rows.some(
+							(other) =>
+								other.id === row.id &&
+								orderings.some(({ key }) => valueOf(row, key) !== valueOf(other, key)),
+						),
+					);
+				}
+				assert.equal(sortedEveryRow, !consistent);
+			});
+		}
+	}
+
+	it("an entity whose rows disagree orders by its first sorted row", async () => {
+		const rows = [
+			{ category: "A", price: 5, item$$id: 1 },
+			{ category: "B", price: 3, item$$id: 2 },
+			{ category: "A", price: 1, item$$id: 3 },
+		];
+		const hydrator = createHydrator<(typeof rows)[number]>("category")
+			.fields({ category: true, price: true })
+			.hasMany("items", "item$$", (h) => h("id").fields({ id: true }))
+			.orderBy("price");
+
+		assert.deepEqual(await hydrator.hydrate(rows, { sort: "all" }), [
+			{ category: "A", price: 1, items: [{ id: 3 }, { id: 1 }] },
+			{ category: "B", price: 3, items: [{ id: 2 }] },
+		]);
+	});
+
+	it("a lone entity whose rows disagree is built from its first sorted row", async () => {
+		const rows = [
+			{ category: "A", price: 5, item$$id: 1 },
+			{ category: "A", price: 1, item$$id: 2 },
+		];
+		const hydrator = createHydrator<(typeof rows)[number]>("category")
+			.fields({ category: true, price: true })
+			.hasMany("items", "item$$", (h) => h("id").fields({ id: true }))
+			.orderBy("price");
+
+		assert.deepEqual(await hydrator.hydrate(rows, { sort: "all" }), [
+			{ category: "A", price: 1, items: [{ id: 2 }, { id: 1 }] },
+		]);
 	});
 });

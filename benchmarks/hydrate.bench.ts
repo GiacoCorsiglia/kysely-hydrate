@@ -297,6 +297,18 @@ group({
 		sizes([100, 1000], "posts")(out);
 		sizes([100, 1000], "tags")(out);
 	}),
+	// Each user's rows shuffled, so both levels have 100 rows to put in order.
+	"100 users, 10 posts x 10 tags, ordered": hydrating(
+		nest(siblingJoins, { modify: (h, _, prefix) => (prefix ? h.orderBy("id", "desc") : h) }),
+		range(100).flatMap((u) => shuffle(siblingRows.slice(u * 100, u * 100 + 100), u)),
+		(out) => {
+			sizes([100, 1000], "posts")(out);
+			assert.deepEqual(
+				[out[0].posts, out[0].tags].map((level) => level.map((e: any) => e.id)),
+				[range(10, 1).toReversed(), range(10, 1).toReversed()],
+			);
+		},
+	),
 });
 
 // 10k rows at every depth, so the per-level cost is what grows.
