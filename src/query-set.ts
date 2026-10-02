@@ -31,6 +31,7 @@ import {
 	applyHoistedPrefixedSelections,
 	applyHoistedSelections,
 	hoistAndPrefixSelections,
+	selectHoisted,
 } from "./helpers/select-renamer.ts";
 import {
 	type AnySelectQueryBuilder,
@@ -2763,7 +2764,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		// derived table) is re-selected by name by its wrapper, so its columns must be hoisted from
 		// the RETURNING clause (which therefore cannot be `returningAll()`).
 		if (isSelect || isLocalSubquery) {
-			return applyHoistedSelections(qb, base);
+			return applyHoistedSelections(qb, base, baseQuery);
 		}
 		return qb.selectAll(baseAlias);
 	}
@@ -2843,7 +2844,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		// Add the (prefixed) selections from the subquery to the parent query.
 		const prefix = makePrefix("", key);
-		qb = applyHoistedPrefixedSelections(prefix, qb, from);
+		qb = applyHoistedPrefixedSelections(prefix, qb, from, collection.querySet);
 
 		return qb;
 	}
@@ -3119,7 +3120,8 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		const reducedPrefixes = [...joinCollections]
 			.filter(([key, collection]) => this.#isReducedJoin(key, collection, isReduced))
 			.map(([key]) => makePrefix("", key));
-		qb = qb.select(
+		qb = selectHoisted(
+			qb,
 			hoistAndPrefixSelections("", cardinalityOneQuery).filter(
 				(s) => !reducedPrefixes.some((prefix) => s.originalName.startsWith(prefix)),
 			),
