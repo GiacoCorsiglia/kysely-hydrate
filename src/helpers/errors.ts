@@ -127,3 +127,30 @@ export class AliasHashCollisionError extends KyselyHydrateError {
 		super(`Aliases "${alias}" and "${otherAlias}" shorten to the same identifier`);
 	}
 }
+
+/**
+ * Error thrown when a column is named `__proto__`.  Assigning that key on a
+ * plain object replaces the object's prototype instead of adding a property,
+ * so hydrated entities (and restored rows) would silently inherit from the
+ * column's value.
+ */
+export class ForbiddenColumnNameError extends KyselyHydrateError {
+	constructor(name: string) {
+		super(
+			`Column name "${name}" is not supported: it would replace the hydrated object's prototype`,
+		);
+	}
+}
+
+/**
+ * Error thrown when a `keyBy` value is an object with no value-based string
+ * form.  Every such object stringifies to "[object Object]", so distinct
+ * entities would be merged into one.
+ */
+export class NonScalarKeyError extends KyselyHydrateError {
+	constructor(partKey: string) {
+		super(
+			`keyBy column "${partKey}" holds an object with no value-based string form; keyBy must be a scalar (or Date/bytes/decimal) column`,
+		);
+	}
+}

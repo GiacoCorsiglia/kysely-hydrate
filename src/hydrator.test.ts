@@ -5,9 +5,11 @@ import {
 	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
+	ForbiddenColumnNameError,
 	KeyByMismatchError,
+	NonScalarKeyError,
 } from "./helpers/errors.ts";
-import { createHydrator, hydrate } from "./hydrator.ts";
+import { createHydrator, EnableAutoInclusion, hydrate } from "./hydrator.ts";
 
 // Test data types
 interface User {
@@ -609,7 +611,6 @@ async function assertKeyGrouping(
 }
 
 const date = new Date("2026-01-02T03:04:05.678Z");
-const nullPrototypeValue = Object.create(null);
 const stringLikeObject = { toString: () => "true" };
 
 /** A grouping case: the rows' key parts, and the group each row belongs to. */
@@ -657,12 +658,6 @@ const keyPartCases: GroupingCase<unknown>[] = [
 		[true, "true", stringLikeObject],
 		[0, 1, 1],
 	],
-	// String() throws for null-prototype objects; the fallback must still key.
-	[
-		"values without a primitive conversion group rather than reject",
-		[nullPrototypeValue, nullPrototypeValue],
-		[0, 0],
-	],
 ];
 
 for (const [name, values, groups] of keyPartCases) {
@@ -672,6 +667,52 @@ for (const [name, values, groups] of keyPartCases) {
 		await assertKeyGrouping(["key1", "key2"], rows, groups);
 	});
 }
+
+// Objects with no value-based string form would all group as one entity, so
+// they are rejected for either `keyBy` shape.  String() throws for the
+// null-prototype object, so that path is covered too.
+for (const [name, value] of [
+	["plain objects", { a: 1 }],
+	["null-prototype objects", Object.create(null)],
+] as const) {
+	test(`keys: ${name} are rejected as key parts`, async () => {
+		const rows = [{ key1: value, key2: "x", nested$$id: 1 }];
+		for (const keyBy of ["key1", ["key1", "key2"]] as const) {
+			const hydrator = createHydrator<(typeof rows)[number]>(keyBy).hasMany(
+				"items",
+				"nested$$",
+				(create) => create("id"),
+			);
+			await assert.rejects(hydrate(rows, hydrator), NonScalarKeyError);
+			await assert.rejects(hydrate(rows, hydrator), /key1/);
+		}
+	});
+}
+
+// `entity["__proto__"] = value` replaces the prototype, so a column with that
+// name is rejected whether it is included explicitly or automatically.
+test("fields: a __proto__ column is rejected", async () => {
+	const row: { id: number } = { id: 1 };
+	Object.defineProperty(row, "__proto__", { value: { admin: true }, enumerable: true });
+
+	// An object literal's `__proto__` key sets its prototype rather than a
+	// property, so the array form is the way to name the column explicitly.
+	const explicit = createHydrator<any>("id").fields(["__proto__"]);
+	await assert.rejects(hydrate([row], explicit), ForbiddenColumnNameError);
+
+	const automatic = createHydrator<any>("id");
+	await assert.rejects(
+		automatic.hydrate([row], { [EnableAutoInclusion]: true }),
+		ForbiddenColumnNameError,
+	);
+
+	// Extras keys are assigned the same way.  A literal `{ __proto__: fn }` sets
+	// the literal's prototype, so an own key needs Object.fromEntries.
+	const extra = createHydrator<any>("id").extras(
+		Object.fromEntries([["__proto__", () => ({ admin: true })]]),
+	);
+	await assert.rejects(hydrate([row], extra), ForbiddenColumnNameError);
+});
 
 // Whole composite keys, as `[key1, key2]` pairs, with the group each belongs
 // to.  These cases vary both parts, so they have no single-key equivalent.

@@ -2,7 +2,9 @@ import {
 	AttachedKeysArityMismatchError,
 	CardinalityViolationError,
 	ExpectedOneItemError,
+	ForbiddenColumnNameError,
 	KeyByMismatchError,
+	NonScalarKeyError,
 } from "./helpers/errors.ts";
 import { type OrderBy, sortBy } from "./helpers/order-by.ts";
 import {
@@ -514,6 +516,10 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 	 * of a function.  Unlike `.extras()` which defines one field at a time,
 	 * `.extend()` calls a single function whose returned object is merged into
 	 * the output.
+	 *
+	 * The returned object's own keys are assigned as-is (`Object.assign`), so
+	 * one named `__proto__` (as `JSON.parse` of untrusted input can produce)
+	 * would replace the entity's prototype.  Return only keys you control.
 	 *
 	 * @param fn - A function that receives the input and returns an object of
 	 *   computed properties
@@ -1112,6 +1118,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		const plannedFields: LevelPlan["fields"][number][] = [];
 		for (const [key, field] of fields ?? []) {
 			if (field !== false) {
+				assertSafeColumnName(key);
 				plannedFields.push({
 					key,
 					inputKey: applyPrefix(prefix, key),
@@ -1124,7 +1131,12 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			prefix,
 			keyBy: prefixKeyBy(prefix, keyBy),
 			fields: plannedFields,
-			extras: extras?.size ? Array.from(extras, ([key, extra]) => ({ key, extra })) : undefined,
+			extras: extras?.size
+				? Array.from(extras, ([key, extra]) => {
+						assertSafeColumnName(key);
+						return { key, extra };
+					})
+				: undefined,
 			extenders: extenders?.length ? extenders : undefined,
 			collections: collections?.size
 				? Array.from(collections, ([key, collection]) => ({
@@ -1275,6 +1287,8 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			if (fields?.has(unprefixedKey) || extras?.has(unprefixedKey)) {
 				continue;
 			}
+
+			assertSafeColumnName(unprefixedKey);
 
 			// The output gets the unprefixed key.
 			same &&= previous![autoFields.length]?.key === unprefixedKey;
@@ -1701,26 +1715,42 @@ function keyPart(input: unknown, partKey: string): unknown {
 	if (value instanceof Uint8Array) {
 		return value.join(",");
 	}
-	return stringifyKeyPart(value);
+	return stringifyKeyPart(value, partKey);
 }
 
 /**
  * The `String()` form of a key part that is neither a primitive nor a type
- * {@link keyPart} knows, so exotic values still group deterministically (if
- * not always distinctly — every plain object stringifies to
- * `[object Object]`).
+ * {@link keyPart} knows, so exotic values (decimals, say) still group by
+ * value.  Plain objects have no value-based form and are rejected.
  *
  * Kept out of keyPart because a `try` block would stop that hot function from
  * being inlined.
  */
-function stringifyKeyPart(value: object): string {
+function stringifyKeyPart(value: object, partKey: string): string {
+	let form: string;
 	try {
-		return String(value);
+		form = String(value);
 	} catch {
 		// String() throws for values with no primitive conversion (e.g.
-		// null-prototype objects); fall back to the default toString form rather
-		// than rejecting.
-		return Object.prototype.toString.call(value);
+		// null-prototype objects), which have no value-based form either.
+		throw new NonScalarKeyError(partKey);
+	}
+	// Plain objects (JSON columns, say) all share this form, so grouping by it
+	// would merge every entity into one.
+	if (form === "[object Object]") {
+		throw new NonScalarKeyError(partKey);
+	}
+	return form;
+}
+
+/**
+ * Rejects `__proto__` as an output key: `entity["__proto__"] = value` replaces
+ * the entity's prototype rather than adding a property.  Called once per plan
+ * (fields, extras) or once per hydration (auto fields), never per row.
+ */
+function assertSafeColumnName(name: string): void {
+	if (name === "__proto__") {
+		throw new ForbiddenColumnNameError(name);
 	}
 }
 

@@ -5,6 +5,7 @@ import { CamelCasePlugin, type Compilable, type Kysely, type KyselyPlugin, sql }
 
 import { getDbForTest } from "./__tests__/db.ts";
 import { fixLongAliases } from "./fix-long-aliases.ts";
+import { ForbiddenColumnNameError } from "./helpers/errors.ts";
 
 const rawDb = getDbForTest();
 const db = rawDb.withPlugin(fixLongAliases());
@@ -63,6 +64,19 @@ describe("fix-long-aliases", () => {
 		const result = await plugin.transformResult({ result: { rows }, queryId });
 
 		assert.strictEqual(result.rows, rows);
+	});
+
+	test("rejects a row key that restores to __proto__", async () => {
+		const plugin = fixLongAliases();
+		const pluginDb = rawDb.withPlugin(plugin);
+		const { queryId } = selectLiterals(pluginDb, { [ALIAS_64]: 1 }).compile();
+		const row: Record<string, unknown> = { [ALIAS_63]: 1 };
+		Object.defineProperty(row, "__proto__", { value: { admin: true }, enumerable: true });
+
+		await assert.rejects(
+			plugin.transformResult({ result: { rows: [row] }, queryId }),
+			ForbiddenColumnNameError,
+		);
 	});
 
 	test("is deterministic across plugin instances", () => {
