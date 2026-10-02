@@ -384,20 +384,34 @@ function columnComparator(
 
 /**
  * Up to this many rows, {@link sortBy} sorts with {@link insertionSort}.  V8's
- * `Array.prototype.sort` uses binary insertion for runs this short too (22),
- * but first allocates its TimSort state, about a kilobyte per call, which the
- * hydrator paid once per parent per nested level.
+ * `Array.prototype.sort` sorts short arrays by binary insertion too, but first
+ * allocates its TimSort state, about a kilobyte per call, which the hydrator
+ * paid once per parent per nested level.
  */
 const INSERTION_SORT_MAX = 22;
 
 /**
- * Sorts `indices` by binary insertion, given that its first `sorted` entries
- * are already in order.  `compare` never returns 0 for distinct indices (ties
- * are broken by index), so where an index lands is unambiguous and the sort is
- * stable.
+ * Sorts the identity permutation `indices` by binary insertion, given that its
+ * first `sorted` entries are already in order.  `compare` never returns 0 for
+ * distinct indices (ties are broken by index), so every index has exactly one
+ * place and the result is the one `Array#sort` gives.
  */
 function insertionSort(indices: number[], sorted: number, compare: IndexCompare): void {
-	for (let i = sorted; i < indices.length; i++) {
+	const n = indices.length;
+	// As in V8's TimSort, a strictly descending prefix is reversed into a run,
+	// so rows arriving in the opposite order cost one compare each.  Index 1
+	// is known to precede index 0, or the in-order prefix would be longer.
+	if (sorted === 1) {
+		sorted = 2;
+		while (sorted < n && compare(sorted, sorted - 1) < 0) {
+			sorted++;
+		}
+		for (let low = 0, high = sorted - 1; low < high; low++, high--) {
+			indices[low] = high;
+			indices[high] = low;
+		}
+	}
+	for (let i = sorted; i < n; i++) {
 		const index = indices[i]!;
 		let low = 0;
 		let high = i;
@@ -474,8 +488,8 @@ export function sortBy<T>(
 				};
 
 	// Rows often arrive in order already; then skip the sort and permutation.
-	// Rows in order but the last pay for this scan and TimSort's own, which
-	// measured no slower than before the check existed.
+	// Short inputs resume sorting where this scan stopped; longer ones pay for
+	// it and TimSort's own, which measured no slower than without the check.
 	let inOrder = 1;
 	while (inOrder < n && compare(inOrder - 1, inOrder) <= 0) {
 		inOrder++;
