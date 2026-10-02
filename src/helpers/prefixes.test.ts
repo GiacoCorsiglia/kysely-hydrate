@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
+	MAX_PREFIXED_KEYS,
 	getPrefixedValue,
 	hasPrefix,
 	makePrefix,
@@ -62,20 +63,81 @@ test("getPrefixedValue: reads the prefixed key from the input", () => {
 test("createdPrefixedAccessor: empty prefix returns the input object itself", () => {
 	const row = { id: 1, name: "alice" };
 
-	assert.strictEqual(createdPrefixedAccessor("", row), row);
+	assert.strictEqual(createdPrefixedAccessor("", row, new Map()), row);
 });
 
 test("createdPrefixedAccessor: get reads through the prefix", () => {
 	const row = { id: 1, posts$$id: 10, posts$$title: "Post 10" };
-	const accessor = createdPrefixedAccessor("posts$$", row);
+	const accessor = createdPrefixedAccessor("posts$$", row, new Map());
 
 	assert.strictEqual(accessor.id, 10);
 	assert.strictEqual(accessor.title, "Post 10");
 });
 
+test("createdPrefixedAccessor: accessors sharing prefixed keys read their own rows", () => {
+	const keys = new Map<string, string>();
+	const first = createdPrefixedAccessor("posts$$", { posts$$id: 10, posts$$title: "A" }, keys);
+	const second = createdPrefixedAccessor(
+		"posts$$",
+		{ posts$$id: 20 } as { posts$$id: number; posts$$title?: string },
+		keys,
+	);
+
+	assert.deepStrictEqual(
+		[first.id, first.title, second.id, second.title],
+		[10, "A", 20, undefined],
+	);
+	// Every key read is cached, including ones the row didn't have.
+	assert.deepStrictEqual(
+		[...keys],
+		[
+			["id", "posts$$id"],
+			["title", "posts$$title"],
+		],
+	);
+	assert.strictEqual(second.id, 20);
+});
+
+test("createdPrefixedAccessor: get throws for symbol keys", () => {
+	const accessor = createdPrefixedAccessor("posts$$", { posts$$id: 10 }, new Map());
+
+	assert.throws(() => (accessor as Record<symbol, unknown>)[Symbol.iterator], TypeError);
+});
+
+test("createdPrefixedAccessor: stops caching prefixed keys at the cap, and still reads", () => {
+	const keys = new Map<string, string>();
+	const row: Record<string, number> = {};
+	for (let i = 0; i < MAX_PREFIXED_KEYS + 10; i++) {
+		row[`posts$$k${i}`] = i;
+	}
+	const accessor = createdPrefixedAccessor("posts$$", row, keys) as Record<string, number>;
+
+	for (let i = 0; i < MAX_PREFIXED_KEYS + 10; i++) {
+		assert.strictEqual(accessor[`k${i}`], i);
+	}
+	assert.strictEqual(keys.size, MAX_PREFIXED_KEYS);
+	assert.strictEqual(accessor[`k${MAX_PREFIXED_KEYS + 5}`], MAX_PREFIXED_KEYS + 5);
+});
+
+test("createdPrefixedAccessor: caches keys named like Object.prototype members", () => {
+	const keys = new Map<string, string>();
+	const row = JSON.parse('{"posts$$__proto__": 1, "posts$$constructor": 2}') as object;
+	const accessor = createdPrefixedAccessor("posts$$", row, keys) as Record<string, unknown>;
+
+	assert.deepStrictEqual([accessor.__proto__, accessor.constructor], [1, 2]);
+	assert.deepStrictEqual([accessor.__proto__, accessor.constructor], [1, 2]);
+	assert.deepStrictEqual(
+		[...keys],
+		[
+			["__proto__", "posts$$__proto__"],
+			["constructor", "posts$$constructor"],
+		],
+	);
+});
+
 test("createdPrefixedAccessor: get returns undefined for keys outside the prefix", () => {
 	const row = { id: 1, posts$$id: 10 };
-	const accessor = createdPrefixedAccessor("posts$$", row) as Record<string, unknown>;
+	const accessor = createdPrefixedAccessor("posts$$", row, new Map()) as Record<string, unknown>;
 
 	// "id" resolves to "posts$$id"; the parent's bare "id" is not reachable.
 	assert.strictEqual(accessor.missing, undefined);
@@ -84,7 +146,7 @@ test("createdPrefixedAccessor: get returns undefined for keys outside the prefix
 
 test("createdPrefixedAccessor: has trap checks the prefixed key", () => {
 	const row = { id: 1, posts$$id: 10 };
-	const accessor = createdPrefixedAccessor("posts$$", row);
+	const accessor = createdPrefixedAccessor("posts$$", row, new Map());
 
 	assert.strictEqual("id" in accessor, true);
 	assert.strictEqual("title" in accessor, false);
@@ -100,7 +162,7 @@ test("createdPrefixedAccessor: ownKeys lists only this prefix level, stripped", 
 		posts$$title: "Post 10",
 		posts$$comments$$id: 100,
 	};
-	const accessor = createdPrefixedAccessor("posts$$", row);
+	const accessor = createdPrefixedAccessor("posts$$", row, new Map());
 
 	// Nested-collection keys keep their remaining prefix; hydration filters
 	// them out separately (see #getAutoFields).
@@ -109,14 +171,14 @@ test("createdPrefixedAccessor: ownKeys lists only this prefix level, stripped", 
 
 test("createdPrefixedAccessor: spread materializes the stripped view", () => {
 	const row = { id: 1, posts$$id: 10, posts$$title: "Post 10" };
-	const accessor = createdPrefixedAccessor("posts$$", row);
+	const accessor = createdPrefixedAccessor("posts$$", row, new Map());
 
 	assert.deepStrictEqual({ ...accessor }, { id: 10, title: "Post 10" });
 });
 
 test("createdPrefixedAccessor: works for a doubly-nested prefix", () => {
 	const row = { id: 1, posts$$id: 10, posts$$comments$$id: 100, posts$$comments$$body: "hi" };
-	const accessor = createdPrefixedAccessor("posts$$comments$$", row);
+	const accessor = createdPrefixedAccessor("posts$$comments$$", row, new Map());
 
 	assert.strictEqual(accessor.id, 100);
 	assert.deepStrictEqual({ ...accessor }, { id: 100, body: "hi" });
@@ -124,7 +186,7 @@ test("createdPrefixedAccessor: works for a doubly-nested prefix", () => {
 
 test("createdPrefixedAccessor: null and undefined values are preserved", () => {
 	const row = { posts$$id: null, posts$$title: undefined };
-	const accessor = createdPrefixedAccessor("posts$$", row);
+	const accessor = createdPrefixedAccessor("posts$$", row, new Map());
 
 	assert.strictEqual(accessor.id, null);
 	assert.strictEqual(accessor.title, undefined);
@@ -143,7 +205,7 @@ test("createdPrefixedAccessor: null and undefined values are preserved", () => {
 test("createdPrefixedAccessor: enumerates a frozen input row", () => {
 	const input = Object.freeze({ id: 1, posts$$id: 7, posts$$title: "t" });
 
-	const accessor = createdPrefixedAccessor("posts$$", input);
+	const accessor = createdPrefixedAccessor("posts$$", input, new Map());
 
 	assert.deepStrictEqual(Object.keys(accessor), ["id", "title"]);
 	assert.deepStrictEqual({ ...accessor }, { id: 7, title: "t" });
@@ -160,7 +222,7 @@ test("createdPrefixedAccessor: reports properties of a frozen row as configurabl
 	const input = Object.freeze({ posts$$id: 7 });
 
 	const descriptor = Object.getOwnPropertyDescriptor(
-		createdPrefixedAccessor("posts$$", input),
+		createdPrefixedAccessor("posts$$", input, new Map()),
 		"id",
 	);
 
@@ -182,7 +244,7 @@ test("createdPrefixedAccessor: reports properties of a frozen row as configurabl
 test("createdPrefixedAccessor: set writes through the prefix", () => {
 	const input: Record<string, unknown> = { id: 1, posts$$id: 7 };
 
-	const accessor = createdPrefixedAccessor("posts$$", input) as Record<string, unknown>;
+	const accessor = createdPrefixedAccessor("posts$$", input, new Map()) as Record<string, unknown>;
 	accessor["title"] = "written";
 	accessor["id"] = 8;
 
@@ -198,7 +260,7 @@ test("createdPrefixedAccessor: set writes through the prefix", () => {
 test("createdPrefixedAccessor: defineProperty and delete apply the prefix", () => {
 	const input: Record<string, unknown> = { posts$$id: 7, posts$$title: "t" };
 
-	const accessor = createdPrefixedAccessor("posts$$", input) as Record<string, unknown>;
+	const accessor = createdPrefixedAccessor("posts$$", input, new Map()) as Record<string, unknown>;
 	Object.defineProperty(accessor, "extra", { value: 1, enumerable: true, configurable: true });
 	delete accessor["title"];
 
@@ -207,10 +269,11 @@ test("createdPrefixedAccessor: defineProperty and delete apply the prefix", () =
 });
 
 test("createdPrefixedAccessor: writing to a frozen input row throws", () => {
-	const accessor = createdPrefixedAccessor("posts$$", Object.freeze({ posts$$id: 7 })) as Record<
-		string,
-		unknown
-	>;
+	const accessor = createdPrefixedAccessor(
+		"posts$$",
+		Object.freeze({ posts$$id: 7 }),
+		new Map(),
+	) as Record<string, unknown>;
 
 	assert.throws(() => {
 		accessor["title"] = "nope";
@@ -222,7 +285,7 @@ test("createdPrefixedAccessor: the accessor's own machinery is not observable", 
 	// happen to share those names must still resolve to the row's values.
 	const input = { posts$$prefix: "col-prefix", posts$$input: "col-input" };
 
-	const accessor = createdPrefixedAccessor("posts$$", input) as Record<string, unknown>;
+	const accessor = createdPrefixedAccessor("posts$$", input, new Map()) as Record<string, unknown>;
 
 	assert.strictEqual(accessor["prefix"], "col-prefix");
 	assert.strictEqual(accessor["input"], "col-input");
