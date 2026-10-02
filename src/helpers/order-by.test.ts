@@ -624,6 +624,60 @@ describe("sortBy agrees with sqlCompare", () => {
 	}
 });
 
+// Short inputs are sorted by sortBy's own insertion sort, longer ones by
+// Array#sort; every length on both sides of the switch must agree with the
+// reference, including inputs whose first rows are already in order.
+describe("sortBy agrees with a stable sort at every length", () => {
+	interface Row {
+		readonly value: number | null;
+		readonly i: number;
+	}
+
+	/** A seeded generator (mulberry32), so failures reproduce. */
+	const random = (seed: number) => () => {
+		seed = (seed + 0x6d2b79f5) >>> 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+
+	const byValue = (direction: "asc" | "desc"): OrderBy<Row>[] => [{ key: "value", direction }];
+	/** Array#sort is stable; nulls sort last ascending and first descending. */
+	const reference = (rows: readonly Row[], direction: "asc" | "desc") =>
+		rows.slice().sort((x, y) => {
+			if (x.value === null || y.value === null) {
+				const nullFirst = (x.value === null ? -1 : 1) * (y.value === x.value ? 0 : 1);
+				return direction === "asc" ? -nullFirst : nullFirst;
+			}
+			return direction === "asc" ? x.value - y.value : y.value - x.value;
+		});
+
+	for (let length = 0; length <= 30; length++) {
+		it(`${length} rows`, () => {
+			for (let seed = 1; seed <= 20; seed++) {
+				const next = random(seed * 100 + length);
+				// Few distinct values, so ties are common, and some nulls.
+				const values = Array.from({ length }, () =>
+					next() < 0.15 ? null : Math.floor(next() * 5),
+				);
+				// Half the inputs start with an ordered run of random length.
+				if (seed % 2 === 0) {
+					const run = Math.floor(next() * (length + 1));
+					values.splice(0, run, ...values.slice(0, run).sort((a, b) => (a ?? 99) - (b ?? 99)));
+				}
+				const rows: Row[] = values.map((value, i) => ({ value, i }));
+				for (const direction of ["asc", "desc"] as const) {
+					assert.deepEqual(
+						sortBy(rows, byValue(direction)),
+						reference(rows, direction),
+						`seed ${seed}, ${direction}`,
+					);
+				}
+			}
+		});
+	}
+});
+
 describe("sortBy key extraction", () => {
 	interface Row {
 		readonly id: number;

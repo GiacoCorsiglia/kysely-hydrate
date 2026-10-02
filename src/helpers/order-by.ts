@@ -383,6 +383,40 @@ function columnComparator(
 }
 
 /**
+ * Up to this many rows, {@link sortBy} sorts with {@link insertionSort}.  V8's
+ * `Array.prototype.sort` uses binary insertion for runs this short too (22),
+ * but first allocates its TimSort state, about a kilobyte per call, which the
+ * hydrator paid once per parent per nested level.
+ */
+const INSERTION_SORT_MAX = 22;
+
+/**
+ * Sorts `indices` by binary insertion, given that its first `sorted` entries
+ * are already in order.  `compare` never returns 0 for distinct indices (ties
+ * are broken by index), so where an index lands is unambiguous and the sort is
+ * stable.
+ */
+function insertionSort(indices: number[], sorted: number, compare: IndexCompare): void {
+	for (let i = sorted; i < indices.length; i++) {
+		const index = indices[i]!;
+		let low = 0;
+		let high = i;
+		while (low < high) {
+			const mid = (low + high) >>> 1;
+			if (compare(index, indices[mid]!) < 0) {
+				high = mid;
+			} else {
+				low = mid + 1;
+			}
+		}
+		for (let j = i; j > low; j--) {
+			indices[j] = indices[j - 1]!;
+		}
+		indices[low] = index;
+	}
+}
+
+/**
  * Sorts rows by the given orderings into a new array. Keys are extracted once
  * per row rather than on every comparison; for function keys the hydrator
  * builds a Proxy per extraction, so this is O(n) Proxies instead of O(n log n).
@@ -454,7 +488,11 @@ export function sortBy<T>(
 	for (let i = 0; i < n; i++) {
 		indices[i] = i;
 	}
-	indices.sort(compare);
+	if (n <= INSERTION_SORT_MAX) {
+		insertionSort(indices, inOrder, compare);
+	} else {
+		indices.sort(compare);
+	}
 
 	const sorted = new Array<T>(n);
 	for (let i = 0; i < n; i++) {
