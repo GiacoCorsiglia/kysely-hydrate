@@ -8,6 +8,7 @@ import { type OrderBy, sortBy } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
+	type PrefixedKeys,
 	hasPrefix,
 	removePrefix,
 	type SelectAndStripPrefix,
@@ -860,6 +861,8 @@ interface LevelPlan {
 	shapeAnchor: object | undefined;
 	/** The auto fields {@link shapeAnchor} was built with. */
 	shapeAnchorAutoFields: readonly AutoField[] | undefined;
+	/** For the prefixed accessors this level's callbacks read rows through. */
+	readonly accessorKeys: PrefixedKeys;
 }
 
 /**
@@ -1149,6 +1152,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			),
 			shapeAnchor: undefined,
 			shapeAnchorAutoFields: undefined,
+			accessorKeys: new Map(),
 		};
 	}
 
@@ -1185,7 +1189,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 				if (!seen.addFirst(input, keyBy)) {
 					continue;
 				}
-				inputArray.push(prefix !== "" ? createdPrefixedAccessor(prefix, input as object) : input);
+				inputArray.push(
+					prefix !== ""
+						? createdPrefixedAccessor(prefix, input as object, plan.accessorKeys)
+						: input,
+				);
 			}
 
 			// When there are no inputs left (no rows at all, or every row dropped
@@ -1325,7 +1333,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		}
 
 		if (extras || extenders) {
-			const accessor = createdPrefixedAccessor(prefix, input as object);
+			const accessor = createdPrefixedAccessor(prefix, input as object, plan.accessorKeys);
 
 			if (extras) {
 				for (let i = 0; i < extras.length; i++) {
@@ -1400,7 +1408,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			// Convert to array for sorting
 			const inputsArray = Array.isArray(inputs) ? inputs : Array.from(inputs);
 
-			sortedInputs = sortBy(inputsArray, finalOrderings, this.#makePrefixedGetValue(prefix));
+			sortedInputs = sortBy(inputsArray, finalOrderings, this.#makePrefixedGetValue(plan));
 		}
 
 		const result: Output[] = [];
@@ -1487,11 +1495,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * {@link LevelPlan.orderings}); function keys get a prefixed accessor so they
 	 * can access unprefixed fields.
 	 */
-	#makePrefixedGetValue(prefix: string) {
+	#makePrefixedGetValue({ prefix, accessorKeys }: LevelPlan) {
 		return (obj: Input, key: keyof Input | ((input: Input) => unknown)): unknown => {
 			if (typeof key === "function") {
 				// Create a prefixed accessor so the function can access fields without the prefix
-				const accessor = createdPrefixedAccessor(prefix, obj as object);
+				const accessor = createdPrefixedAccessor(prefix, obj as object, accessorKeys);
 				return key(accessor as Input);
 			}
 			return obj[key];

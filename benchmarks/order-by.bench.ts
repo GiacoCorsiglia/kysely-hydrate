@@ -25,6 +25,8 @@ function makeRows(n: number): Row[] {
 }
 
 const PREFIX = "posts$$";
+/** A level plan's `accessorKeys`, shared by every accessor at its level. */
+const accessorKeys = new Map<string, string>();
 
 /**
  * A copy of the private `Hydrator#makePrefixedGetValue`, not a simplification:
@@ -33,7 +35,7 @@ const PREFIX = "posts$$";
  */
 const prefixedGetValue: GetValue = (row, key) =>
 	typeof key === "function"
-		? key(createdPrefixedAccessor(PREFIX, row) as unknown as Row)
+		? key(createdPrefixedAccessor(PREFIX, row, accessorKeys) as unknown as Row)
 		: getPrefixedValue(PREFIX, row, key);
 
 /** Every column prefixed, as a nested level receives them.  Only `prefixedGetValue` reads these. */
