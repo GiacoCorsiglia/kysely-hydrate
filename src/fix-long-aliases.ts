@@ -1,7 +1,7 @@
 import * as k from "kysely";
 
 import { AliasHashCollisionError } from "./helpers/errors.ts";
-import { byteLength, someOperationNode } from "./helpers/utils.ts";
+import { byteLength } from "./helpers/utils.ts";
 
 /** PostgreSQL truncates identifiers longer than this (NAMEDATALEN - 1). */
 export const MAX_IDENTIFIER_BYTES = 63;
@@ -103,15 +103,25 @@ class ShortenIdentifiers extends k.OperationNodeTransformer {
 	 * shortened ("marked")? Kysely's transformer deep-clones, so only clone
 	 * when it must.
 	 */
-	scan(node: k.OperationNode): { long: boolean; marked: boolean } {
-		const found = { long: false, marked: false };
-		someOperationNode(node, (n) => {
+	scan(node: unknown, found = { long: false, marked: false }): typeof found {
+		if (found.long && found.marked) {
+			return found;
+		}
+		if (Array.isArray(node)) {
+			for (const item of node) {
+				this.scan(item, found);
+			}
+		} else if (typeof node === "object" && node !== null && "kind" in node) {
+			const n = node as k.OperationNode;
 			if (k.IdentifierNode.is(n)) {
 				found.long ||= !this.#fits(n.name);
 				found.marked ||= n.name.includes(MARKER);
+			} else if (!k.ValueNode.is(n) && !k.PrimitiveValueListNode.is(n)) {
+				for (const key in n) {
+					this.scan((node as Record<string, unknown>)[key], found);
+				}
 			}
-			return found.long && found.marked;
-		});
+		}
 		return found;
 	}
 

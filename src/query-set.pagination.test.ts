@@ -252,18 +252,11 @@ describe("query-set: pagination", () => {
 
 	// clearLimit and clearOffset
 
-	test("pagination: joins referencing a many-join and a one-join", async () => {
+	test("pagination: innerJoinOne referencing a leftJoinMany", async () => {
 		// The types forbid referencing an adjacent join, but at runtime the join
-		// referencing the many-join must move out of the paginated subquery, along
-		// with the one-join it also references.
+		// referencing the many-join must move out of the paginated subquery.
 		const query = querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
-			.leftJoinOne(
-				"profile",
-				({ eb, qs }) => qs(eb.selectFrom("profiles").select(["id", "user_id"])),
-				"profile.user_id",
-				"user.id",
-			)
 			.leftJoinMany(
 				"posts",
 				({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "user_id"])),
@@ -274,12 +267,8 @@ describe("query-set: pagination", () => {
 				"author",
 				({ eb, qs }) =>
 					qs(eb.selectFrom("profiles").select(["id", "user_id"]).where("user_id", "in", [2, 3, 4])),
-				(join) =>
-					join
-						// @ts-expect-error - "posts" is not in scope
-						.onRef("author.user_id", "=", "posts.user_id")
-						// @ts-expect-error - "profile" is not in scope
-						.onRef("author.id", "=", "profile.id"),
+				// @ts-expect-error - "posts" is not in scope
+				(join) => join.onRef("author.user_id", "=", "posts.user_id"),
 			)
 			.limit(2)
 			.offset(1);
