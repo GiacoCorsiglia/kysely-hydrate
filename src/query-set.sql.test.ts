@@ -337,6 +337,95 @@ describe("query-set: sql", () => {
 		);
 	});
 
+	test("SQL: executeCount with innerJoinLateralMany - converts to WHERE EXISTS, lateral correlation preserved", async () => {
+		// §5-8: a filtering lateral many-join takes the same EXISTS-conversion as
+		// innerJoinMany (avoiding row explosion), but the join inside the EXISTS is
+		// `inner join lateral` and the subquery's correlation to the base alias
+		// (`where "posts"."user_id" = "user"."id"`) must still resolve to the OUTER
+		// `user` once it has been re-nested inside the EXISTS clause (the "rejoin").
+		// The subquery's own limit is load-bearing here (top-N-per-group), so it must
+		// survive into the EXISTS too.
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.innerJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id")
+							.orderBy("posts.id", "desc")
+							.limit(2),
+					),
+				(join) => join.onTrue(),
+			)
+			.where("users.id", "<=", 3);
+
+		const sql = qs.toCountQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			select count(*) as "count"
+			from (
+				select "id", "username"
+				from "users"
+				where "users"."id" <= ?
+			) as "user"
+			-- innerJoinLateralMany converts to WHERE EXISTS, just like innerJoinMany
+			where exists (
+				select 1 as "_", "posts"."id" as "posts$$id", "posts"."title" as "posts$$title", "posts"."user_id" as "posts$$user_id"
+				from (SELECT 1) as "__"
+				-- The join inside the EXISTS is a LATERAL join...
+				inner join lateral (
+					select "id", "title", "user_id"
+					from "posts"
+					-- ...and its correlation to the base alias survives the re-nesting (the "rejoin"),
+					-- as does the load-bearing limit
+					where "posts"."user_id" = "user"."id"
+					order by "posts"."id" desc
+					limit ?
+				) as "posts" on true
+			)
+		`,
+		);
+	});
+
+	test("SQL: executeCount with leftJoinLateralMany - join omitted from count", async () => {
+		// A non-filtering lateral many-join cannot change the base-record count, so
+		// (like leftJoinMany) it is dropped from the count query entirely.
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "title", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id"),
+					),
+				(join) => join.onTrue(),
+			)
+			.where("users.id", "<=", 3);
+
+		const sql = qs.toCountQuery().compile().sql;
+
+		assert.strictEqual(
+			sql,
+			snapshot`
+			select count(*) as "count"
+			from (
+				select "id", "username"
+				from "users"
+				where "users"."id" <= ?
+			) as "user"
+			-- leftJoinLateralMany should be omitted from count query
+		`,
+		);
+	});
+
 	//
 	// Pagination SQL Generation with Many-Joins
 	//
