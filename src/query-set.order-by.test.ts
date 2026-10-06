@@ -1436,6 +1436,85 @@ describe("query-set: order-by", () => {
 		assert.strictEqual(Number(await qs.executeCount()), 10);
 		assert.strictEqual(await qs.executeExists(), true);
 	});
+
+	//
+	// Modifier-callback form and explicit nulls placement
+	//
+	// orderBy accepts Kysely's modifier callback `(ob) => ob.desc().nullsLast()`
+	// in addition to the "asc"/"desc" string. Explicit nulls placement is only
+	// expressible through the callback. These results are dialect-independent:
+	// the hydrator re-sorts in JS (SQLite defaults NULLs first for ASC, Postgres
+	// defaults them last, but the JS comparator normalizes both).
+
+	test("orderBy: accepts a modifier callback (ob => ob.desc())", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.orderBy("username", (ob) => ob.desc())
+			.execute();
+
+		// Reverse alphabetical (the mirror of the asc case at the top of the file)
+		assert.deepStrictEqual(
+			users.map((u) => u.username),
+			["judy", "ivan", "heidi", "grace", "frank", "eve", "dave", "carol", "bob", "alice"],
+		);
+	});
+
+	test("orderBy: callback nullsFirst places matchless left-join rows first", async () => {
+		// Only users 1-5 have a profile in the join subquery, so users 6-10 get a
+		// null profile (and null bio). nullsFirst floats them to the front; the
+		// keyBy (user.id) breaks ties among the nulls.
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOne(
+				"profile",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "<=", 5)),
+				"profile.user_id",
+				"user.id",
+			)
+			.orderBy("profile$$bio", (ob) => ob.asc().nullsFirst())
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 6, username: "bob", profile: null },
+			{ id: 7, username: "judy", profile: null },
+			{ id: 8, username: "frank", profile: null },
+			{ id: 9, username: "dave", profile: null },
+			{ id: 10, username: "heidi", profile: null },
+			{ id: 2, username: "alice", profile: { id: 2, bio: "Bio for alice", user_id: 2 } },
+			{ id: 5, username: "carol", profile: { id: 9, bio: "Bio for carol", user_id: 5 } },
+			{ id: 4, username: "eve", profile: { id: 4, bio: "Bio for eve", user_id: 4 } },
+			{ id: 1, username: "grace", profile: { id: 5, bio: "Bio for grace", user_id: 1 } },
+			{ id: 3, username: "ivan", profile: { id: 8, bio: "Bio for ivan", user_id: 3 } },
+		]);
+	});
+
+	test("orderBy: callback nullsLast places matchless left-join rows last", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinOne(
+				"profile",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"]).where("user_id", "<=", 5)),
+				"profile.user_id",
+				"user.id",
+			)
+			.orderBy("profile$$bio", (ob) => ob.asc().nullsLast())
+			.execute();
+
+		assert.deepStrictEqual(users, [
+			{ id: 2, username: "alice", profile: { id: 2, bio: "Bio for alice", user_id: 2 } },
+			{ id: 5, username: "carol", profile: { id: 9, bio: "Bio for carol", user_id: 5 } },
+			{ id: 4, username: "eve", profile: { id: 4, bio: "Bio for eve", user_id: 4 } },
+			{ id: 1, username: "grace", profile: { id: 5, bio: "Bio for grace", user_id: 1 } },
+			{ id: 3, username: "ivan", profile: { id: 8, bio: "Bio for ivan", user_id: 3 } },
+			{ id: 6, username: "bob", profile: null },
+			{ id: 7, username: "judy", profile: null },
+			{ id: 8, username: "frank", profile: null },
+			{ id: 9, username: "dave", profile: null },
+			{ id: 10, username: "heidi", profile: null },
+		]);
+	});
 });
 
 // A paginated lateral query set takes the same paginated subquery path.  PostgreSQL only.
