@@ -11,7 +11,7 @@ const db = getDbForTest();
 // Tests
 //
 
-describePg("query-set: postgres-write", () => {
+describePg("query-set: postgres-write-cte", () => {
 	//
 	// writeAs() - basic data-modifying CTE
 	//
