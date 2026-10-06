@@ -899,6 +899,34 @@ interface Post {
 	>();
 }
 
+// A nullable one-join keeps its nested collections inside the nullable object
+
+{
+	const result = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.leftJoinOne(
+			"profile",
+			({ eb, qs }) =>
+				qs(eb.selectFrom("profiles").select(["id", "user_id"])).leftJoinMany(
+					"posts",
+					({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "user_id"])),
+					"posts.user_id",
+					"profile.user_id",
+				),
+			"profile.user_id",
+			"user.id",
+		)
+		.execute();
+
+	expectTypeOf(result).resolves.toEqualTypeOf<
+		{
+			id: number;
+			username: string;
+			profile: { id: number; user_id: number; posts: { id: number; user_id: number }[] } | null;
+		}[]
+	>();
+}
+
 ////////////////////////////////////////////////////////////
 // $castTo
 ////////////////////////////////////////////////////////////

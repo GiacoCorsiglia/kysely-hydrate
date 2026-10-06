@@ -120,6 +120,33 @@ type InferTB<T> = T extends k.SelectQueryBuilder<any, infer TB, any> ? TB : neve
 		.execute();
 }
 
+// Rejects many-join columns: a base row has no single value to order by
+
+{
+	querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.leftJoinMany(
+			"posts",
+			({ eb, qs }) => qs(eb.selectFrom("posts").select(["id", "title", "user_id"])),
+			"posts.user_id",
+			"user.id",
+		)
+		// @ts-expect-error - many-join columns are not orderable
+		.orderBy("posts$$title");
+}
+
+// clearOrderBy and orderByKeys keep the query set's type
+
+{
+	const qs = querySet(db)
+		.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+		.orderBy("username");
+
+	expectTypeOf(qs.clearOrderBy()).toEqualTypeOf<typeof qs>();
+	expectTypeOf(qs.orderByKeys()).toEqualTypeOf<typeof qs>();
+	expectTypeOf(qs.orderByKeys(false)).toEqualTypeOf<typeof qs>();
+}
+
 ////////////////////////////////////////////////////////////
 // Query Compilation - toBaseQuery
 ////////////////////////////////////////////////////////////
