@@ -866,20 +866,6 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 	const hydrator1 = createHydrator<User>().fields({ name: true });
 	const result1 = hydrator1.hydrate([] as User[]);
 	expectTypeOf(result1).resolves.toEqualTypeOf<{ name: string }[]>();
-
-	// keyBy required when input doesn't have 'id'
-	interface NoIdUser {
-		userId: number;
-		name: string;
-	}
-
-	// @ts-expect-error - keyBy required when input doesn't have 'id'
-	createHydrator<NoIdUser>();
-
-	// But works with explicit keyBy
-	const hydrator4 = createHydrator<NoIdUser>("userId");
-	const result4 = hydrator4.hydrate([] as NoIdUser[]);
-	expectTypeOf(result4).resolves.toEqualTypeOf<{}[]>();
 }
 
 //
@@ -943,7 +929,10 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 	// @ts-expect-error - createHydrator requires keyBy when input doesn't have 'id'
 	createHydrator<NoIdUser>();
 
-	// Works with explicit keyBy
+	// Works with explicit keyBy; selects nothing until fields are added
+	expectTypeOf(createHydrator<NoIdUser>("userId").hydrate([] as NoIdUser[])).resolves.toEqualTypeOf<
+		{}[]
+	>();
 	const validHydrator = createHydrator<NoIdUser>("userId").fields({
 		userId: true,
 		name: true,
