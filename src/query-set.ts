@@ -2952,27 +2952,22 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isOutermost: boolean,
 	): AnySelectQueryBuilder {
 		const { baseAlias } = this.#props;
+		// A reference rather than a string: Kysely would read a space in a string as a direction.
+		const { ref } = k.expressionBuilder<any, any>();
 
 		for (const { expr, modifiers } of this.#getOwnOrderBy()) {
-			let orderExpr: string | k.Expression<any>;
-			if (!expr.includes(SEP)) {
-				// A base column.
-				orderExpr = `${baseAlias}.${expr}`;
-			} else if (isOuter) {
-				// A cardinality-one join's column, hoisted by the paginated subquery.
-				orderExpr = k.expressionBuilder<any, any>(qb).ref(`${baseAlias}.${expr}`);
-			} else {
-				// A cardinality-one join's column, selected by the join: convert the first $$ to a dot.
-				orderExpr = expr.replace(SEP, ".");
-			}
-			qb = qb.orderBy(orderExpr, modifiers);
+			// Base columns (and, in the wrapper, the cardinality-one join columns hoisted by the
+			// paginated subquery) belong to the base alias.  Otherwise a cardinality-one join's column
+			// is selected by the join: convert the first $$ to a dot.
+			const path = isOuter || !expr.includes(SEP) ? `${baseAlias}.${expr}` : expr.replace(SEP, ".");
+			qb = qb.orderBy(ref(path), modifiers);
 		}
 
 		if (isOutermost) {
 			// Paths start with a many-collection or a one-mode collection that contains one, both of
 			// which are joined directly into the outermost query.
 			for (const { expr, modifiers } of this.#getNestedOrderBy()) {
-				qb = qb.orderBy(expr.replace(SEP, "."), modifiers);
+				qb = qb.orderBy(ref(expr.replace(SEP, ".")), modifiers);
 			}
 		}
 
@@ -3090,19 +3085,19 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		isNested: IsNested,
 		isLocalSubquery: boolean,
 	): IsNested extends true ? AnySelectQueryBuilder : AnyQueryBuilder {
-		const { baseQuery, baseAlias, limit, offset, orderBy, orderByKeys, joinCollections } =
-			this.#props;
+		const { baseQuery, baseAlias, limit, offset, orderBy, joinCollections } = this.#props;
 
 		// Strict null checks: an explicit limit/offset of 0 must still be applied.
 		const hasPagination = limit !== null || offset !== null;
 
 		// If we have no joins (no row explosion) and no emitted ordering (therefore nothing
-		// referencing the baseAlias) we can do less nesting.  Write query sets are excluded: their CTEs live on the
-		// writeQueryCreator (not the base query), so the base query cannot be returned directly.
+		// referencing the baseAlias) we can do less nesting.  Write query sets are excluded: their
+		// CTEs live on the writeQueryCreator (not the base query), so the base query cannot be
+		// returned directly.
 		if (
 			!joinCollections.size &&
 			// Unpaginated subqueries never emit their ordering (see #toJoinedQuery).
-			((!orderBy.length && !orderByKeys) || ((isNested || isLocalSubquery) && !hasPagination)) &&
+			(!this.#getOwnOrderBy().length || ((isNested || isLocalSubquery) && !hasPagination)) &&
 			!this.#props.writeQueryCreator
 		) {
 			// No limit and offset and no joins means we can return as is for any type of query builder.
