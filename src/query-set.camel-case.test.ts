@@ -20,6 +20,41 @@ import { querySet } from "./query-set.ts";
 describe("query-set: camel-case", () => {
 	const db = getDbForTest();
 
+	// Hoisted selections are built once per nested query set and shared by
+	// every build after; the plugin must still see, and rewrite, each build.
+	test("a shared nested query set compiles and executes the same on every build", async () => {
+		const camelDb = db.withPlugin(new CamelCasePlugin()).withTables<{
+			users: { id: number; username: string };
+			posts: { id: number; userId: number; title: string };
+		}>();
+		const posts = () =>
+			querySet(camelDb).selectAs(
+				"post",
+				camelDb.selectFrom("posts").select(["id", "userId", "title"]),
+			);
+		const users = () =>
+			querySet(camelDb).selectAs("user", camelDb.selectFrom("users").select(["id", "username"]));
+		const shared = posts();
+
+		const parents = [
+			(nested: ReturnType<typeof posts>) =>
+				users().leftJoinMany("posts", nested, "posts.userId", "user.id").where("users.id", "=", 2),
+			(nested: ReturnType<typeof posts>) =>
+				users()
+					.leftJoinMany("writings", nested, "writings.userId", "user.id")
+					.where("users.id", "=", 2)
+					.limit(1),
+		];
+		for (const parent of parents) {
+			const fresh = parent(posts());
+			for (let build = 0; build < 2; build++) {
+				const reused = parent(shared);
+				assert.strictEqual(reused.compile().sql, fresh.compile().sql);
+				assert.deepStrictEqual(await reused.execute(), await fresh.execute());
+			}
+		}
+	});
+
 	//
 	// Basic queries
 	//
