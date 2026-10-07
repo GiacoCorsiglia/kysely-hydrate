@@ -1185,11 +1185,6 @@ const author = await querySet(db)
 type Result2 = { id: number; username: string; displayName: string } | undefined;
 ```
 
-> [!NOTE]
-> A hydrator's `.orderBy()` and `.orderByKeys()` settings have no effect on a
-> query set: query sets never sort during hydration, because SQL orders every
-> level. Use the query set's own `.orderBy()`.
-
 #### `.map()` vs `.mapFields()` and `.extras()`
 
 When should you use `.map()` vs the more targeted methods?
@@ -1525,6 +1520,11 @@ const flatRows = await db
 
 const nestedUsers = await hydrate(flatRows, hydrator);
 ```
+
+Hydration never sorts. Entities and nested collections keep the order in which
+their first rows appear, so put an `ORDER BY` on your query that orders each
+parent before its children (as query sets do; see
+[Sorting nested many-relations](#sorting-nested-many-relations)).
 
 You can create the `hydrator` using the dedicated `createHydrator()` helper (see
 below), or you can create it inline by providing a callback.

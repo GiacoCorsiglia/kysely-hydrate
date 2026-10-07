@@ -25,7 +25,7 @@ const args = process.argv.slice(2);
 const { values, positionals, tokens } = parseCli(args, true);
 
 /** Cheap, focused suites first; any suite not listed runs after these, alphabetically. */
-const order = ["order-by", "plugins", "query-build", "hydrate", "execute", "types"];
+const order = ["plugins", "query-build", "hydrate", "execute", "types"];
 const rank = (s: string) => (order.includes(s) ? order.indexOf(s) : order.length);
 
 const available = readdirSync(benchmarksDir)

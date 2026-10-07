@@ -5,8 +5,8 @@ type-checking benchmark runs on the TypeScript compiler.
 
 ```sh
 npm run bench                          # every suite
-npm run bench -- hydrate order-by      # suites whose name contains any of these
-npm run bench -- hydrate --filter sort # only benchmarks matching the regex /sort/
+npm run bench -- hydrate plugins       # suites whose name contains any of these
+npm run bench -- hydrate --filter tags # only benchmarks matching the regex /tags/
 npm run bench:save                     # record a baseline per suite (gitignored)
 npm run bench:compare                  # diff each suite against its baseline
 npm run bench -- --ref main            # diff the working tree against a git ref
@@ -15,7 +15,6 @@ npm run bench -- --verify-only         # run the correctness checks, time nothin
 
 | Suite         | Measures                                                               |
 | ------------- | ---------------------------------------------------------------------- |
-| `order-by`    | `sortBy` and `sqlCompare`, on plain arrays                             |
 | `plugins`     | `fixLongAliases()`: `transformQuery`, `transformResult`, the alias map |
 | `query-build` | building and compiling query sets, with no database involved           |
 | `hydrate`     | turning flat rows into nested objects, the hottest runtime path        |
@@ -42,8 +41,7 @@ explicitly must work, and any failure once connected fails the run.
   function plus, usually, the `expected` result or a `check` that asserts on
   it; `runSuite` runs each of those once and asserts before timing starts. A
   change that makes a workload skip its work (returning nothing, dropping a
-  join, skipping a sort) would otherwise read as a large speedup instead of a
-  failure. The few without one (the `plugins` scaling group, whose first call
+  join) would otherwise read as a large speedup instead of a failure. The few without one (the `plugins` scaling group, whose first call
   changes shared state, and plain constructions) aren't run early; the scaling
   group checks its own first result instead, which mitata discards as warmup.
   CI runs `--verify-only`, which runs every workload once, checked or not, and
@@ -53,10 +51,9 @@ explicitly must work, and any failure once connected fails the run.
   awaits it; chaining a `.then()` doubled the time of sub-microsecond async
   entries.
 - **Fixtures are built once, outside the measured call**, where building isn't
-  what's measured, and are deterministic: shuffles are seeded, so every run
-  sorts the same permutation. Entries that measure construction, such as
-  `query-build`'s `querySet build` and `plugins`' `fixLongAliases construction`, build
-  inside the call.
+  what's measured, and are deterministic. Entries that measure construction,
+  such as `query-build`'s `querySet build` and `plugins`' `fixLongAliases
+construction`, build inside the call.
 - **Benchmark names are `--filter` patterns**, so the harness rejects a name
   that doesn't match itself as a regex.
 

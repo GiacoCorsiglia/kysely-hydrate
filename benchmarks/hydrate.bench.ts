@@ -17,7 +17,6 @@ import {
 	makeJoinRows,
 	makeRows,
 	range,
-	shuffle,
 } from "./lib/rows.ts";
 
 /**
@@ -25,7 +24,7 @@ import {
  * describe the path real callers take.  `EnableAutoInclusion` is internal; the
  * benchmarks reach for it for the same reason `QuerySet` does.
  */
-const querySetOptions: HydrateOptions = { [EnableAutoInclusion]: true, sort: "nested" };
+const querySetOptions: HydrateOptions = { [EnableAutoInclusion]: true };
 
 type Level = FullHydrator<any, any>;
 
@@ -37,8 +36,10 @@ const hydrating = (
 	hydrator: MappedHydrator<any, unknown>,
 	input: unknown,
 	check: (out: any) => unknown,
-	options = querySetOptions,
-): Workload<Promise<any>> => ({ run: () => hydrator.hydrate(input as never, options), check });
+): Workload<Promise<any>> => ({
+	run: () => hydrator.hydrate(input as never, querySetOptions),
+	check,
+});
 
 /** Every entity at the end of `path`. */
 const descend = (out: any[], ...path: string[]): any[] =>
@@ -165,15 +166,6 @@ group({
 		rows10k,
 		equalTo(extras),
 	),
-	// `rows10k` is in key order at every level, which would make ordering it
-	// TimSort's best case and grouping it unordered match `base` already.  Each
-	// user's rows are shuffled instead (`sort: "nested"` leaves the top level to
-	// SQL), so only ordering every nested level by key rebuilds `base`'s output.
-	"10k rows, orderByKeys": hydrating(
-		every((h) => h.orderByKeys()),
-		range(500).flatMap((u) => shuffle(rows10k.slice(u * 20, u * 20 + 20), u)),
-		equalTo(base),
-	),
 	"10k rows, mapped": hydrating(
 		nested.map((u: any) => ({ ...u, label: `${u.username} has ${u.posts.length} posts` })),
 		rows10k,
@@ -203,24 +195,6 @@ group({
 		makeDistinctRows(500).flatMap((row) => range(20).map(() => row)),
 		sizes([500, 0], "posts"),
 	),
-});
-
-// The sort modes only differ against a hydrator that orders, so show they do.
-const ordered = every((h, columns) => h.orderBy(columns[1]!, "desc"));
-const sorted = (
-	sort: NonNullable<HydrateOptions["sort"]>,
-	[username, title]: [username: string, title: string],
-) =>
-	hydrating(
-		ordered,
-		rows10k,
-		(out) => assert.deepEqual([out[0].username, out[0].posts[0].title], [username, title]),
-		{ ...querySetOptions, sort },
-	);
-group({
-	"sorted 10k rows, sort:none": sorted("none", ["user1", "Post 1"]),
-	"sorted 10k rows, sort:nested": sorted("nested", ["user1", "Post 5"]),
-	"sorted 10k rows, sort:all": sorted("all", ["user99", "Post 495"]),
 });
 
 group({
@@ -297,18 +271,6 @@ group({
 		sizes([100, 1000], "posts")(out);
 		sizes([100, 1000], "tags")(out);
 	}),
-	// Each user's rows shuffled, so both levels have 100 rows to put in order.
-	"100 users, 10 posts x 10 tags, ordered": hydrating(
-		nest(siblingJoins, { modify: (h, _, prefix) => (prefix ? h.orderBy("id", "desc") : h) }),
-		range(100).flatMap((u) => shuffle(siblingRows.slice(u * 100, u * 100 + 100), u)),
-		(out) => {
-			sizes([100, 1000], "posts")(out);
-			assert.deepEqual(
-				[out[0].posts, out[0].tags].map((level) => level.map((e: any) => e.id)),
-				[range(10, 1).toReversed(), range(10, 1).toReversed()],
-			);
-		},
-	),
 });
 
 // 10k rows at every depth, so the per-level cost is what grows.

@@ -5,7 +5,6 @@ import { sql } from "kysely";
 
 import { dialect, getDbForTest } from "./__tests__/db.ts";
 import { describePg } from "./__tests__/helpers.ts";
-import { createHydrator } from "./hydrator.ts";
 import { querySet } from "./query-set.ts";
 
 const db = getDbForTest();
@@ -187,28 +186,6 @@ describe("query-set: nested collections ordered by SQL", () => {
 		assert.deepStrictEqual(
 			users[0]!.posts.map((post) => post.id),
 			[5, 2, 12, 1],
-		);
-	});
-
-	test("orderBy() of a hydrator merged with with() does not sort", async () => {
-		// Hydration never sorts, so only the query set's own (SQL) ordering counts.
-		const byTitleDesc = createHydrator<{ id: number; title: string }>().orderBy(
-			(post) => post.title,
-			"desc",
-		);
-		const users = await user2()
-			.leftJoinMany(
-				"posts",
-				({ eb, qs }) =>
-					qs(eb.selectFrom("posts").select(["id", "user_id", "title"])).with(byTitleDesc),
-				"posts.user_id",
-				"user.id",
-			)
-			.execute();
-
-		assert.deepStrictEqual(
-			users[0]!.posts.map((post) => post.id),
-			[1, 2, 5, 12],
 		);
 	});
 });

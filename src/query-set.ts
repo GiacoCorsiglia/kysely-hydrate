@@ -969,7 +969,7 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * each parent.  Nested orderings are emitted in the outermost query's ORDER
 	 * BY, after the parent's, so the database orders nested arrays with its own
 	 * semantics (NULL placement, collations, `collate()`, numeric types) exactly
-	 * as it orders the top level; hydration never re-sorts.
+	 * as it orders the top level; hydration never sorts.
 	 *
 	 * **Example:**
 	 * ```ts
@@ -1318,10 +1318,6 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * Both hydrators must have the same `keyBy`, and the other Hydrator's input
 	 * type must be a subset of the query's LocalRow (all fields in OtherInput
 	 * must exist in LocalRow with compatible types).
-	 *
-	 * The other Hydrator's `orderBy()` and `orderByKeys()` settings are ignored:
-	 * query sets never sort during hydration, since SQL orders every level (use
-	 * the query set's own `.orderBy()` instead).
 	 *
 	 * ### Examples
 	 *
@@ -3228,11 +3224,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return this.#props.hydrator.hydrate(await input, {
 			// Auto include fields at all levels, so we don't have to understand the
 			// shape of the selection and can allow it to be inferred by the shape of
-			// the rows.
+			// the rows.  Hydration keeps rows in first-seen order, which the
+			// outermost ORDER BY makes every collection's order (see #getNestedOrderBy).
 			[EnableAutoInclusion]: true,
-			// Never sort: the outermost ORDER BY orders every collection (see
-			// #getNestedOrderBy), and hydration keeps rows in first-seen order.
-			sort: "none",
 		});
 	}
 

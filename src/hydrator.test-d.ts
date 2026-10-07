@@ -968,43 +968,17 @@ import { createHydrator, hydrate } from "./hydrator.ts";
 }
 
 //
-// orderBy, clearOrderBy, orderByKeys
+// No ordering: hydration keeps input order
 //
 
 {
-	interface User {
-		id: number;
-		name: string;
-		age: number | null;
-		posts$$id: number;
-		posts$$title: string;
-	}
+	const hydrator = createHydrator<{ id: number; name: string }>("id");
 
-	const hydrator = createHydrator<User>("id").fields({ id: true, name: true });
+	// @ts-expect-error - hydrators don't sort
+	hydrator.orderBy("name");
 
-	// Any input key orders, even one not in the output; so does a key function
-	expectTypeOf(hydrator.orderBy("age")).toEqualTypeOf<typeof hydrator>();
-	expectTypeOf(hydrator.orderBy((u) => u.name.length, "desc", "first")).toEqualTypeOf<
-		typeof hydrator
-	>();
-	expectTypeOf(hydrator.clearOrderBy()).toEqualTypeOf<typeof hydrator>();
-	expectTypeOf(hydrator.orderByKeys(false)).toEqualTypeOf<typeof hydrator>();
-
-	// @ts-expect-error - not an input key
-	hydrator.orderBy("nonExistent");
-
-	// @ts-expect-error - invalid direction
-	hydrator.orderBy("name", "up");
-
-	// Nested levels order by their unprefixed keys
-	hydrator.hasMany("posts", "posts$$", (h) => h("id").fields({ title: true }).orderBy("title"));
-
-	hydrator.hasMany("posts", "posts$$", (h) =>
-		h("id")
-			.fields({ title: true })
-			// @ts-expect-error - prefixed key at a nested level
-			.orderBy("posts$$title"),
-	);
+	// @ts-expect-error - hydrators don't sort
+	hydrator.orderByKeys();
 }
 
 //

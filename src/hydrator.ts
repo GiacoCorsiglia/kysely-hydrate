@@ -4,7 +4,6 @@ import {
 	ExpectedOneItemError,
 	KeyByMismatchError,
 } from "./helpers/errors.ts";
-import { type OrderBy, sortBy, sqlCompare } from "./helpers/order-by.ts";
 import {
 	applyPrefix,
 	createdPrefixedAccessor,
@@ -281,20 +280,6 @@ interface HydratorProps<Input> {
 	 * An optional array of map functions to apply to the hydrated output.
 	 */
 	readonly mapFns?: Array<(value: any) => any> | undefined;
-
-	/**
-	 * An optional array of orderings to apply during hydration.
-	 */
-	readonly orderings?: readonly OrderBy<Input>[] | undefined;
-
-	/**
-	 * Whether to append keyBy columns as the final ordering (tie-breaker).
-	 * Undefined means it was never explicitly set (treated as false), which
-	 * matters when composing hydrators via .with(): an explicit setting on
-	 * either side survives composition, with the other hydrator's explicit
-	 * setting taking precedence.
-	 */
-	readonly orderByKeys?: boolean | undefined;
 }
 
 /**
@@ -412,54 +397,16 @@ export interface MappedHydrator<Input, Output> {
 	map<NewOutput>(fn: (output: Output) => NewOutput): MappedHydrator<Input, NewOutput>;
 
 	/**
-	 * Adds an ordering to apply during hydration. Can be chained to add multiple orderings.
-	 *
-	 * By default orderings are applied everywhere: to nested collections
-	 * (hasMany, etc.) and to the top-level array (the default `sort` mode is
-	 * `"all"`).  Pass `sort: "nested"` or `sort: "none"` to `hydrate()` to
-	 * restrict or disable sorting — see {@link HydrateOptions}.
-	 *
-	 * @param key - The field name to order by, or a function that extracts the value to sort by
-	 * @param direction - Sort direction: "asc" or "desc" (default: "asc")
-	 * @param nulls - Where to place nulls: "first" or "last" (default: "last" for ASC, "first" for DESC)
-	 * @returns A new Hydrator with the ordering added
-	 */
-	orderBy<K extends keyof Input>(
-		key: K | ((input: Input) => unknown),
-		direction?: "asc" | "desc",
-		nulls?: "first" | "last",
-	): this;
-
-	/**
-	 * Clears custom ordering from the hydrator.  The hydrator will revert to
-	 * either no ordering, or ordering by the keyBy columns only if .orderByKeys()
-	 * was called.
-	 *
-	 * @returns A new Hydrator with the custom ORDER BY clauses cleared
-	 */
-	clearOrderBy(): this;
-
-	/**
-	 * Appends the keyBy column(s) as the final ordering (as a tie-breaker).
-	 *
-	 * This ensures deterministic ordering when multiple records have the same
-	 * values for earlier orderings. The keyBy columns are always sorted ascending
-	 * with nulls last.
-	 *
-	 * @param enabled - Whether to enable keyBy ordering.  If not provided,
-	 * defaults to `true`
-	 * @returns A new Hydrator with keyBy ordering appended
-	 */
-	orderByKeys(enabled?: boolean): this;
-
-	/**
 	 * Hydrates the input data into a denormalized structure according to this configuration.
 	 *
 	 * If attached collections are configured, this method will fetch them asynchronously
 	 * before performing the hydration. The method always returns a Promise for consistency.
 	 *
+	 * Hydration never sorts: entities and nested collections keep the order in
+	 * which their first rows appear in the input, so order rows in SQL.
+	 *
 	 * @param input - A single input entity or an iterable of input entities
-	 * @param options - Optional hydration options (sort mode, etc.)
+	 * @param options - Internal hydration options (see {@link HydrateOptions})
 	 * @returns A Promise that resolves to the hydrated output(s)
 	 */
 	hydrate(input: Iterable<Input>, options?: HydrateOptions): Promise<Output[]>;
@@ -756,24 +703,13 @@ export interface FullHydrator<Input, Output> extends MappedHydrator<Input, Outpu
 export const EnableAutoInclusion = Symbol();
 
 /**
- * Options for hydration behavior.
+ * Options for hydration behavior.  Internal: only query sets pass any.
  */
 export interface HydrateOptions {
-	/**
-	 * When to apply sorting during hydration:
-	 * - "nested": Sort nested collections only (depth > 0), not the top-level array
-	 * - "all": Sort everything including the top-level array
-	 * - "none": Don't sort at all (rely on SQL ordering or input order)
-	 *
-	 * @default "all"
-	 */
-	sort?: "nested" | "all" | "none";
-
 	/**
 	 * When true, automatically includes all fields at each level (excluding
 	 * parent fields and nested collection fields).
 	 *
-	 * This is an internal option used by the EnableAutoInclusion symbol.
 	 * @internal
 	 */
 	[EnableAutoInclusion]?: boolean;
@@ -788,11 +724,6 @@ interface HydrationContext {
 	 * parent fields and nested collection fields).
 	 */
 	readonly autoIncludeFields: boolean;
-
-	/**
-	 * When to apply sorting during hydration.
-	 */
-	readonly sortMode: "nested" | "all" | "none";
 
 	/**
 	 * Map of attached collection data, keyed by prefixed collection key.
@@ -851,7 +782,6 @@ interface LevelPlan {
 		  }[]
 		| undefined;
 	readonly mapFns: readonly ((value: any) => any)[] | undefined;
-	readonly orderings: readonly OrderBy<any>[];
 	/**
 	 * Never read: holding it keeps alive the hidden-class transitions that this
 	 * plan's later entities follow, which keeps them in V8's fast mode (see
@@ -978,32 +908,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 			collections,
 			attachedCollections,
 			mapFns: [...(this.#props.mapFns ?? []), ...(otherProps.mapFns ?? [])],
-			orderings: [...(ownProps.orderings ?? []), ...(otherProps.orderings ?? [])],
-			orderByKeys: otherProps.orderByKeys ?? ownProps.orderByKeys,
-		});
-	}
-
-	orderBy(key: any, direction: "asc" | "desc" = "asc", nulls?: "first" | "last"): any {
-		return new HydratorImpl({
-			...this.#props,
-
-			orderings: [...(this.#props.orderings ?? []), { key, direction, nulls }],
-		});
-	}
-
-	clearOrderBy(): any {
-		return new HydratorImpl({
-			...this.#props,
-
-			orderings: [],
-		});
-	}
-
-	orderByKeys(enabled: boolean = true): any {
-		return new HydratorImpl({
-			...this.#props,
-
-			orderByKeys: enabled,
 		});
 	}
 
@@ -1146,11 +1050,6 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 					}))
 				: undefined,
 			mapFns: mapFns?.length ? mapFns : undefined,
-			orderings: this.#getFinalOrderings().map((ordering) =>
-				typeof ordering.key === "function"
-					? ordering
-					: { ...ordering, key: applyPrefix(prefix, ordering.key as string) },
-			),
 			shapeAnchor: undefined,
 			shapeAnchorAutoFields: undefined,
 			accessorKeys: new Map(),
@@ -1398,7 +1297,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	 * Hydrates many entities. All attach collections are already fetched and provided in attachedDataMap.
 	 */
 	#hydrateMany(ctx: HydrationContext, plan: LevelPlan, inputs: readonly Input[]): Output[] {
-		const { prefix, keyBy, orderings } = plan;
+		const { keyBy } = plan;
 
 		const result: Output[] = [];
 
@@ -1407,12 +1306,7 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		// contain duplicates (e.g. a base query with repeated keys, or cartesian
 		// products inherited from an ancestor's sibling many-collections).
 		// groupByKey also skips rows with null keys (non-existent entities).
-		let groups = groupByKey(inputs, keyBy).values();
-		// Even a lone entity needs sortGroups: if its rows disagree on an ordering,
-		// sorting them reorders the rows it and its collections are built from.
-		if (orderings.length > 0 && this.#shouldSort(ctx.sortMode, prefix)) {
-			groups = sortGroups(groups, inputs, plan, this.#makePrefixedGetValue(plan));
-		}
+		const groups = groupByKey(inputs, keyBy).values();
 		for (let i = 0; i < groups.length; i++) {
 			const group = groups[i]!;
 			// We assume the first row is representative of the group, at least for
@@ -1430,12 +1324,9 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 	/**
 	 * Hydrates the collection `mode` makes of a single row: what
 	 * {@link applyCollectionMode} would make of `#hydrateMany(ctx, plan, [input])`,
-	 * without grouping (or sorting) one row.  Every entity hydrated from a
+	 * without grouping one row.  Every entity hydrated from a
 	 * single row hydrates its nested collections this way: most parents in
 	 * one-to-one joins, and the entity of a top-level `hydrate(row)`.
-	 *
-	 * Skipping the sort is unobservable: {@link sortBy} never extracts sort keys
-	 * (so never calls function keys) for fewer than two rows.
 	 */
 	#hydrateSingle(
 		ctx: HydrationContext,
@@ -1455,79 +1346,10 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 		return output !== undefined ? output : applyCollectionMode(undefined, mode, key);
 	}
 
-	#cachedOrderings: readonly OrderBy<Input>[] | undefined;
-
-	/**
-	 * Builds the final orderings array, appending keyBy columns if orderByKeys is true.
-	 * Result is cached to avoid recreating the array on repeated calls.
-	 */
-	#getFinalOrderings(): readonly OrderBy<Input>[] {
-		if (this.#cachedOrderings) {
-			return this.#cachedOrderings;
-		}
-
-		const { orderings, orderByKeys, keyBy } = this.#props;
-
-		if (!orderByKeys) {
-			this.#cachedOrderings = orderings ?? [];
-			return this.#cachedOrderings;
-		}
-
-		const keys = typeof keyBy === "string" ? [keyBy] : keyBy;
-		const keyOrderings = keys.map((key) => ({
-			key,
-			direction: "asc" as const,
-			nulls: "last" as const, // Follows PostgreSQL/Oracle: NULLS LAST for ASC
-		}));
-
-		this.#cachedOrderings = [...(orderings ?? []), ...keyOrderings];
-		return this.#cachedOrderings;
-	}
-
-	/**
-	 * Creates a sort-key accessor.  String keys are already prefixed (see
-	 * {@link LevelPlan.orderings}); function keys get a prefixed accessor so they
-	 * can access unprefixed fields.
-	 */
-	#makePrefixedGetValue({ prefix, accessorKeys }: LevelPlan) {
-		// Keys are typed loosely because string keys name prefixed columns, which
-		// are not keys of Input.
-		return (obj: Input, key: OrderBy<any>["key"]): unknown => {
-			if (typeof key === "function") {
-				// Create a prefixed accessor so the function can access fields without the prefix
-				const accessor = createdPrefixedAccessor(prefix, obj as object, accessorKeys);
-				return key(accessor);
-			}
-			return (obj as Record<PropertyKey, unknown>)[key];
-		};
-	}
-
-	/**
-	 * Determines if sorting should be applied at the given depth.
-	 */
-	#shouldSort(sortMode: "nested" | "all" | "none", prefix: string): boolean {
-		switch (sortMode) {
-			case "nested":
-				return prefix !== "";
-			case "all":
-				return true;
-			case "none":
-				return false;
-		}
-	}
-
-	hydrate(
-		input: Input | Iterable<Input>,
-		options?: HydrateOptions | typeof EnableAutoInclusion,
-	): Promise<any> {
-		// Handle legacy EnableAutoInclusion symbol for backward compatibility
-		const opts: HydrateOptions =
-			options === EnableAutoInclusion ? { [EnableAutoInclusion]: true } : (options ?? {});
-
+	hydrate(input: Input | Iterable<Input>, options?: HydrateOptions): Promise<any> {
 		// Create hydration context for this operation
 		const ctx: HydrationContext = {
-			autoIncludeFields: opts[EnableAutoInclusion] ?? false,
-			sortMode: opts.sort ?? "all",
+			autoIncludeFields: options?.[EnableAutoInclusion] ?? false,
 			attachedDataMap: new Map(),
 			autoFieldsCache: new Map(),
 		};
@@ -1581,11 +1403,7 @@ export function createHydrator<T>(keyBy: KeyBy<NoInfer<T>>): FullHydrator<T, {}>
 export function createHydrator<T extends InputWithDefaultKey>(): FullHydrator<T, {}>;
 // Implementation
 export function createHydrator<T = {}>(keyBy?: KeyBy<NoInfer<T>>): FullHydrator<T, {}> {
-	return new HydratorImpl({
-		keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string),
-		// orderByKeys is left unset (not false) so .with() can tell whether it
-		// was ever explicitly configured.
-	});
+	return new HydratorImpl({ keyBy: keyBy ?? (DEFAULT_KEY_BY as keyof T & string) });
 }
 
 /**
@@ -1962,54 +1780,6 @@ class KeyedGroups<T> {
 		node.set(part, allocated);
 		return allocated;
 	}
-}
-
-type Grouped<T> = T | RowGroup<T>;
-
-/** The row that stands for a group: its first. */
-const representative = <T>(group: Grouped<T>): T =>
-	group instanceof RowGroup ? group.rows[0]! : group;
-
-/**
- * Orders `groups`, grouped from `rows`, by the plan's orderings: exactly as
- * grouping the rows after sorting them would, but sorting a row per entity
- * rather than every row.
- *
- * The two agree whenever each group's rows tie on every ordering, which is the
- * rule: orderings read the entity's own columns, which its rows repeat.  The
- * sort is stable, so sorted rows group into the same groups, in the order of
- * their first rows, each with its rows in their original order.  Rows that
- * don't tie (a function key reading a nested column, or a `keyBy` that doesn't
- * determine the ordered column) would be reordered within their group, which
- * changes the row the entity is built from and the rows its collections get,
- * so then every row is sorted instead.
- */
-function sortGroups<T>(
-	groups: readonly Grouped<T>[],
-	rows: readonly T[],
-	{ keyBy, orderings }: LevelPlan,
-	getValue: (row: T, key: OrderBy<any>["key"]) => unknown,
-): readonly Grouped<T>[] {
-	for (let g = 0; g < groups.length; g++) {
-		const group = groups[g]!;
-		if (!(group instanceof RowGroup)) {
-			continue;
-		}
-		const groupRows = group.rows;
-		for (let o = 0; o < orderings.length; o++) {
-			const { key } = orderings[o]!;
-			const value = getValue(groupRows[0]!, key);
-			for (let r = 1; r < groupRows.length; r++) {
-				if (sqlCompare(value, getValue(groupRows[r]!, key)) !== 0) {
-					return groupByKey(sortBy(rows, orderings, getValue), keyBy).values();
-				}
-			}
-		}
-	}
-	if (groups.length < 2) {
-		return groups;
-	}
-	return sortBy(groups, orderings, (group, key) => getValue(representative(group), key));
 }
 
 /**
