@@ -1729,7 +1729,8 @@ function hasKey(input: unknown, keyBy: string | readonly string[]): boolean {
  * Primitives already compare by value, so they pass through.  Objects compare
  * by content instead of identity: `Date`s by time value (so all invalid dates
  * are equal), `Uint8Array`s by bytes -- `String()` would decode them as UTF-8,
- * which is lossy -- and everything else by its `String()` form.
+ * which is lossy -- arrays and plain objects by their JSON form, and everything
+ * else (decimals, `Temporal` values) by its `String()` form.
  *
  * SQL types a column, so one key part holds one type across rows, and the
  * canonical forms above only have to be injective within their own type.
@@ -1759,23 +1760,34 @@ function keyPart(input: unknown, partKey: string): unknown {
 }
 
 /**
- * The `String()` form of a key part that is neither a primitive nor a type
- * {@link keyPart} knows, so exotic values still group deterministically (if
- * not always distinctly — every plain object stringifies to
- * `[object Object]`).
+ * The string form of a key part that is neither a primitive nor a type
+ * {@link keyPart} knows, so exotic values still group deterministically.
+ *
+ * Arrays and objects with the default `toString` are JSON-encoded: `String()`
+ * would lose their structure (`["a,b"]` and `["a", "b"]` both give `"a,b"`,
+ * and every plain object gives `"[object Object]"`).
  *
  * Kept out of keyPart because a `try` block would stop that hot function from
  * being inlined.
  */
 function stringifyKeyPart(value: object): string {
 	try {
+		const { toString } = value as { toString?: unknown };
+		if (Array.isArray(value) || toString === Object.prototype.toString || toString === undefined) {
+			return JSON.stringify(value, stringifyBigInt);
+		}
 		return String(value);
 	} catch {
-		// String() throws for values with no primitive conversion (e.g.
-		// null-prototype objects); fall back to the default toString form rather
-		// than rejecting.
+		// JSON.stringify throws on cycles, String() on values with no primitive
+		// conversion; fall back to the default toString form rather than
+		// rejecting.
 		return Object.prototype.toString.call(value);
 	}
+}
+
+/** JSON replacer for bigints, which `JSON.stringify` rejects. */
+function stringifyBigInt(_key: string, value: unknown): unknown {
+	return typeof value === "bigint" ? value.toString() : value;
 }
 
 /**

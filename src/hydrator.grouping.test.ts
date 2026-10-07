@@ -441,6 +441,14 @@ const keyPartCases: GroupingCase<unknown>[] = [
 		[true, "true", stringLikeObject],
 		[0, 1, 1],
 	],
+	// Regression: String() joins array elements with commas, losing boundaries.
+	[
+		"arrays group by content, keeping element boundaries",
+		[["a,b"], ["a", "b"], ["a", "b"], [1n], [1n], [2n]],
+		[0, 1, 1, 2, 2, 3],
+	],
+	// Regression: String() gives "[object Object]" for every plain object.
+	["plain objects group by content", [{ a: 1 }, { a: 2 }, { a: 1 }], [0, 1, 0]],
 	// String() throws for null-prototype objects; the fallback must still key.
 	[
 		"values without a primitive conversion group rather than reject",
