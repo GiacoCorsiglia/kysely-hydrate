@@ -551,6 +551,20 @@ test("with: throws when keyBy doesn't match", () => {
 	assert.throws(() => userHydrator.with(postHydrator as any), KeyByMismatchError);
 });
 
+test("with: a key matches its one-part composite form", async () => {
+	const rows: User[] = [{ id: 1, name: "Alice" }];
+
+	const idHydrator = createHydrator<User>("id").fields({ id: true });
+	const nameHydrator = createHydrator<User>(["id"]).fields({ name: true });
+
+	assert.deepStrictEqual(await hydrate(rows, idHydrator.with(nameHydrator)), [
+		{ id: 1, name: "Alice" },
+	]);
+	assert.deepStrictEqual(await hydrate(rows, nameHydrator.with(idHydrator)), [
+		{ name: "Alice", id: 1 },
+	]);
+});
+
 test("with: works with composite keys", async () => {
 	interface UserPost {
 		userId: number;

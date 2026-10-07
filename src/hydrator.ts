@@ -945,10 +945,11 @@ class HydratorImpl<Input = any, Output = any> implements FullHydrator<Input, Out
 
 	with(other: MappedHydrator<any, any>): any {
 		const otherImpl = other as any as HydratorImpl;
-		const thisKeyBy = JSON.stringify(this.#props.keyBy);
-		const otherKeyBy = JSON.stringify(otherImpl.#props.keyBy);
-		if (thisKeyBy !== otherKeyBy) {
-			throw new KeyByMismatchError(thisKeyBy, otherKeyBy);
+		if (!sameKeyBy(this.#props.keyBy, otherImpl.#props.keyBy)) {
+			throw new KeyByMismatchError(
+				JSON.stringify(this.#props.keyBy),
+				JSON.stringify(otherImpl.#props.keyBy),
+			);
 		}
 
 		const ownProps = this.#props;
@@ -1692,6 +1693,20 @@ function applyGroupedCollectionMode<T>(
 	}
 
 	return mode === "many" ? [grouped] : grouped;
+}
+
+/**
+ * Whether two keyBys name the same parts in the same order.  A single key and
+ * a one-part composite key are the same: `"id"` matches `["id"]`.
+ */
+function sameKeyBy(a: string | readonly string[], b: string | readonly string[]): boolean {
+	if (typeof a === "string") {
+		return typeof b === "string" ? a === b : b.length === 1 && b[0] === a;
+	}
+	if (typeof b === "string") {
+		return a.length === 1 && a[0] === b;
+	}
+	return a.length === b.length && a.every((part, i) => part === b[i]);
 }
 
 /**
