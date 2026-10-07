@@ -250,6 +250,38 @@ describe("query-set: pagination", () => {
 	// (executeCount / executeExists ignoring pagination is covered in
 	// query-set.execution.test.ts.)
 
+	// Without orderByKeys nothing orders the outer query, so ids are sorted
+	// before comparing rather than relying on engine scan order.
+	test("pagination: base query's own limit still applies", async () => {
+		const users = await querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]).orderBy("id").limit(2))
+			.orderByKeys(false)
+			.limit(10)
+			.execute();
+
+		assert.deepStrictEqual(
+			users.map((user) => user.id).toSorted((a, b) => a - b),
+			[1, 2],
+		);
+	});
+
+	test("pagination: base query's own offset still applies", async () => {
+		const users = await querySet(db)
+			.selectAs(
+				"user",
+				db.selectFrom("users").select(["id", "username"]).orderBy("id").limit(3).offset(1),
+			)
+			.orderByKeys(false)
+			.limit(10)
+			.offset(1)
+			.execute();
+
+		assert.deepStrictEqual(
+			users.map((user) => user.id).toSorted((a, b) => a - b),
+			[3, 4],
+		);
+	});
+
 	// clearLimit and clearOffset
 
 	test("pagination: clearLimit removes limit", async () => {

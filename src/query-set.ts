@@ -3063,14 +3063,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 				}
 			}
 
-			// If it's a SELECT, we can just apply the limit and offset to the base query.
-			if (isSelectQueryBuilder(baseQuery)) {
-				return this.#applyModifiers(this.#applyLimitAndOffset(baseQuery));
-			}
-
-			// Otherwise, for writes, (unusual use case) we need to make it a CTE.
-			// #getSelectFromBase selects all instead of hoisting here, because these
-			// can't be nested anyway (so we will never need to hoist from here).
+			// Paginate a wrapper, never the base query itself: Kysely's limit/offset
+			// would replace the base query's own.  Writes become a CTE;
+			// #getSelectFromBase selects all instead of hoisting for them, because
+			// they can't be nested anyway (so we will never need to hoist from here).
 			return this.#applyModifiers(
 				this.#applyLimitAndOffset(this.#getSelectFromBase(isNested, isLocalSubquery)),
 			);
