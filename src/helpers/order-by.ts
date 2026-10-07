@@ -383,6 +383,54 @@ function columnComparator(
 }
 
 /**
+ * Up to this many rows, {@link sortBy} sorts with {@link insertionSort}.  V8's
+ * `Array.prototype.sort` sorts short arrays by binary insertion too, but first
+ * allocates its TimSort state, about a kilobyte per call, which the hydrator
+ * paid once per parent per nested level.
+ */
+const INSERTION_SORT_MAX = 22;
+
+/**
+ * Sorts the identity permutation `indices` by binary insertion, given that its
+ * first `sorted` entries are already in order.  `compare` never returns 0 for
+ * distinct indices (ties are broken by index), so every index has exactly one
+ * place and the result is the one `Array#sort` gives.
+ */
+function insertionSort(indices: number[], sorted: number, compare: IndexCompare): void {
+	const n = indices.length;
+	// As in V8's TimSort, a strictly descending prefix is reversed into a run,
+	// so rows arriving in the opposite order cost one compare each.  Index 1
+	// is known to precede index 0, or the in-order prefix would be longer.
+	if (sorted === 1) {
+		sorted = 2;
+		while (sorted < n && compare(sorted, sorted - 1) < 0) {
+			sorted++;
+		}
+		for (let low = 0, high = sorted - 1; low < high; low++, high--) {
+			indices[low] = high;
+			indices[high] = low;
+		}
+	}
+	for (let i = sorted; i < n; i++) {
+		const index = indices[i]!;
+		let low = 0;
+		let high = i;
+		while (low < high) {
+			const mid = (low + high) >>> 1;
+			if (compare(index, indices[mid]!) < 0) {
+				high = mid;
+			} else {
+				low = mid + 1;
+			}
+		}
+		for (let j = i; j > low; j--) {
+			indices[j] = indices[j - 1]!;
+		}
+		indices[low] = index;
+	}
+}
+
+/**
  * Sorts rows by the given orderings into a new array. Keys are extracted once
  * per row rather than on every comparison; for function keys the hydrator
  * builds a Proxy per extraction, so this is O(n) Proxies instead of O(n log n).
@@ -440,8 +488,8 @@ export function sortBy<T>(
 				};
 
 	// Rows often arrive in order already; then skip the sort and permutation.
-	// Rows in order but the last pay for this scan and TimSort's own, which
-	// measured no slower than before the check existed.
+	// Short inputs resume sorting where this scan stopped; longer ones pay for
+	// it and TimSort's own, which measured no slower than without the check.
 	let inOrder = 1;
 	while (inOrder < n && compare(inOrder - 1, inOrder) <= 0) {
 		inOrder++;
@@ -454,7 +502,11 @@ export function sortBy<T>(
 	for (let i = 0; i < n; i++) {
 		indices[i] = i;
 	}
-	indices.sort(compare);
+	if (n <= INSERTION_SORT_MAX) {
+		insertionSort(indices, inOrder, compare);
+	} else {
+		indices.sort(compare);
+	}
 
 	const sorted = new Array<T>(n);
 	for (let i = 0; i < n; i++) {

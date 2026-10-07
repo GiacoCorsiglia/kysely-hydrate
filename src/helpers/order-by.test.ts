@@ -572,27 +572,27 @@ describe("sortBy", () => {
 	});
 });
 
+/** Written independently of `sortBy`: `Array#sort` is stable. */
+function referenceSort<T>(rows: readonly T[], orderings: readonly OrderBy<T>[]): T[] {
+	const compareBy = ({ key, direction, nulls }: OrderBy<T>, x: T, y: T) => {
+		const a = typeof key === "function" ? key(x) : x[key];
+		const b = typeof key === "function" ? key(y) : y[key];
+		const aNull = a === null || a === undefined;
+		const bNull = b === null || b === undefined;
+		if (aNull || bNull) {
+			const nullsFirst = (nulls ?? (direction === "asc" ? "last" : "first")) === "first";
+			return aNull === bNull ? 0 : aNull === nullsFirst ? -1 : 1;
+		}
+		return direction === "asc" ? sqlCompare(a, b) : sqlCompare(b, a);
+	};
+	return rows.slice().sort((x, y) => orderings.reduce((cmp, o) => cmp || compareBy(o, x, y), 0));
+}
+
 describe("sortBy agrees with sqlCompare", () => {
 	interface Row {
 		readonly value: unknown;
 		readonly tie: number;
 		readonly i: number;
-	}
-
-	/** Written independently of `sortBy`: `Array#sort` is stable. */
-	function referenceSort<T>(rows: readonly T[], orderings: readonly OrderBy<T>[]): T[] {
-		const compareBy = ({ key, direction, nulls }: OrderBy<T>, x: T, y: T) => {
-			const a = typeof key === "function" ? key(x) : x[key];
-			const b = typeof key === "function" ? key(y) : y[key];
-			const aNull = a === null || a === undefined;
-			const bNull = b === null || b === undefined;
-			if (aNull || bNull) {
-				const nullsFirst = (nulls ?? (direction === "asc" ? "last" : "first")) === "first";
-				return aNull === bNull ? 0 : aNull === nullsFirst ? -1 : 1;
-			}
-			return direction === "asc" ? sqlCompare(a, b) : sqlCompare(b, a);
-		};
-		return rows.slice().sort((x, y) => orderings.reduce((cmp, o) => cmp || compareBy(o, x, y), 0));
 	}
 
 	// Strings and numbers, with and without nulls, take the direct comparison.
@@ -621,6 +621,61 @@ describe("sortBy agrees with sqlCompare", () => {
 				});
 			}
 		}
+	}
+});
+
+// Short inputs are sorted by sortBy's own insertion sort, longer ones by
+// Array#sort; every length on both sides of the switch must agree with the
+// reference, including inputs that start with an ascending or descending run.
+describe("sortBy agrees with a stable sort at every length", () => {
+	interface Row {
+		readonly value: number | null;
+		readonly tie: number;
+		readonly i: number;
+	}
+
+	/** A seeded generator (mulberry32), so failures reproduce. */
+	const random = (seed: number) => () => {
+		seed = (seed + 0x6d2b79f5) >>> 0;
+		let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+
+	for (let length = 0; length <= 30; length++) {
+		it(`${length} rows`, () => {
+			for (let seed = 1; seed <= 24; seed++) {
+				const next = random(seed * 100 + length);
+				// Few distinct values, so ties are common, or many, so runs are
+				// long; and some nulls.
+				const range = seed % 4 < 2 ? 5 : 1000;
+				const values = Array.from({ length }, () =>
+					next() < 0.15 ? null : Math.floor(next() * range),
+				);
+				// Most inputs start with a run of random length, sorted as ascending
+				// orders it, so descending orders see it reversed.
+				if (seed % 3 !== 0) {
+					const run = Math.floor(next() * (length + 1));
+					values.splice(
+						0,
+						run,
+						...values.slice(0, run).sort((a, b) => (a ?? range) - (b ?? range)),
+					);
+				}
+				const rows: Row[] = values.map((value, i) => ({ value, tie: i % 2, i }));
+				for (const direction of ["asc", "desc"] as const) {
+					const byValue: OrderBy<Row> = { key: "value", direction };
+					const byTie: OrderBy<Row> = { key: "tie", direction };
+					for (const orderings of [[byValue], [byValue, byTie]]) {
+						assert.deepEqual(
+							sortBy(rows, orderings),
+							referenceSort(rows, orderings),
+							`seed ${seed}, ${direction}, ${orderings.length} orderings`,
+						);
+					}
+				}
+			}
+		});
 	}
 });
 
