@@ -470,6 +470,7 @@ const tracers: {
 	MergeQueryNode: noopTracer,
 	RawNode: noopTracer,
 	RefreshMaterializedViewNode: noopTracer,
+	AlterTypeNode: noopTracer,
 };
 
 export function traceLineage(
