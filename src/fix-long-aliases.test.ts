@@ -47,6 +47,16 @@ describe("fix-long-aliases", () => {
 		assert.ok(alias.startsWith("departmentalEmployeeRoster$$employee_"), alias);
 	});
 
+	test("gives a name built from a shortened name the short form of its original", () => {
+		const [inner] = aliasesIn(selectLiterals(db, { [ALIAS_64]: 1 }));
+		const [hoisted, direct] = aliasesIn(
+			selectLiterals(db, { [`outer$$${inner}`]: 1, [`outer$$${ALIAS_64}`]: 2 }),
+		);
+
+		assert.ok(hoisted);
+		assert.strictEqual(hoisted, direct);
+	});
+
 	test("restores the original alias in result rows", async () => {
 		const row = await selectLiterals(db, { [ALIAS_64]: 1, short: 2 }).executeTakeFirstOrThrow();
 

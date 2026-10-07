@@ -520,7 +520,7 @@ describe("query-set: sql", () => {
 					"id", "title", "user_id"
 				from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
-			order by "user"."id" asc
+			order by "user"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -629,7 +629,7 @@ describe("query-set: sql", () => {
 					"user_id"
 				from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
-			order by "user"."id" asc
+			order by "user"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -679,7 +679,7 @@ describe("query-set: sql", () => {
 					"title",
 					"user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
-			order by "user"."id" asc
+			order by "user"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -993,7 +993,7 @@ describe("query-set: sql", () => {
 			left join (
 				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "users"."id"
-			order by "users"."id" asc
+			order by "users"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -1250,7 +1250,7 @@ describe("query-set: sql", () => {
 			left join (
 				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "updated"."id"
-			order by "updated"."id" asc
+			order by "updated"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -1300,7 +1300,7 @@ describe("query-set: sql", () => {
 			left join (
 				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
-			order by "user"."id" asc
+			order by "user"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -1368,7 +1368,7 @@ describe("query-set: sql", () => {
 				left join (
 					select "id", "title", "user_id" from "posts"
 				) as "posts" on "posts"."user_id" = "updated"."id"
-				order by "updated"."id" asc
+				order by "updated"."id" asc, "posts"."id" asc
 			`,
 			);
 		});
@@ -1444,7 +1444,7 @@ describe("query-set: sql", () => {
 				left join (
 					select "id", "title", "user_id" from "posts"
 				) as "posts" on "posts"."user_id" = "newUser"."id"
-				order by "newUser"."id" asc
+				order by "newUser"."id" asc, "posts"."id" asc
 			`,
 			);
 		});
@@ -1559,7 +1559,7 @@ describe("query-set: sql", () => {
 			left join (
 				select "id", "title", "user_id" from "myapp"."posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
-			order by "user"."id" asc
+			order by "user"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -1619,7 +1619,7 @@ describe("query-set: sql", () => {
 			left join (
 				select "id", "title", "user_id" from "posts"
 			) as "posts" on "posts"."user_id" = "user"."id"
-			order by "user"."profile$$bio" asc, "user"."id" asc
+			order by "user"."profile$$bio" asc, "user"."id" asc, "posts"."id" asc
 		`,
 		);
 	});
@@ -2029,5 +2029,151 @@ describe("query-set: sql", () => {
 			order by "newUser"."id" asc /* end-hint */
 		`,
 		);
+	});
+
+	//
+	// Nested collection ordering
+	//
+	// The outermost ORDER BY carries every many-collection's ordering after its
+	// parent's, depth-first, so hydration never sorts.
+	//
+
+	describe("nested ORDER BY", () => {
+		const users = () =>
+			querySet(db).selectAs("user", db.selectFrom("users").select(["id", "username"]));
+		const posts = () =>
+			querySet(db).selectAs("posts", db.selectFrom("posts").select(["id", "title", "user_id"]));
+		const comments = () =>
+			querySet(db).selectAs(
+				"comments",
+				db.selectFrom("comments").select(["id", "content", "post_id"]),
+			);
+		/** The ORDER BY clause that ends the query. */
+		const outerOrderBy = (query: { compile(): { sql: string } }) =>
+			query.compile().sql.split(" order by ").at(-1);
+
+		test("siblings and depth: each collection follows its parent, with its modifiers and composite keys", () => {
+			const qs = users()
+				.leftJoinMany(
+					"posts",
+					posts()
+						.orderBy("title", "desc")
+						.leftJoinMany(
+							"comments",
+							comments().orderBy("content", (ob) => ob.asc().nullsFirst()),
+							"comments.post_id",
+							"posts.id",
+						),
+					"posts.user_id",
+					"user.id",
+				)
+				.leftJoinMany(
+					"profiles",
+					({ eb, qs }) =>
+						qs(eb.selectFrom("profiles").select(["id", "user_id"]), ["user_id", "id"]),
+					"profiles.user_id",
+					"user.id",
+				);
+
+			assert.strictEqual(
+				outerOrderBy(qs),
+				snapshot`
+				"user"."id" asc,
+				"posts"."title" desc, "posts"."id" asc,
+				"posts"."comments$$content" asc nulls first, "posts"."comments$$id" asc,
+				"profiles"."user_id" asc, "profiles"."id" asc
+			`,
+			);
+			// toJoinedQuery() is ordered the same way, so its rows hydrate correctly.
+			assert.strictEqual(outerOrderBy(qs.toJoinedQuery()), outerOrderBy(qs));
+		});
+
+		test("pagination: many-collections nested in a one-join are ordered through it", () => {
+			const qs = users()
+				.innerJoinOne(
+					"profile",
+					({ eb, qs }) =>
+						qs(eb.selectFrom("profiles").select(["id", "bio", "user_id"])).leftJoinMany(
+							"posts",
+							posts(),
+							"posts.user_id",
+							"profile.user_id",
+						),
+					"profile.user_id",
+					"user.id",
+				)
+				.leftJoinMany("posts", posts(), "posts.user_id", "user.id")
+				.orderBy("profile$$bio")
+				.limit(2);
+
+			// The one-join itself hydrates a single entity, so only its posts are ordered.
+			assert.strictEqual(
+				outerOrderBy(qs),
+				snapshot`
+				"user"."profile$$bio" asc, "user"."id" asc,
+				"profile"."posts$$id" asc,
+				"posts"."id" asc
+			`,
+			);
+		});
+
+		test("orderByKeys(false) emits only the collection's own orderings", () => {
+			const qs = users()
+				.leftJoinMany(
+					"posts",
+					posts()
+						.orderByKeys(false)
+						.orderBy("title", (ob) => ob.collate("nocase")),
+					"posts.user_id",
+					"user.id",
+				)
+				.leftJoinMany("comments", comments().orderByKeys(false), "comments.post_id", "user.id");
+
+			assert.strictEqual(
+				outerOrderBy(qs),
+				snapshot`"user"."id" asc, "posts"."title" collate "nocase"`,
+			);
+		});
+
+		test("a paginated nested query set orders both before its limit and in the outermost query", () => {
+			const qs = users().leftJoinLateralMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(
+						eb
+							.selectFrom("posts")
+							.select(["id", "user_id"])
+							.whereRef("posts.user_id", "=", "user.id"),
+					)
+						.orderBy("id", "desc")
+						.limit(2),
+				(join) => join.onTrue(),
+			);
+
+			assert.strictEqual(
+				qs.compile().sql,
+				snapshot`
+				select "user"."id" as "id", "user"."username" as "username",
+					"posts"."id" as "posts$$id", "posts"."user_id" as "posts$$user_id"
+				from (select "id", "username" from "users") as "user"
+				left join lateral (
+					select "posts"."id" as "id", "posts"."user_id" as "user_id"
+					from (
+						select "id", "user_id" from "posts" where "posts"."user_id" = "user"."id"
+					) as "posts"
+					order by "posts"."id" desc
+					limit ?
+				) as "posts" on true
+				order by "user"."id" asc, "posts"."id" desc
+			`,
+			);
+		});
+
+		test("count and exists queries are not ordered", () => {
+			const qs = users().leftJoinMany("posts", posts(), "posts.user_id", "user.id");
+
+			assert.ok(!qs.toCountQuery().compile().sql.includes("order by"));
+			assert.ok(!qs.toExistsQuery().compile().sql.includes("order by"));
+		});
 	});
 });

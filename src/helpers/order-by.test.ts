@@ -9,7 +9,7 @@ import {
 	PlainMonthDayStub,
 	PlainTimeStub,
 } from "./order-by.test-stubs.ts";
-import { kyselyOrderByToOrderBy, type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
+import { type OrderBy, sortBy, sqlCompare } from "./order-by.ts";
 
 describe("sqlCompare", () => {
 	it("should return 0 for equal values", () => {
@@ -733,109 +733,6 @@ describe("sortBy key extraction", () => {
 		assert.deepEqual(
 			sorted.map((row) => row.score),
 			[3, 2, 2, 1, 1, 1],
-		);
-	});
-});
-
-describe("kyselyOrderByToOrderBy", () => {
-	// Converts Kysely's orderBy modifiers (either a direction string or a
-	// builder callback like `(ob) => ob.desc().nullsLast()`) into this library's
-	// OrderBy shape. The callback form is driven by MockOrderByItemBuilder.
-
-	it("string 'asc' sets direction asc and the default nulls (last)", () => {
-		assert.deepEqual(kyselyOrderByToOrderBy("name", "asc"), {
-			key: "name",
-			direction: "asc",
-			nulls: "last",
-		});
-	});
-
-	it("string 'desc' sets direction desc and the default nulls (first)", () => {
-		assert.deepEqual(kyselyOrderByToOrderBy("name", "desc"), {
-			key: "name",
-			direction: "desc",
-			nulls: "first",
-		});
-	});
-
-	it("callback path leaves nulls unset (the comparator applies the default later)", () => {
-		// Unlike the string form, the callback form does NOT bake in a default
-		// nulls value; makeOrderByComparator resolves `nulls ?? nullsDefault(dir)`.
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.desc()),
-			{
-				key: "name",
-				direction: "desc",
-			},
-		);
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.asc()),
-			{
-				key: "name",
-				direction: "asc",
-			},
-		);
-	});
-
-	it("a no-op callback yields the builder's default (asc, nulls unset)", () => {
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob),
-			{
-				key: "name",
-				direction: "asc",
-			},
-		);
-	});
-
-	it("nullsFirst / nullsLast set nulls without changing the default direction", () => {
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.nullsFirst()),
-			{
-				key: "name",
-				direction: "asc",
-				nulls: "first",
-			},
-		);
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.nullsLast()),
-			{
-				key: "name",
-				direction: "asc",
-				nulls: "last",
-			},
-		);
-	});
-
-	it("chains direction and nulls modifiers in any order", () => {
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.desc().nullsLast()),
-			{
-				key: "name",
-				direction: "desc",
-				nulls: "last",
-			},
-		);
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.asc().nullsFirst()),
-			{
-				key: "name",
-				direction: "asc",
-				nulls: "first",
-			},
-		);
-	});
-
-	it("ignores collate() and preserves surrounding modifiers", () => {
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.collate("nocase")),
-			{
-				key: "name",
-				direction: "asc",
-			},
-		);
-		assert.deepEqual(
-			kyselyOrderByToOrderBy("name", (ob) => ob.desc().collate("nocase").nullsLast()),
-			{ key: "name", direction: "desc", nulls: "last" },
 		);
 	});
 });

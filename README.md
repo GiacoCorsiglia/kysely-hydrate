@@ -498,10 +498,10 @@ This compiles to a standard `LEFT JOIN LATERAL`, hoisting the columns
 > [!IMPORTANT]
 > Apply `.orderBy()` and `.limit()` to the nested **query set** (as above), not
 > inside the raw subquery. The query set's ordering is used twice: inside the
-> lateral SQL, where it determines _which_ rows the limit keeps, and during
-> hydration, where it sorts the nested array. An `ORDER BY` written directly on
-> the inner Kysely query still controls which rows a `LIMIT` keeps, but the
-> hydrated array is re-sorted by the query set's own orderings (by default, the
+> lateral SQL, where it determines _which_ rows the limit keeps, and in the
+> outermost `ORDER BY`, where it orders the nested array. An `ORDER BY` written
+> directly on the inner Kysely query still controls which rows a `LIMIT` keeps,
+> but the hydrated array follows the query set's own orderings (by default, the
 > keys) — so your top-3-by-date would come back date-filtered but id-ordered.
 
 ### Modifying queries with `.modify()`
@@ -792,28 +792,51 @@ const usersQuerySet = querySet(db)
 	)
 	.leftJoinMany(
 		"visits",
-		// Order users.visits by title, per user
-		postQuerySet.orderBy("visitDate"),
+		// Order users.visits by visitDate, per user
+		visitQuerySet.orderBy("visitDate"),
 		"visits.user_id",
 		"user.id",
 	);
 ```
 
-In general, SQL does not guarantee ordering of subqueries, and specifically it
-cannot maintain the per-user ordering of multiple many-relations simultaneously.
+SQL does not preserve the ordering of subqueries, so Kysely Hydrate puts every
+nested ordering in the outermost query's `ORDER BY`, depth-first, after the
+ordering of the collection's parent:
 
-Instead of applying the nested sort in SQL, Kysely Hydrate will apply it during
-Hydration, with a best-effort attempt to make the sorting semantics match SQL
-semantics. This works reasonably well, but if you depend on your database' more
-advanced sorting capabilities for nested collections, you must use the
-`.attach()` APIs for application-level joins instead.
+```sql
+ORDER BY
+  "user"."username", "user"."id",       -- users
+  "posts"."title", "posts"."id",        -- each user's posts
+  "visits"."visitDate", "visits"."id"   -- each user's visits
+```
+
+Hydration keeps rows in the order they arrive and never sorts. Because every
+nested collection joins only to its parent, each user's rows are every
+combination of that user's posts and visits, so ordering by posts and then by
+visits orders both arrays at once. The database orders nested arrays exactly as
+it orders the top level: its own `NULL` placement, collations, `collate()`
+modifiers, and numeric types all apply.
+
+The same holds at any depth (`posts$$comments` is ordered within each post) and
+for nested query sets with their own `.limit()`. `*One` joins hydrate a single
+object, so only the many-collections inside them are ordered.
+
+> [!TIP]
+> Nested orderings add columns to the outermost `ORDER BY`. Your `keyBy`
+> columns are the default tie-breaker at every level, so index them (and any
+> nested `.orderBy()` columns you sort large collections by).
 
 #### Removing sorting
 
 - `clearOrderBy()`: Removes your custom sorts, but keeps the automatic unique key
   sort.
 - `orderByKeys(false)`: Disables the automatic unique key sort entirely (not
-  recommended if using pagination).
+  recommended if using pagination). Only your own `.orderBy()` columns then
+  order the query set's rows (or its array within each parent, when nested):
+  rows that tie on them come back in an unspecified order, and with no
+  `.orderBy()` at all the order is unspecified (a nested collection's order can
+  then even depend on its siblings' orderings). Nested collections that keep
+  their orderings are still ordered within each entity.
 
 ### Pagination and aggregation
 
@@ -924,6 +947,11 @@ the intermediate `await`:
 ```ts
 const users = await qs.hydrate(qs.toQuery().execute());
 ```
+
+`.hydrate()` keeps rows in the order you give it and does not sort, so nested
+arrays come out in the order of your rows. Rows from `.toQuery()` or
+`.toJoinedQuery()` are already ordered (see
+[Sorting nested many-relations](#sorting-nested-many-relations)).
 
 ### Mapped properties with `.mapFields()`
 
@@ -1156,6 +1184,11 @@ const author = await querySet(db)
 // ⬇
 type Result2 = { id: number; username: string; displayName: string } | undefined;
 ```
+
+> [!NOTE]
+> A hydrator's `.orderBy()` and `.orderByKeys()` settings have no effect on a
+> query set: query sets never sort during hydration, because SQL orders every
+> level. Use the query set's own `.orderBy()`.
 
 #### `.map()` vs `.mapFields()` and `.extras()`
 

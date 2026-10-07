@@ -18,11 +18,11 @@
 
 import * as k from "kysely";
 
-import { kyselyOrderByToOrderBy } from "./helpers/order-by.ts";
 import {
 	type ApplyPrefixes,
 	type ApplyPrefixWithSep,
 	type MakeInitialPrefix,
+	applyPrefix,
 	makePrefix,
 	SEP,
 } from "./helpers/prefixes.ts";
@@ -965,6 +965,12 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * To completely disable the keyBy ordering behavior, you may call
 	 * `.orderByKeys(false)`.
 	 *
+	 * On a query set nested in a many-join, this orders the nested array within
+	 * each parent.  Nested orderings are emitted in the outermost query's ORDER
+	 * BY, after the parent's, so the database orders nested arrays with its own
+	 * semantics (NULL placement, collations, `collate()`, numeric types) exactly
+	 * as it orders the top level; hydration never re-sorts.
+	 *
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
@@ -1007,13 +1013,19 @@ interface MappedQuerySet<in out T extends TQuerySet> extends k.Compilable, k.Ope
 	 * this method with `false` to disable this behavior for this query set.  Call
 	 * it with `true` to re-enable it.
 	 *
+	 * Without the keys, only this query set's own `.orderBy()` columns order its
+	 * rows (or its array within each parent, when nested), so rows that tie on
+	 * them come back in an unspecified order, and with no `.orderBy()` at all the
+	 * order is unspecified.  Nested collections are still ordered by their own
+	 * orderings within each entity.
+	 *
 	 * **Example:**
 	 * ```ts
 	 * const users = await querySet(db)
 	 *   .selectAs("user", db.selectFrom("users").select(["id", "username"]))
 	 *   .orderByKeys(false)
 	 *   .execute();
-	 * // Returns users ordered by "id".
+	 * // Returns users in an unspecified order.
 	 * ```
 	 */
 	orderByKeys(enabled?: boolean): this;
@@ -1306,6 +1318,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * Both hydrators must have the same `keyBy`, and the other Hydrator's input
 	 * type must be a subset of the query's LocalRow (all fields in OtherInput
 	 * must exist in LocalRow with compatible types).
+	 *
+	 * The other Hydrator's `orderBy()` and `orderByKeys()` settings are ignored:
+	 * query sets never sort during hydration, since SQL orders every level (use
+	 * the query set's own `.orderBy()` instead).
 	 *
 	 * ### Examples
 	 *
@@ -1907,10 +1923,10 @@ interface QuerySet<in out T extends TQuerySet> extends MappedQuerySet<T> {
 	 * **Ordering and limits:** apply `.orderBy()` and `.limit()` to the nested
 	 * *query set* (as below), not to the raw subquery.  The query set's ordering
 	 * is applied both inside the lateral SQL (so the limit keeps the right rows)
-	 * and when sorting the hydrated output.  An ORDER BY written directly on the
-	 * inner Kysely query still controls which rows a LIMIT keeps, but not the
-	 * order of the hydrated output (the hydrator re-sorts by its own orderings —
-	 * by default, the keys).
+	 * and in the outermost ORDER BY (which orders the hydrated output).  An ORDER
+	 * BY written directly on the inner Kysely query still controls which rows a
+	 * LIMIT keeps, but not the order of the hydrated output (which follows the
+	 * query set's own orderings — by default, the keys).
 	 *
 	 * **Example:**
 	 * ```ts
@@ -2884,37 +2900,79 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		return qb;
 	}
 
-	#applyOrderBy(qb: AnySelectQueryBuilder, isOuter: boolean = false): AnySelectQueryBuilder {
-		const { baseAlias, keyBy, orderBy } = this.#props;
+	/**
+	 * This query set's own ordering: its `.orderBy()` expressions, then (unless disabled) its keys
+	 * as tie breakers.
+	 */
+	#getOwnOrderBy(): readonly QuerySetOrderBy[] {
+		const { keyBy, orderBy, orderByKeys } = this.#props;
+		if (!orderByKeys) {
+			return orderBy;
+		}
+		const keys = (typeof keyBy === "string" ? [keyBy] : keyBy)
+			.filter((key) => !orderBy.some(({ expr }) => expr === key))
+			.map((key) => ({ expr: key, modifiers: "asc" as const }));
+		return [...orderBy, ...keys];
+	}
 
-		let keyByArray: readonly string[] = typeof keyBy === "string" ? [keyBy] : keyBy;
-
-		// Apply custom orderBy expressions
-		for (const { expr, modifiers } of orderBy) {
-			let orderExpr: string | k.Expression<any>;
-			if (expr.includes(SEP)) {
-				if (isOuter) {
-					// For outer queries with pagination + many-joins, use hoisted column reference
-					orderExpr = k.expressionBuilder<any, any>(qb).ref(`${baseAlias}.${expr}`);
-				} else {
-					// For inner queries, convert $$ to .
-					orderExpr = expr.replace(SEP, ".");
-				}
-			} else {
-				// No $$, it's a base column
-				orderExpr = `${baseAlias}.${expr}`;
+	/**
+	 * The own orderings of every many-collection nested in this query set, depth-first, each named
+	 * by its path from this query set (`posts$$title`, `posts$$comments$$id`).
+	 *
+	 * Appended to the outermost ORDER BY after this query set's own ordering, these order every
+	 * collection within each parent entity, so hydration can keep rows in first-seen order instead
+	 * of sorting anything.  Each collection's rows depend only on its parent's row (join conditions
+	 * can only reference the parent's base alias), so a parent's rows are the cross product of its
+	 * collections' rows: ordered by one collection and then the next, every collection is seen in
+	 * its own order.  One-mode collections hydrate at most one entity, so only their descendants
+	 * need ordering.
+	 */
+	#getNestedOrderBy(): QuerySetOrderBy[] {
+		const nested: QuerySetOrderBy[] = [];
+		for (const [key, { mode, querySet }] of this.#props.joinCollections) {
+			const prefix = makePrefix("", key);
+			const orderBy = mode === "many" ? querySet.#getOwnOrderBy() : [];
+			for (const { expr, modifiers } of [...orderBy, ...querySet.#getNestedOrderBy()]) {
+				nested.push({ expr: applyPrefix(prefix, expr), modifiers });
 			}
+		}
+		return nested;
+	}
 
+	/**
+	 * Orders the query by this query set's own ordering, plus every nested collection's ordering when
+	 * `isOutermost` (see {@link #getNestedOrderBy}).
+	 *
+	 * @param isOuter - Whether `qb` is the wrapper around the paginated cardinality-one subquery (see
+	 *   {@link #toQuery}), which selects the cardinality-one columns from that subquery.
+	 */
+	#applyOrderBy(
+		qb: AnySelectQueryBuilder,
+		isOuter: boolean,
+		isOutermost: boolean,
+	): AnySelectQueryBuilder {
+		const { baseAlias } = this.#props;
+
+		for (const { expr, modifiers } of this.#getOwnOrderBy()) {
+			let orderExpr: string | k.Expression<any>;
+			if (!expr.includes(SEP)) {
+				// A base column.
+				orderExpr = `${baseAlias}.${expr}`;
+			} else if (isOuter) {
+				// A cardinality-one join's column, hoisted by the paginated subquery.
+				orderExpr = k.expressionBuilder<any, any>(qb).ref(`${baseAlias}.${expr}`);
+			} else {
+				// A cardinality-one join's column, selected by the join: convert the first $$ to a dot.
+				orderExpr = expr.replace(SEP, ".");
+			}
 			qb = qb.orderBy(orderExpr, modifiers);
-
-			// Remove expr from keyByArray if present
-			keyByArray = keyByArray.filter((k) => k !== expr);
 		}
 
-		// Always order by the key(s) as tie breakers (unless orderByKeys is disabled)
-		if (this.#props.orderByKeys) {
-			for (const key of keyByArray) {
-				qb = qb.orderBy(`${baseAlias}.${key}`, "asc");
+		if (isOutermost) {
+			// Paths start with a many-collection or a one-mode collection that contains one, both of
+			// which are joined directly into the outermost query.
+			for (const { expr, modifiers } of this.#getNestedOrderBy()) {
+				qb = qb.orderBy(expr.replace(SEP, "."), modifiers);
 			}
 		}
 
@@ -2998,7 +3056,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		const qb = this.#toCardinalityOneQuery(isNested, isLocalSubquery, isReduced);
 		return this.#props.limit === null && this.#props.offset === null
 			? qb
-			: this.#applyOrderBy(this.#applyLimitAndOffset(qb), false);
+			: this.#applyOrderBy(this.#applyLimitAndOffset(qb), false, false);
 	}
 
 	#toJoinedQuery(isNested: boolean, isLocalSubquery: boolean): AnySelectQueryBuilder {
@@ -3014,10 +3072,10 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 
 		// Apply ordering---but only if we're not prefixed, because ordering in
 		// subqueries is ignored (well, "not guaranteed") unless you also have a
-		// LIMIT or OFFSET.
+		// LIMIT or OFFSET.  The outermost query orders nested collections, too.
 		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
-			qb = this.#applyOrderBy(qb, false);
+			qb = this.#applyOrderBy(qb, false, true);
 		}
 
 		return qb;
@@ -3087,7 +3145,7 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			// must be applied here.  (The non-cardinality-one path below does the
 			// same; without pagination we never reach this point.)
 			if (isNested || isLocalSubquery) {
-				qb = this.#applyOrderBy(qb, false);
+				qb = this.#applyOrderBy(qb, false, false);
 			}
 			return this.#applyModifiers(this.#applyLimitAndOffset(qb));
 		}
@@ -3129,11 +3187,11 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 		}
 
 		// Re-apply ordering since the order from the subquery is not guaranteed to
-		// be preserved.  This doesn't matter if we have a prefix because it means
-		// we're in a subquery already.
+		// be preserved, and order the nested collections.  This doesn't matter if
+		// we have a prefix because it means we're in a subquery already.
 		const isSubquery = isNested || isLocalSubquery;
 		if (!isSubquery) {
-			qb = this.#applyOrderBy(qb, true);
+			qb = this.#applyOrderBy(qb, true, true);
 		}
 
 		return this.#applyModifiers(qb);
@@ -3177,8 +3235,9 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 			// shape of the selection and can allow it to be inferred by the shape of
 			// the rows.
 			[EnableAutoInclusion]: true,
-			// Sort nested collections, since their order cannot be guaranteed by SQL.
-			sort: "nested",
+			// Never sort: the outermost ORDER BY orders every collection (see
+			// #getNestedOrderBy), and hydration keeps rows in first-seen order.
+			sort: "none",
 		});
 	}
 
@@ -3454,32 +3513,21 @@ class QuerySetImpl implements QuerySet<TQuerySet> {
 	}
 
 	orderBy(expr: string, modifiers: k.OrderByModifiers = "asc"): any {
-		const orderBy = kyselyOrderByToOrderBy(expr, modifiers);
-
 		return this.#clone({
-			// Add to the orderBy array for SQL ORDER BY clause
 			orderBy: [...this.#props.orderBy, { expr, modifiers }],
-
-			hydrator: this.#props.hydrator.orderBy(orderBy.key, orderBy.direction, orderBy.nulls),
 		});
 	}
 
 	clearOrderBy(): any {
-		// Clear the custom orderBy array. The SQL query will revert to ordering by keyBy columns only.
-		// Note: We don't clear the hydrator's orderings here because those affect nested collection
-		// sorting during hydration, which is independent of the SQL ORDER BY clause.
+		// The SQL query will revert to ordering by keyBy columns only.
 		return this.#clone({
 			orderBy: [],
-			// Also clear the hydrator's orderings.
-			hydrator: this.#props.hydrator.clearOrderBy(),
 		});
 	}
 
 	orderByKeys(enabled: boolean = true): any {
 		return this.#clone({
 			orderByKeys: enabled,
-			// Also apply the setting to the hydrator.
-			hydrator: this.#props.hydrator.orderByKeys(enabled),
 		});
 	}
 
@@ -3666,7 +3714,7 @@ class QuerySetCreator<in out DB> {
 			baseAlias: alias,
 			baseQuery,
 			keyBy,
-			hydrator: createHydrator<any>(keyBy).orderByKeys(),
+			hydrator: createHydrator<any>(keyBy),
 			joinCollections: new Map(),
 			attachCollections: new Map(),
 			limit: null,
@@ -3881,7 +3929,7 @@ class QuerySetCreator<in out DB> {
 			baseAlias: alias,
 			baseQuery,
 			keyBy,
-			hydrator: createHydrator<any>(keyBy).orderByKeys(),
+			hydrator: createHydrator<any>(keyBy),
 			joinCollections: new Map(),
 			attachCollections: new Map(),
 			limit: null,

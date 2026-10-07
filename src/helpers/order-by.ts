@@ -1,5 +1,3 @@
-import type * as k from "kysely";
-
 export interface OrderBy<T = Record<string, unknown>> {
 	key: keyof T | ((input: T) => unknown);
 	direction: "asc" | "desc";
@@ -9,62 +7,6 @@ export interface OrderBy<T = Record<string, unknown>> {
 function nullsDefault(direction: "asc" | "desc"): "first" | "last" {
 	// Postgres/Oracle default: NULLS LAST for ASC, NULLS FIRST for DESC.
 	return direction === "asc" ? "last" : "first";
-}
-
-class MockOrderByItemBuilder {
-	readonly orderBy: OrderBy;
-
-	constructor(orderBy: OrderBy) {
-		this.orderBy = orderBy;
-	}
-
-	#with(patch: Partial<OrderBy>): MockOrderByItemBuilder {
-		return new MockOrderByItemBuilder({ ...this.orderBy, ...patch });
-	}
-
-	asc(): MockOrderByItemBuilder {
-		return this.#with({ direction: "asc" });
-	}
-
-	desc(): MockOrderByItemBuilder {
-		return this.#with({ direction: "desc" });
-	}
-
-	nullsFirst(): MockOrderByItemBuilder {
-		return this.#with({ nulls: "first" });
-	}
-
-	nullsLast(): MockOrderByItemBuilder {
-		return this.#with({ nulls: "last" });
-	}
-
-	collate(): MockOrderByItemBuilder {
-		return this;
-	}
-
-	toOperationNode(): k.OperationNode {
-		throw new Error("Not implemented");
-	}
-}
-
-export function kyselyOrderByToOrderBy(expr: string, modifiers: k.OrderByModifiers): OrderBy<any> {
-	if (typeof modifiers === "string") {
-		return {
-			key: expr,
-			direction: modifiers,
-			nulls: nullsDefault(modifiers),
-		};
-	}
-
-	const builder = new MockOrderByItemBuilder({
-		key: expr,
-		direction: "asc",
-	});
-	const built = modifiers(
-		builder as unknown as k.OrderByItemBuilder,
-	) as unknown as MockOrderByItemBuilder;
-
-	return built.orderBy;
 }
 
 function isNil(value: unknown): value is null | undefined {

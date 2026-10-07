@@ -125,17 +125,24 @@ class ShortenIdentifiers extends k.OperationNodeTransformer {
 		return found;
 	}
 
+	/**
+	 * Shortens the identifier's original name, so that every spelling of a name gets the same
+	 * short form.  Query sets hoist a subquery's column under a prefixed alias built from the
+	 * subquery's (already shortened) column name, while ORDER BY names the same column by its
+	 * original path: `"a"."b$$" + short("c$$col")` must equal `"a"."b$$c$$col"`.
+	 */
 	protected override transformIdentifier(
 		node: k.IdentifierNode,
 		queryId?: k.QueryId,
 	): k.IdentifierNode {
 		node = super.transformIdentifier(node, queryId);
-		if (this.#fits(node.name)) {
-			return node;
+		const name = node.name.includes(MARKER) ? restore(node.name) : node.name;
+		if (this.#fits(name)) {
+			return name === node.name ? node : { ...node, name };
 		}
-		let short = this.#shortByName.get(node.name);
+		let short = this.#shortByName.get(name);
 		if (short === undefined) {
-			this.#shortByName.set(node.name, (short = shorten(node.name, this.#maxBytes)));
+			this.#shortByName.set(name, (short = shorten(name, this.#maxBytes)));
 		}
 		return { ...node, name: short };
 	}

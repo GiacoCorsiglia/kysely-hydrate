@@ -2187,8 +2187,8 @@ describePg("query-set: joins (lateral)", () => {
 	test("orderBy on the raw inner subquery: selects the right rows but hydrates in key order", async () => {
 		// Documented behavior (see the lateral JSDoc): an ORDER BY written
 		// directly on the inner Kysely query controls which rows the LIMIT keeps,
-		// but the hydrator cannot see it, so the hydrated array is re-sorted by
-		// the nested query set's own orderings (by default, the keys, ascending).
+		// but the outermost ORDER BY orders the hydrated array by the nested query
+		// set's own orderings (by default, the keys, ascending).
 		const users = await querySet(db)
 			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
 			.where("users.id", "=", 2)

@@ -1442,9 +1442,9 @@ describe("query-set: order-by", () => {
 	//
 	// orderBy accepts Kysely's modifier callback `(ob) => ob.desc().nullsLast()`
 	// in addition to the "asc"/"desc" string. Explicit nulls placement is only
-	// expressible through the callback. These results are dialect-independent:
-	// the hydrator re-sorts in JS (SQLite defaults NULLs first for ASC, Postgres
-	// defaults them last, but the JS comparator normalizes both).
+	// expressible through the callback. These results are dialect-independent
+	// because the nulls placement is explicit (SQLite defaults NULLs first for
+	// ASC, Postgres defaults them last).
 
 	test("orderBy: accepts a modifier callback (ob => ob.desc())", async () => {
 		const users = await querySet(db)

@@ -227,6 +227,90 @@ describePg("query-set: postgres identifier length (63-byte truncation)", () => {
 			]);
 		});
 
+		// An alias hoisted through several levels is built from the already
+		// shortened alias of the level below it, so ORDER BY must name it the
+		// same way however it was spelled.
+		test("three levels, overflow at every level, ordered by the deep column", async () => {
+			const own = "ownDepartmentOfTheOrganizationOfTheEmployeeDept";
+			const deepAlias = `parentOrganizationalDepartment$$parentOrganization$$${own}$$department_name`;
+			assertBytes(`${own}$$department_name`, 64);
+
+			const result = await employees
+				.innerJoinOne(
+					"parentOrganizationalDepartment",
+					departments.innerJoinOne(
+						"parentOrganization",
+						organizations.innerJoinOne(own, departments, `${own}.organization_id`, "org.id"),
+						"parentOrganization.id",
+						"department.organization_id",
+					),
+					"parentOrganizationalDepartment.id",
+					"employee.organizational_department_id",
+				)
+				.orderBy(deepAlias, "desc")
+				.execute();
+
+			assert.deepStrictEqual(
+				result.map((record) => record.id),
+				[carol.id, dan.id, alice.id, bob.id],
+			);
+		});
+
+		test("three levels of many-joins, overflow at every level, ordered by the deep column", async () => {
+			const records = "departmentalEmployeeRecordsInThisDepartment";
+			const assignments = "assignedDepartmentRecordsForThisEmployeeRecItem";
+			assertBytes(`${assignments}$$department_name`, 64);
+
+			const result = await organizations
+				.innerJoinMany(
+					"organizationalDepartments",
+					departments.innerJoinMany(
+						records,
+						employees
+							.innerJoinMany(
+								assignments,
+								departments.orderBy("department_name", "desc"),
+								`${assignments}.id`,
+								"employee.organizational_department_id",
+							)
+							.orderBy(NAME, "desc"),
+						`${records}.organizational_department_id`,
+						"department.id",
+					),
+					"organizationalDepartments.organization_id",
+					"org.id",
+				)
+				.execute();
+
+			assert.deepStrictEqual(
+				result.map((org) => ({
+					id: org.id,
+					employees: org.organizationalDepartments.flatMap((department) =>
+						department[records].map((record) => ({
+							id: record.id,
+							departments: record[assignments].map((assigned) => assigned.department_name),
+						})),
+					),
+				})),
+				[
+					{
+						id: 1,
+						employees: [
+							{ id: bob.id, departments: ["Engineering"] },
+							{ id: alice.id, departments: ["Engineering"] },
+						],
+					},
+					{
+						id: 2,
+						employees: [
+							{ id: dan.id, departments: ["Marketing"] },
+							{ id: carol.id, departments: ["Marketing"] },
+						],
+					},
+				],
+			);
+		});
+
 		// The two employee aliases under this key share their first 63 bytes.
 		const verbose = "departmentalEmployeeRecordsWithVerboseNamingConventions";
 		const verboseEmployees = engineeringOnly.innerJoinMany(
