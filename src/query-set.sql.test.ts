@@ -315,23 +315,17 @@ describe("query-set: sql", () => {
 			) as "user"
 			-- Outer innerJoinMany converts to WHERE EXISTS
 			where exists (
-				select 1 as "_", "posts"."id" as "posts$$id", "posts"."title" as "posts$$title", "posts"."user_id" as "posts$$user_id", "posts"."comments$$id" as "posts$$comments$$id", "posts"."comments$$content" as "posts$$comments$$content", "posts"."comments$$post_id" as "posts$$comments$$post_id"
+				select 1 as "_", "posts"."id" as "posts$$id", "posts"."title" as "posts$$title", "posts"."user_id" as "posts$$user_id", "posts$$comments"."id" as "posts$$comments$$id", "posts$$comments"."content" as "posts$$comments$$content", "posts$$comments"."post_id" as "posts$$comments$$post_id"
 				from (
 					SELECT 1
 				) as "__"
-				-- Note: The nested innerJoinMany (comments within posts) doesn't need its own EXISTS
-				-- because it's already inside the outer EXISTS clause. The outer EXISTS already ensures
-				-- one row per user, so the inner join can be a regular join within that EXISTS.
-				-- TODO: Although this is unneeded, we should probably do the optimization anyway.
+				-- The nested join is emitted as a flat chain after its parent's base.
 				inner join (
-					select "posts"."id" as "id", "posts"."title" as "title", "posts"."user_id" as "user_id", "comments"."id" as "comments$$id", "comments"."content" as "comments$$content", "comments"."post_id" as "comments$$post_id"
-					from (
-						select "id", "title", "user_id" from "posts"
-					) as "posts"
-					inner join (
-						select "id", "content", "post_id" from "comments"
-					) as "comments" on "comments"."post_id" = "posts"."id"
+					select "id", "title", "user_id" from "posts"
 				) as "posts" on "posts"."user_id" = "user"."id"
+				inner join (
+					select "id", "content", "post_id" from "comments"
+				) as "posts$$comments" on "posts$$comments"."post_id" = "posts"."id"
 			)
 		`,
 		);
@@ -1029,25 +1023,77 @@ describe("query-set: sql", () => {
 				"posts".*,
 				"user"."id" as "user$$id",
 				"user"."username" as "user$$username",
-				"user"."profile$$id" as "user$$profile$$id",
-				"user"."profile$$bio" as "user$$profile$$bio",
-				"user"."profile$$user_id" as "user$$profile$$user_id"
+				"user$$profile"."id" as "user$$profile$$id",
+				"user$$profile"."bio" as "user$$profile$$bio",
+				"user$$profile"."user_id" as "user$$profile$$user_id"
 			from "__base" as "posts"
 			left join (
-				select
-					"user"."id" as "id",
-					"user"."username" as "username",
-					"profile"."id" as "profile$$id",
-					"profile"."bio" as "profile$$bio",
-					"profile"."user_id" as "profile$$user_id"
-				from (
-					select "id", "username" from "users"
-				) as "user"
-				left join (
-					select "id", "bio", "user_id" from "profiles"
-				) as "profile" on "profile"."user_id" = "user"."id"
+				select "id", "username" from "users"
 			) as "user" on "user"."id" = "posts"."user_id"
+			left join (
+				select "id", "bio", "user_id" from "profiles"
+			) as "user$$profile" on "user$$profile"."user_id" = "user"."id"
 			order by "posts"."id" asc
+		`,
+		);
+	});
+
+	test("SQL: flat join chain - only the join with a raw ON stays in the derived table", () => {
+		const qs = querySet(db)
+			.selectAs("user", db.selectFrom("users").select(["id", "username"]))
+			.leftJoinMany(
+				"posts",
+				({ eb, qs }) =>
+					qs(eb.selectFrom("posts").select(["id", "user_id"]))
+						.leftJoinMany(
+							"comments",
+							({ eb, qs }) => qs(eb.selectFrom("comments").select(["id", "post_id"])),
+							(join) => join.on(sql`${sql.ref("comments.post_id")} = ${sql.ref("posts.id")}`),
+						)
+						.leftJoinOne(
+							"author",
+							({ eb, qs }) => qs(eb.selectFrom("users").select(["id", "username"])),
+							"author.id",
+							"posts.user_id",
+						),
+				"posts.user_id",
+				"user.id",
+			);
+
+		assert.strictEqual(
+			qs.toQuery().compile().sql,
+			snapshot`
+			select
+				"user"."id" as "id",
+				"user"."username" as "username",
+				"posts"."id" as "posts$$id",
+				"posts"."user_id" as "posts$$user_id",
+				"posts"."comments$$id" as "posts$$comments$$id",
+				"posts"."comments$$post_id" as "posts$$comments$$post_id",
+				"posts$$author"."id" as "posts$$author$$id",
+				"posts$$author"."username" as "posts$$author$$username"
+			from (
+				select "id", "username" from "users"
+			) as "user"
+			-- Raw SQL can't be rewritten for the flat chain, so the comments stay with the posts.
+			left join (
+				select
+					"posts"."id" as "id",
+					"posts"."user_id" as "user_id",
+					"comments"."id" as "comments$$id",
+					"comments"."post_id" as "comments$$post_id"
+				from (
+					select "id", "user_id" from "posts"
+				) as "posts"
+				left join (
+					select "id", "post_id" from "comments"
+				) as "comments" on "comments"."post_id" = "posts"."id"
+			) as "posts" on "posts"."user_id" = "user"."id"
+			-- The author is hoisted after them, its ON's qualifiers renamed.
+			left join (
+				select "id", "username" from "users"
+			) as "posts$$author" on "posts$$author"."id" = "posts"."user_id"
+			order by "user"."id" asc
 		`,
 		);
 	});
@@ -1758,11 +1804,10 @@ describe("query-set: sql", () => {
 
 		const sql = qs.toQuery().compile().sql;
 
-		// Deeply nested alias gets double prefix in outer query
-		// Inner: "content" as "commentText" -> "comments"."commentText" as "comments$$commentText"
-		// Outer: "posts"."comments$$commentText" as "posts$$comments$$commentText"
+		// Deeply nested alias gets double prefix: the flat chain aliases the nested join
+		// "posts$$comments", whose "commentText" is selected as "posts$$comments$$commentText".
 		assert.ok(
-			sql.includes('"posts"."comments$$commentText" as "posts$$comments$$commentText"'),
+			sql.includes('"posts$$comments"."commentText" as "posts$$comments$$commentText"'),
 			`Expected doubly-prefixed alias reference: ${sql}`,
 		);
 	});
