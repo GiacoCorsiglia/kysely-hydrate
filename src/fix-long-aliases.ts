@@ -1,6 +1,6 @@
 import * as k from "kysely";
 
-import { AliasHashCollisionError } from "./helpers/errors.ts";
+import { AliasHashCollisionError, ForbiddenColumnNameError } from "./helpers/errors.ts";
 import { byteLength } from "./helpers/utils.ts";
 
 /** PostgreSQL truncates identifiers longer than this (NAMEDATALEN - 1). */
@@ -70,6 +70,11 @@ function restore(key: string): string {
 			for (const [short, original] of originalByShort) {
 				restored = restored.split(short).join(original);
 			}
+		}
+		// `restored[key] = value` on a plain object would replace its prototype.
+		// Checked here, once per distinct key, rather than per row.
+		if (restored === "__proto__") {
+			throw new ForbiddenColumnNameError(restored);
 		}
 		restoredByKey.set(key, restored);
 	}
